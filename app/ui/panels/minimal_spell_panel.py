@@ -1,10 +1,12 @@
 """
-Minimal spell panel for testing
+Minimal Spell Reference Panel for testing
 
-This is a minimal implementation of the spell panel for testing purposes.
+A minimal implementation to identify and fix issues with the main spell panel.
 """
 
-from PySide6.QtWidgets import QVBoxLayout, QLabel, QPushButton
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QLabel
+)
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 
@@ -13,40 +15,26 @@ from app.ui.panels.base_panel import BasePanel
 
 class MinimalSpellPanel(BasePanel):
     """
-    Minimal implementation of spell panel for testing
+    Minimal panel for testing spell reference
     """
     
     def __init__(self, app_state, panel_id=None):
         """Initialize the minimal spell panel"""
-        super().__init__(app_state, "Spell Reference")
-        
-        # Create own layout without calling super()._setup_ui()
+        super().__init__(app_state, "Minimal Spell Panel")
+    
+    def _setup_ui(self):
+        """Set up a simple UI for the panel"""
+        # Create a layout directly on this widget
         layout = QVBoxLayout(self)
         
-        # Add a label
-        title_label = QLabel("Minimal Spell Panel")
-        title_label.setAlignment(Qt.AlignCenter)
+        label = QLabel("This is a minimal spell panel for testing")
+        label.setAlignment(Qt.AlignCenter)
         font = QFont()
-        font.setPointSize(16)
+        font.setPointSize(14)
         font.setBold(True)
-        title_label.setFont(font)
-        layout.addWidget(title_label)
+        label.setFont(font)
         
-        # Add a description
-        description = QLabel(
-            "This is a minimal implementation of the spell panel for testing purposes.\n"
-            "The full spell reference panel will be implemented in the future."
-        )
-        description.setAlignment(Qt.AlignCenter)
-        description.setWordWrap(True)
-        layout.addWidget(description)
-        
-        # Add a dummy button
-        button = QPushButton("Click Me (Does Nothing)")
-        layout.addWidget(button)
-        
-        # Add spacer
-        layout.addStretch(1)
+        layout.addWidget(label)
     
     def save_state(self):
         """Save panel state"""

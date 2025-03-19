@@ -22,8 +22,9 @@ class BasePanel(QWidget):
         self.app_state = app_state
         self._title = title
         
-        # DO NOT set up UI here - let derived classes do it themselves
-        # Calling self._setup_ui() here causes layout conflicts with derived panels
+        # Call _setup_ui which will be implemented by subclasses
+        # Do not create any layouts here to avoid conflicts
+        self._setup_ui()
     
     @property
     def title(self):
@@ -34,22 +35,9 @@ class BasePanel(QWidget):
         """
         Set up the panel UI - to be implemented by subclasses
         
-        NOTE: Derived classes should implement this method WITHOUT calling super()._setup_ui()
-        since this implementation creates its own layout that may conflict with the derived class.
-        
-        Base implementation creates a placeholder layout.
+        Base implementation does nothing to avoid layout conflicts
         """
-        # Only create a layout if the panel doesn't already have one
-        if not self.layout():
-            layout = QVBoxLayout()
-            layout.setContentsMargins(4, 4, 4, 4)
-            layout.setSpacing(4)
-            
-            label = QLabel(f"Panel: {self._title}")
-            label.setAlignment(Qt.AlignCenter)
-            layout.addWidget(label)
-            
-            self.setLayout(layout)
+        pass
     
     def save_state(self):
         """

@@ -32,8 +32,7 @@ class TimeTrackerPanel(BasePanel):
     
     def __init__(self, app_state, panel_id=None):
         """Initialize the time tracker panel"""
-        super().__init__(app_state, "Time & Travel")
-        
+        # Initialize data before calling the parent constructor
         # Time tracking state
         self.game_hour = 12
         self.game_minute = 0
@@ -91,36 +90,12 @@ class TimeTrackerPanel(BasePanel):
             "Flying Mount": 6.0
         }
         
-        # Declare UI elements as class attributes before setup_ui
-        # Time tracking controls
-        self.hour_spinner = None
-        self.minute_spinner = None
-        self.day_spinner = None
-        self.month_combo = None
-        self.year_spinner = None
-        self.day_night_label = None
-        self.current_time_label = None
-        self.time_notes = None
-        self.weather_check = None
-        self.weather_notes = None
-        
-        # Travel controls
-        self.pace_combo = None
-        self.terrain_combo = None
-        self.vehicle_combo = None
-        self.hours_spinner = None
-        self.distance_spinner = None
-        self.travel_miles_label = None
-        self.travel_days_label = None
-        self.travel_hours_label = None
-        
-        # Now setup the UI
-        self._setup_ui()
+        # Call parent constructor which will call _setup_ui
+        super().__init__(app_state, "Time & Travel")
         
     def _setup_ui(self):
         """Set up the user interface"""
-        # Create main layout directly on the widget
-        main_layout = QVBoxLayout(self)
+        main_layout = QVBoxLayout()
         
         # Create tab widget for Time and Travel sections
         tab_widget = QTabWidget()

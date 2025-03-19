@@ -183,16 +183,24 @@ class SessionNotesPanel(BasePanel):
     
     def __init__(self, app_state, panel_id=None):
         """Initialize the session notes panel"""
-        super().__init__(app_state, "Session Notes")
-        
+        # Initialize data before calling the parent constructor
         self.notes = []
         self.filtered_notes = []
         self.all_tags = []
         self.current_note = None
         
-        # Directly create our own layout in __init__ rather than in _setup_ui
-        # This prevents the parent BasePanel from creating a layout that we later delete
-        layout = QVBoxLayout(self)
+        # Call parent constructor which will call _setup_ui
+        super().__init__(app_state, "Session Notes")
+        
+        # Load notes
+        self._load_notes()
+    
+    def _setup_ui(self):
+        """Set up the panel UI components"""
+        # Create a new layout directly on this widget
+        main_layout = QVBoxLayout(self)
+        
+        # Create splitter
         splitter = QSplitter(Qt.Horizontal)
         
         # Left pane - note list and controls
@@ -272,10 +280,8 @@ class SessionNotesPanel(BasePanel):
         # Set initial sizes
         splitter.setSizes([200, 400])
         
-        layout.addWidget(splitter)
-        
-        # Load notes after UI is fully set up
-        self._load_notes()
+        # Add the splitter to the main layout
+        main_layout.addWidget(splitter)
     
     def _load_notes(self):
         """Load notes from database or use mock data if DB not available"""
@@ -328,9 +334,6 @@ class SessionNotesPanel(BasePanel):
     
     def _update_notes_list(self):
         """Update the notes list widget"""
-        if not hasattr(self, 'notes_list') or not self.notes_list:
-            return
-            
         self.notes_list.clear()
         
         for note in self.filtered_notes:
@@ -340,9 +343,6 @@ class SessionNotesPanel(BasePanel):
     
     def _update_tag_list(self):
         """Update the tag filter dropdown"""
-        if not hasattr(self, 'tag_filter') or not self.tag_filter:
-            return
-            
         self.all_tags = set()
         
         # Collect all tags from notes
@@ -547,25 +547,3 @@ class SessionNotesPanel(BasePanel):
         menu.addAction(delete_action)
         
         menu.exec(self.notes_list.mapToGlobal(position))
-        
-    def save_state(self):
-        """Save the panel state"""
-        # We'll just save the current selection for now
-        if self.current_note:
-            return {"selected_note_id": self.current_note['id']}
-        return {}
-    
-    def restore_state(self, state):
-        """Restore the panel state"""
-        if not state or not self.notes_list:
-            return
-            
-        # Restore selected note if possible
-        selected_id = state.get("selected_note_id")
-        if selected_id:
-            for i in range(self.notes_list.count()):
-                item = self.notes_list.item(i)
-                if item.data(Qt.UserRole) == selected_id:
-                    self.notes_list.setCurrentItem(item)
-                    self._note_selected(item)
-                    break

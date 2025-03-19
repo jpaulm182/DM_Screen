@@ -31,8 +31,7 @@ class WeatherPanel(BasePanel):
     
     def __init__(self, app_state, panel_id=None):
         """Initialize the weather panel"""
-        super().__init__(app_state, "Weather & Environment")
-        
+        # Initialize data before calling the parent constructor
         # Weather state
         self.current_climate = "Temperate"
         self.current_season = "Summer"
@@ -42,18 +41,16 @@ class WeatherPanel(BasePanel):
         
         # Weather data
         self.weather_data = {}
-        self.effects_data = {}
         
-        # Load weather data first to ensure it's available before UI references it
+        # Call parent constructor which will call _setup_ui
+        super().__init__(app_state, "Weather & Environment")
+        
+        # Load weather data
         self._load_weather_data()
-        
-        # Setup UI after data is loaded
-        self._setup_ui()
     
     def _setup_ui(self):
         """Set up the user interface"""
-        # Create main layout directly on the widget
-        main_layout = QVBoxLayout(self)
+        main_layout = QVBoxLayout()
         
         # --- Weather Generation Controls ---
         controls_group = QGroupBox("Weather Controls")
@@ -138,6 +135,7 @@ class WeatherPanel(BasePanel):
         
         # Set the main layout
         main_layout.addStretch()
+        self.setLayout(main_layout)
     
     def _load_weather_data(self):
         """Load weather data from JSON files"""
