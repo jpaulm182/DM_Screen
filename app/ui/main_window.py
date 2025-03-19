@@ -168,6 +168,11 @@ class MainWindow(QMainWindow):
         spell_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("spell_reference"))
         self.panel_actions["spell_reference"] = spell_action
+        
+        llm_action = reference_menu.addAction("AI Assistant")
+        llm_action.triggered.connect(
+            lambda: self.panel_manager.toggle_panel("llm"))
+        self.panel_actions["llm"] = llm_action
             
         # Campaign Management panels
         campaign_menu = panels_menu.addMenu("&Campaign")
@@ -318,6 +323,11 @@ class MainWindow(QMainWindow):
         monster_action.setToolTip("Monster Reference")
         monster_action.triggered.connect(lambda: self.panel_manager.toggle_panel("monster"))
         self.panel_actions["monster_toolbar"] = monster_action
+        
+        ai_action = toolbar.addAction("AI")
+        ai_action.setToolTip("AI Assistant")
+        ai_action.triggered.connect(lambda: self.panel_manager.toggle_panel("llm"))
+        self.panel_actions["llm_toolbar"] = ai_action
         
         toolbar.addSeparator()
         
@@ -793,6 +803,9 @@ class MainWindow(QMainWindow):
         
         # Always save the current layout before exiting
         self._save_layout()
+        
+        # Clean up resources
+        self.app_state.close()
         
         event.accept()
 

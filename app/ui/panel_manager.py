@@ -23,6 +23,7 @@ from app.ui.panels.weather_panel import WeatherPanel
 from app.ui.panels.time_tracker_panel import TimeTrackerPanel
 from app.ui.panels.panel_category import PanelCategory
 from app.ui.panels.player_character_panel import PlayerCharacterPanel
+from app.ui.panels.llm_panel import LLMPanel  # Import the new LLM panel
 
 
 class PanelManager(QObject):
@@ -58,6 +59,7 @@ class PanelManager(QObject):
         self.panels["player_character"] = self._create_panel(PlayerCharacterPanel, "player_character")
         self.panels["weather"] = self._create_panel(WeatherPanel, "weather")
         self.panels["time_tracker"] = self._create_panel(TimeTrackerPanel, "time_tracker")
+        self.panels["llm"] = self._create_panel(LLMPanel, "llm")  # Add the LLM panel
         
         # Organize panels by category
         self._organize_panels_by_category()
@@ -256,73 +258,58 @@ class PanelManager(QObject):
             )
     
     def create_panel(self, panel_type):
-        """Create a specific panel and show it, or toggle if already visible"""
+        """Create a panel of the specified type
+        
+        Args:
+            panel_type (str): Type of panel to create
+            
+        Returns:
+            QDockWidget: Created panel, or None if type is invalid
+        """
+        # Map panel_type to panel class
+        panel_class_map = {
+            "combat_tracker": CombatTrackerPanel,
+            "dice_roller": DiceRollerPanel,
+            "monster": MonsterPanel,
+            "conditions": ConditionsPanel,
+            "rules_reference": RulesReferencePanel,
+            "spell_reference": SpellReferencePanel,
+            "session_notes": SessionNotesPanel,
+            "player_character": PlayerCharacterPanel,
+            "weather": WeatherPanel,
+            "time_tracker": TimeTrackerPanel,
+            "llm": LLMPanel,  # Add LLM panel to the map
+        }
+        
         if panel_type in self.panels and self.panels[panel_type]:
             # Panel already exists, toggle visibility
             if self.panels[panel_type].isVisible():
                 self.panels[panel_type].hide()
-                return
             else:
                 self.panels[panel_type].show()
                 self.panels[panel_type].raise_()
-                return
+            return self.panels[panel_type]
         
         # Create new panel based on type
-        if panel_type == "combat_tracker":
-            self.panels[panel_type] = self._create_panel(CombatTrackerPanel, panel_type)
-        elif panel_type == "dice_roller":
-            self.panels[panel_type] = self._create_panel(DiceRollerPanel, panel_type)
-        elif panel_type == "conditions":
-            self.panels[panel_type] = self._create_panel(ConditionsPanel, panel_type)
-        elif panel_type == "rules_reference":
-            self.panels[panel_type] = self._create_panel(RulesReferencePanel, panel_type)
-        elif panel_type == "monster":
-            self.panels[panel_type] = self._create_panel(MonsterPanel, panel_type)
-        elif panel_type == "spell_reference":
-            self.panels[panel_type] = self._create_panel(SpellReferencePanel, panel_type)
-        elif panel_type == "session_notes":
-            self.panels[panel_type] = self._create_panel(SessionNotesPanel, panel_type)
-        elif panel_type == "weather":
-            self.panels[panel_type] = self._create_panel(WeatherPanel, panel_type)
-        elif panel_type == "time_tracker":
-            self.panels[panel_type] = self._create_panel(TimeTrackerPanel, panel_type)
-        elif panel_type == "player_character":
-            self.panels[panel_type] = self._create_panel(PlayerCharacterPanel, panel_type)
+        if panel_type in panel_class_map:
+            self.panels[panel_type] = self._create_panel(panel_class_map[panel_type], panel_type)
         else:
             QMessageBox.warning(
                 self.main_window,
-                "Panel Creation Error",
-                f"Unknown panel type: {panel_type}"
+                "Invalid Panel Type",
+                f"Panel type '{panel_type}' is not supported."
             )
-            return
+            return None
         
-        # Add the new panel to the main window in the appropriate dock area
-        category = PanelCategory.get_category(panel_type)
-        
-        if category == PanelCategory.COMBAT:
-            self.main_window.addDockWidget(Qt.LeftDockWidgetArea, self.panels[panel_type])
-        elif category == PanelCategory.REFERENCE:
-            self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.panels[panel_type])
-        elif category == PanelCategory.CAMPAIGN:
-            self.main_window.addDockWidget(Qt.TopDockWidgetArea, self.panels[panel_type])
-        else:  # UTILITY
-            self.main_window.addDockWidget(Qt.BottomDockWidgetArea, self.panels[panel_type])
-        
-        # Update panel styling
-        self._apply_panel_styling(self.panels[panel_type], panel_type)
-        
-        # Show and raise the panel
-        self.panels[panel_type].show()
-        self.panels[panel_type].raise_()
-        
-        # Update panel categories
-        if category not in self.panel_categories:
-            self.panel_categories[category] = []
-        if panel_type not in self.panel_categories[category]:
-            self.panel_categories[category].append(panel_type)
+        # Show the new panel
+        if self.panels[panel_type]:
+            self.panels[panel_type].show()
+            self.panels[panel_type].raise_()
             
-        # Tabify with other panels in the same category if appropriate
-        self._tabify_panel_with_category(panel_type, category)
+            # Try to place the panel in a sensible location based on category
+            self._tabify_panel_with_category(panel_type, self.panels[panel_type].content.PANEL_CATEGORY)
+        
+        return self.panels[panel_type]
     
     def _tabify_panel_with_category(self, panel_type, category):
         """Tabify a panel with others in its category if appropriate"""

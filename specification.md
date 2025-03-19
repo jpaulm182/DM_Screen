@@ -13,6 +13,29 @@ Implementation Status Legend:
 ❌ Not Started
 🔜 Planned Next
 
+## PRIMARY DEVELOPMENT FOCUS: LLM Framework Implementation
+
+7. LLM Integration (HIGH PRIORITY)
+    - 🔜 Core LLM API integration with provider selection
+    - 🔜 Persistent storage of all LLM-generated content
+    - 🔜 Campaign-specific content organization and retrieval
+    - 🔜 Context management system for effective prompting
+    - 🔜 Monster stat block extraction and formatting
+    - 🔜 Spell lookup and interpretation
+    - 🔜 Basic NPC generation with personality traits
+    - 🔜 Rules clarification and edge case interpretation
+    - 🔄 Location-appropriate random encounter generation
+    - 🔄 Custom magic item creation with balanced mechanics
+    - 🔄 Interactive tavern and shop scenes with dynamic NPCs
+    - 🔄 Campaign-aware content generation that builds on existing story elements
+    - 🔄 Session prep assistance with encounter and location planning
+    - 🔄 Player background integration into generated content
+    - 🔄 Contextual help and suggestions during gameplay
+    - 🔄 Voice and text prompting for hands-free operation during gameplay
+    - 🔄 Comprehensive context access to all campaign data, notes, character stats, history, and world information for highly relevant and personalized responses
+    - 🔄 Adaptive generation based on party composition, character backgrounds, and previous session outcomes
+    - 🔄 Fast combat resolution with detailed narrative results
+
 Core Features
 
 1. Dynamic Layout System
@@ -35,7 +58,7 @@ Core Features
     - ✅ Cover and terrain effects (part of rules reference)
     - ✅ Weather and environmental effects
     - ✅ Time and travel pace tracker
-    - 🔄 PROPOSED - LLM-powered rules lookup and interpretation panel
+    - 🔜 LLM-powered rules lookup and interpretation panel
 
 3. Dynamic Content Generation
     - ❌ Terrain-based encounter tables
@@ -43,9 +66,9 @@ Core Features
     - ❌ Custom encounter table builder
     - ❌ Quick NPC personality/motivation generator
     - ❌ Location-appropriate monster filtering
-    - 🔄 PROPOSED - LLM-generated random encounters based on terrain, difficulty, and party composition
-    - 🔄 PROPOSED - LLM-generated quick NPCs with personality, motivation, and voice
-    - 🔄 PROPOSED - LLM-assisted monster selection with contextual filtering
+    - 🔜 LLM-generated random encounters based on terrain, difficulty, and party composition
+    - 🔜 LLM-generated quick NPCs with personality, motivation, and voice
+    - 🔜 LLM-assisted monster selection with contextual filtering
 
 Treasure Generation
     - ❌ Custom loot table builder
@@ -53,8 +76,8 @@ Treasure Generation
     - ❌ Individual treasure generation
     - ❌ Magic item generation with rarity filtering
     - ❌ Custom item integration
-    - 🔄 PROPOSED - LLM-generated unique magic items with backstories
-    - 🔄 PROPOSED - LLM-generated treasure hoards contextual to location and monsters
+    - 🔄 LLM-generated unique magic items with backstories
+    - 🔄 LLM-generated treasure hoards contextual to location and monsters
 
 World Building Tools
     - ❌ Settlement generator
@@ -62,10 +85,10 @@ World Building Tools
     - ❌ Quick NPC name/trait generator
     - ❌ Location description generator
     - ❌ Plot hook generator
-    - 🔄 PROPOSED - LLM-generated immersive location descriptions
-    - 🔄 PROPOSED - LLM-generated shop inventories with unique items
-    - 🔄 PROPOSED - LLM-generated interactive shopkeeper and bartender personalities
-    - 🔄 PROPOSED - LLM-generated plot hooks tied to campaign themes and party background
+    - 🔄 LLM-generated immersive location descriptions
+    - 🔄 LLM-generated shop inventories with unique items
+    - 🔄 LLM-generated interactive shopkeeper and bartender personalities
+    - 🔄 LLM-generated plot hooks tied to campaign themes and party background
 
 4. Campaign Management
     - ✅ Session notes with searchable tags
@@ -74,8 +97,8 @@ World Building Tools
     - ⚠️ Custom monster/NPC storage (basic version implemented)
     - ✅ Bookmark system for frequent references (implemented in Rules panel)
     - ❌ Session timer with break reminders
-    - 🔄 PROPOSED - LLM-assisted session note summarization and organization
-    - 🔄 PROPOSED - LLM-generated session recap for players
+    - 🔄 LLM-assisted session note summarization and organization
+    - 🔄 LLM-generated session recap for players
 
 5. Advanced Features
     - ✅ Dice roller with custom formulas
@@ -86,35 +109,17 @@ World Building Tools
     - ❌ Experience point calculator
     - ❌ Encounter balancing tools
     - ❌ Custom table builder for any content
-    - 🔄 PROPOSED - LLM-generated custom tables based on text prompts
-    - 🔄 PROPOSED - LLM-assisted combat narration based on actions and results
-    - 🔄 PROPOSED - LLM-generated weather effects and descriptions
-    - 🔄 PROPOSED - LLM-resolved fast combat with narrative results
+    - 🔄 LLM-generated custom tables based on text prompts
+    - 🔄 LLM-assisted combat narration based on actions and results
+    - 🔄 LLM-generated weather effects and descriptions
+    - 🔄 LLM-resolved fast combat with narrative results
 
 6. Data Management
     - ✅ Local storage for custom content
     - ❌ Optional cloud sync
     - ❌ Regular auto-save
     - ❌ Data export in common formats
-
-7. LLM Integration (PROPOSED)
-    - 🔄 PROPOSED - Persistent storage of all LLM-generated content
-    - 🔄 PROPOSED - Campaign-specific content organization and retrieval
-    - 🔄 PROPOSED - Monster stat block extraction and formatting
-    - 🔄 PROPOSED - Spell lookup and interpretation
-    - 🔄 PROPOSED - NPC dialogue generation with consistent personalities
-    - 🔄 PROPOSED - Location-appropriate random encounter generation
-    - 🔄 PROPOSED - Custom magic item creation with balanced mechanics
-    - 🔄 PROPOSED - Interactive tavern and shop scenes with dynamic NPCs
-    - 🔄 PROPOSED - Campaign-aware content generation that builds on existing story elements
-    - 🔄 PROPOSED - Rules clarification and edge case interpretation
-    - 🔄 PROPOSED - Session prep assistance with encounter and location planning
-    - 🔄 PROPOSED - Player background integration into generated content
-    - 🔄 PROPOSED - Contextual help and suggestions during gameplay
-    - 🔄 PROPOSED - Voice and text prompting for hands-free operation during gameplay
-    - 🔄 PROPOSED - Comprehensive context access to all campaign data, notes, character stats, history, and world information for highly relevant and personalized responses
-    - 🔄 PROPOSED - Adaptive generation based on party composition, character backgrounds, and previous session outcomes
-    - 🔄 PROPOSED - Fast combat resolution with detailed narrative results
+    - 🔜 Enhanced data structure for LLM content storage
 
 Technical Requirements
 
@@ -123,32 +128,32 @@ Performance
     - ✅ Smooth scrolling and panel transitions
     - ✅ Efficient memory usage for long sessions
     - ✅ Offline functionality for core features
-    - 🔄 PROPOSED - Efficient LLM API usage with response caching
-    - 🔄 PROPOSED - Fallback options when offline for LLM-dependent features
-    - 🔄 PROPOSED - Optimized campaign context processing for faster, more relevant LLM responses
+    - 🔜 Efficient LLM API usage with response caching
+    - 🔄 Fallback options when offline for LLM-dependent features
+    - 🔄 Optimized campaign context processing for faster, more relevant LLM responses
 
 Data Storage
     - ✅ Local storage for custom content
     - ❌ Optional cloud sync
     - ❌ Regular auto-save
     - ❌ Data export in common formats
-    - 🔄 PROPOSED - Structured storage for all LLM-generated content
-    - 🔄 PROPOSED - Campaign-specific LLM content organization
-    - 🔄 PROPOSED - Comprehensive knowledge graph connecting campaign elements for context-aware LLM access
-    - 🔄 PROPOSED - Privacy-preserving campaign data indexing for LLM processing
+    - 🔜 Structured storage for all LLM-generated content
+    - 🔜 Campaign-specific LLM content organization
+    - 🔄 Comprehensive knowledge graph connecting campaign elements for context-aware LLM access
+    - 🔄 Privacy-preserving campaign data indexing for LLM processing
 
 Security
     - ❌ User authentication for cloud features
     - ❌ Encrypted data storage
     - ❌ Regular backup prompts
-    - 🔄 PROPOSED - Secure API key management for LLM services
+    - 🔜 Secure API key management for LLM services
 
 Extensibility
     - ❌ Plugin system for custom modules
     - ❌ API for custom content generation
     - ❌ Import/export of custom rulesets
-    - 🔄 PROPOSED - Custom prompt templates for LLM generation
-    - 🔄 PROPOSED - User-definable generation parameters and constraints
+    - 🔜 Custom prompt templates for LLM generation
+    - 🔜 User-definable generation parameters and constraints
 
 User Interface Guidelines
     - ✅ Minimalist design with focus on readability
@@ -158,20 +163,20 @@ User Interface Guidelines
     - ❌ Context-sensitive help system
     - ❌ Unified search across all content
     - ✅ Visual panel state indicators (active panel highlighting)
-    - 🔄 PROPOSED - Intuitive LLM prompt interface with suggestions
-    - 🔄 PROPOSED - Clear visual indicators for LLM-generated vs manual content
+    - 🔜 Intuitive LLM prompt interface with suggestions
+    - 🔜 Clear visual indicators for LLM-generated vs manual content
 
 Next Implementation Steps:
-1. 🔜 Enhance Monster panel with custom monster creation
-2. 🔜 Add font size adjustment for accessibility
-3. 🔜 Add Calendar system with moon phases/festivals
-4. 🔜 Add combat difficulty calculator
-5. 🔜 Implement Session timer with break reminders
-6. 🔜 Add Sound effect/ambient music integration
-7. 🔜 PROPOSED - Implement basic LLM integration for NPC generation
-8. 🔜 PROPOSED - Implement LLM-powered rules lookup and clarification
-9. 🔜 PROPOSED - Create persistent storage for LLM-generated content
-10. 🔜 PROPOSED - Implement LLM-resolved fast combat with narrative results
+1. 🔜 Implement core LLM API integration framework with provider selection
+2. 🔜 Develop persistent storage system for LLM-generated content
+3. 🔜 Create campaign context management for effective LLM prompting
+4. 🔜 Build basic UI for LLM interactions and content generation
+5. 🔜 Implement secure API key management for LLM services
+6. 🔜 Develop initial NPC generator using LLM
+7. 🔜 Create rules clarification module using LLM
+8. 🔜 Implement monster stat block extraction and formatting
+9. 🔜 Add font size adjustment for accessibility
+10. 🔜 Enhance Monster panel with custom monster creation
 
 Layout Save/Load Feature Specification:
 - ✅ Allow users to save current panel layout configuration
@@ -180,7 +185,7 @@ Layout Save/Load Feature Specification:
 - ✅ Include user-created custom layouts with custom names
 - ✅ Quick-switch between layouts via dropdown menu
 - ✅ Export/import layouts for sharing between installations
-- 🔄 PROPOSED - LLM-suggested layouts based on campaign type and DM preferences
+- 🔄 LLM-suggested layouts based on campaign type and DM preferences
 
 Player Character Quick Reference Specification:
 - ✅ Store basic character information (name, race, class, level)
@@ -191,10 +196,20 @@ Player Character Quick Reference Specification:
 - ✅ Integration with combat tracker for initiative and effects
 - ✅ Support for multiple party members
 - ⚠️ Basic character sheet import functionality (planned but not fully implemented)
-- 🔄 PROPOSED - LLM-generated character insights and hooks based on background
-- 🔄 PROPOSED - LLM-suggested character-specific plot elements
+- 🔄 LLM-generated character insights and hooks based on background
+- 🔄 LLM-suggested character-specific plot elements
 
-LLM Integration Specifications (PROPOSED):
+LLM Framework Technical Specification:
+
+Core LLM Framework Components:
+- Provider-agnostic API integration layer supporting multiple LLM services
+- Context management system with efficient token usage
+- Content storage and indexing system
+- User interface for prompt creation and result management
+- Template system for consistent outputs across different content types
+- Feedback and refinement mechanism for generated content
+- Caching system to minimize API costs and improve response time
+- Fallback functionality for offline operation
 
 Content Generation:
 - Stateful prompting system preserving context between generations
@@ -314,19 +329,20 @@ Planned Integrations
     Digital character sheet integration
     Custom content marketplaces
     Community content sharing
-    🔄 PROPOSED - LLM API integration with multiple providers
-    🔄 PROPOSED - Content sharing system for LLM-generated material
+    🔜 LLM API integration with multiple providers
+    🔄 Content sharing system for LLM-generated material
 
 Development Priorities
 
-    Core reference functionality
-    Dynamic generation systems
-    Campaign management tools
-    Advanced features
-    Integration capabilities
-    🔄 PROPOSED - LLM integration framework
-    🔄 PROPOSED - Persistent storage for generated content
-    🔄 PROPOSED - Fast combat resolution system
+    1. 🔜 LLM integration framework and core functionality
+    2. 🔜 Persistent storage for generated content 
+    3. 🔜 Basic content generation modules (NPCs, rules clarification)
+    4. Core reference functionality enhancements
+    5. Advanced LLM generation features
+    6. Additional dynamic generation systems
+    7. Campaign management tools expansion
+    8. Integration capabilities
+    9. 🔄 Fast combat resolution system
 
 Success Metrics
 
@@ -335,9 +351,9 @@ Success Metrics
     Positive user feedback on customization
     Active community content creation
     Regular user engagement
-    🔄 PROPOSED - Quality and usability of LLM-generated content
-    🔄 PROPOSED - Time saved using AI-assisted content generation
-    🔄 PROPOSED - Reduction in combat resolution time while maintaining narrative quality
+    🔜 Quality and usability of LLM-generated content
+    🔜 Time saved using AI-assisted content generation
+    🔄 Reduction in combat resolution time while maintaining narrative quality
 
 Future Considerations
 
@@ -346,10 +362,10 @@ Future Considerations
     Multi-user collaboration
     Campaign analytics
     Advanced automation options
-    🔄 PROPOSED - Voice-to-text for hands-free LLM prompting
-    🔄 PROPOSED - Fine-tuning LLM models for D&D-specific generation
-    🔄 PROPOSED - Integration with image generation for visual assets
-    🔄 PROPOSED - LLM-powered storytelling assistance during gameplay
+    🔄 Voice-to-text for hands-free LLM prompting
+    🔄 Fine-tuning LLM models for D&D-specific generation
+    🔄 Integration with image generation for visual assets
+    🔄 LLM-powered storytelling assistance during gameplay
 
 Accessibility Requirements
 
@@ -358,6 +374,6 @@ Accessibility Requirements
     Color blind friendly design
     Font size/contrast adjustments
     Multi-language support
-    🔄 PROPOSED - Voice-controlled LLM prompting for accessibility
+    🔄 Voice-controlled LLM prompting for accessibility
 
 This specification will be regularly updated based on user feedback and emerging needs in the D&D community.

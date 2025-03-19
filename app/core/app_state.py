@@ -11,6 +11,9 @@ import time
 from pathlib import Path
 from datetime import datetime
 
+from app.core.llm_service import LLMService
+from app.data.llm_data_manager import LLMDataManager
+
 
 class AppState:
     """
@@ -41,6 +44,10 @@ class AppState:
         
         # Create default layouts if they don't exist
         self._create_default_layouts()
+        
+        # Initialize LLM services
+        self.llm_data_manager = LLMDataManager(self)
+        self.llm_service = LLMService(self)
     
     def _ensure_directories(self):
         """Create application directories if they don't exist"""
@@ -258,3 +265,12 @@ class AppState:
         self.settings[key] = value
         # Save settings immediately for persistence
         self.save_settings()
+
+    def close(self):
+        """Close all resources and perform cleanup"""
+        # Save current settings
+        self.save_settings()
+        
+        # Close LLM data manager
+        if hasattr(self, 'llm_data_manager'):
+            self.llm_data_manager.close()
