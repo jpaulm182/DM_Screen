@@ -5,9 +5,9 @@ Welcome panel with quick access to all panel types
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QPushButton, QLabel, QGroupBox
+    QPushButton, QLabel, QGroupBox, QSizePolicy
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QPixmap
 
 from app.ui.panels.panel_category import PanelCategory
@@ -15,6 +15,9 @@ from app.ui.panels.panel_category import PanelCategory
 
 class WelcomePanel(QWidget):
     """Welcome panel with quick access buttons"""
+    
+    # Signal to inform MainWindow that a panel was selected and welcome panel should be hidden
+    panel_selected = Signal()
     
     def __init__(self, panel_manager):
         """Initialize the welcome panel"""
@@ -30,6 +33,10 @@ class WelcomePanel(QWidget):
     
     def _setup_ui(self):
         """Set up the welcome panel UI"""
+        # Set panel to take up maximum space
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumSize(800, 600)  # Set reasonable minimum size
+        
         # Main layout
         layout = QVBoxLayout()
         layout.setContentsMargins(20, 20, 20, 20)
@@ -250,7 +257,7 @@ class WelcomePanel(QWidget):
     
     def _toggle_panel(self, panel_type):
         """Toggle a panel of the specified type"""
-        self.panel_manager.toggle_panel(panel_type)
+        is_visible = self.panel_manager.toggle_panel(panel_type)
         
         # Immediately update the button style for immediate feedback
         button = self.panel_buttons.get(panel_type)
@@ -258,6 +265,10 @@ class WelcomePanel(QWidget):
             colors = PanelCategory.get_colors(panel_type)
             if colors:
                 self._apply_button_style(button, panel_type, colors)
+        
+        # If panel was opened (not closed), emit signal to hide welcome panel
+        if is_visible:
+            self.panel_selected.emit()
         
     def _smart_organize(self):
         """Trigger smart organization of panels"""
@@ -278,6 +289,10 @@ class WelcomePanel(QWidget):
         super().hideEvent(event)
         
     def showEvent(self, event):
-        """Restart the timer when the panel is shown"""
+        """Restart the timer when the panel is shown and ensure proper sizing"""
+        # Ensure the panel takes up the full space
+        if self.parentWidget():
+            self.setGeometry(self.parentWidget().rect())
+        
         self.update_timer.start(500)
         super().showEvent(event)

@@ -33,6 +33,8 @@ class MainWindow(QMainWindow):
         
         # Initialize panel-related UI elements mapping before creating panels
         self.panel_actions = {}  # Actions for each panel
+        self.welcome_panel = None  # Keep track of welcome panel
+        self.stored_visible_panels = []  # Store visible panels when welcome panel is shown
         
         self.panel_manager = PanelManager(self, app_state)
         
@@ -193,6 +195,13 @@ class MainWindow(QMainWindow):
         
         # Help menu
         help_menu = self.menuBar().addMenu("&Help")
+        
+        # Add welcome panel action
+        welcome_action = help_menu.addAction("Show &Welcome Panel")
+        welcome_action.setShortcut("F1")
+        welcome_action.triggered.connect(self._toggle_welcome_panel)
+        
+        help_menu.addSeparator()
         help_menu.addAction("&About").triggered.connect(self._show_about)
     
     def _populate_preset_layouts_menu(self):
@@ -458,9 +467,35 @@ class MainWindow(QMainWindow):
         status_bar.showMessage("Ready")
     
     def _show_welcome_panel(self):
-        """Show the welcome panel when no layout is loaded"""
+        """Show the welcome panel when no layout is loaded or when requested"""
+        # Store the currently visible panels to restore later
+        self.stored_visible_panels = []
+        for panel_id, dock in self.panel_manager.panels.items():
+            if dock and dock.isVisible():
+                self.stored_visible_panels.append(panel_id)
+                dock.hide()
+        
+        # Create and show the welcome panel
         welcome = WelcomePanel(self.panel_manager)
+        welcome.panel_selected.connect(self._hide_welcome_panel)
         self.setCentralWidget(welcome)
+        self.welcome_panel = welcome  # Store reference to access later
+    
+    def _hide_welcome_panel(self):
+        """Hide the welcome panel and restore previous panels"""
+        self.setCentralWidget(None)
+        self.welcome_panel = None
+        
+        # Restore previously visible panels
+        if hasattr(self, 'stored_visible_panels') and self.stored_visible_panels:
+            for panel_id in self.stored_visible_panels:
+                panel = self.panel_manager.get_panel(panel_id)
+                if panel:
+                    panel.show()
+            
+            # Restore panel organization
+            self.panel_manager.smart_organize_panels()
+            self.stored_visible_panels = []
     
     def _load_initial_layout(self):
         """Load the initial layout or show welcome screen if no layout is available"""
@@ -769,7 +804,11 @@ class MainWindow(QMainWindow):
     def _do_adjust_panel_positions(self):
         """Actually perform the panel position adjustment"""
         main_window_geometry = self.geometry()
-        toolbar_height = self.toolBarArea(Qt.TopToolBarArea).height()
+        
+        # Get toolbar height more reliably
+        toolbar = self.findChild(QToolBar, "MainToolbar")
+        toolbar_height = toolbar.height() if toolbar else 30
+        
         statusbar_height = self.statusBar().height()
         
         # Get effective area
@@ -794,3 +833,41 @@ class MainWindow(QMainWindow):
                     dock_geometry.moveRight(max_x)
                 
                 dock.setGeometry(dock_geometry)
+
+    def _toggle_welcome_panel(self):
+        """Toggle the welcome panel visibility"""
+        # If welcome panel is visible, hide it
+        if self.centralWidget() and isinstance(self.centralWidget(), WelcomePanel):
+            self._hide_welcome_panel()
+        else:
+            # Otherwise show it
+            self._show_welcome_panel()
+            
+            # Force layout update to ensure welcome panel fills the available space
+            if self.welcome_panel:
+                self.welcome_panel.adjustSize()
+                QTimer.singleShot(100, lambda: self._resize_welcome_panel())
+    
+    def _resize_welcome_panel(self):
+        """Resize the welcome panel to fill the central widget area"""
+        if self.welcome_panel:
+            self.welcome_panel.setGeometry(self.centralWidget().rect())
+            self.centralWidget().update()
+    
+    def resizeEvent(self, event):
+        """Handle window resize events"""
+        if event:
+            super().resizeEvent(event)
+        
+        # If welcome panel is visible, resize it to fill the space
+        if self.centralWidget() and isinstance(self.centralWidget(), WelcomePanel):
+            self._resize_welcome_panel()
+
+    def keyPressEvent(self, event):
+        """Handle key press events"""
+        # F1 toggles welcome panel
+        if event.key() == Qt.Key_F1:
+            self._toggle_welcome_panel()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
