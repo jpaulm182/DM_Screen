@@ -13,6 +13,8 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+from app.core.config import get_database_path, get_app_dir
+
 
 class LLMDataManager:
     """
@@ -22,12 +24,12 @@ class LLMDataManager:
     def __init__(self, app_state):
         """Initialize the LLM data manager"""
         self.app_state = app_state
-        self.db_path = app_state.data_dir / "dm_screen.db"
+        self.db_path = get_database_path()
         self.connection = None
         self.local = threading.local()  # Thread-local storage for connections
         
         # Create LLM content directories
-        self.llm_dir = app_state.data_dir / "llm"
+        self.llm_dir = get_app_dir() / "data" / "llm"
         self.llm_dir.mkdir(exist_ok=True, parents=True)
         
         # Create campaign content directory

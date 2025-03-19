@@ -170,7 +170,7 @@ class NoteEditDialog(QDialog):
         }
         
         # If editing, preserve the ID
-        if self.note:
+        if self.note and 'id' in self.note:
             note_data['id'] = self.note['id']
         
         return note_data
@@ -583,7 +583,8 @@ class SessionNotesPanel(BasePanel):
         menu.exec(self.notes_list.mapToGlobal(position))
 
     def _create_note_with_content(self, title, content, tags=None):
-        """Create a new note with pre-filled content
+        """
+        Create a new note with the given content
         
         Args:
             title (str): Note title
@@ -593,49 +594,102 @@ class SessionNotesPanel(BasePanel):
         Returns:
             bool: True if note was created successfully
         """
-        # Create a dictionary to simulate a note for the dialog
-        prefilled_note = {
-            'title': title,
-            'content': content,
-            'tags': tags or ""
-        }
-        
-        # Create and show the edit dialog with pre-filled data
-        dialog = NoteEditDialog(self, self.app_state, prefilled_note, self.all_tags)
-        
-        if dialog.exec():
-            note_data = dialog.get_note_data()
-            if note_data:
-                current_time = QDateTime.currentDateTime().toString(Qt.ISODate)
-                
-                # Add timestamps
-                note_data['created_at'] = current_time
-                note_data['updated_at'] = current_time
-                
+        try:
+            print(f"Creating note with title: {title}")
+            
+            # Create a dictionary to simulate a note for the dialog
+            prefilled_note = {
+                'title': title,
+                'content': content,
+                'tags': tags or ""
+            }
+            
+            # Create and show the edit dialog with pre-filled data
+            dialog = NoteEditDialog(self, self.app_state, prefilled_note, self.all_tags)
+            
+            if dialog.exec():
                 try:
-                    # Insert into database
-                    note_id = self.app_state.db_manager.insert('session_notes', note_data)
-                    note_data['id'] = note_id
+                    note_data = dialog.get_note_data()
+                    print(f"Note data after dialog: {note_data}")
                     
-                    # Add to our local data
-                    self.notes.insert(0, note_data)
-                    
-                    # Reload notes
-                    self.filtered_notes = self.notes.copy()
-                    self._update_notes_list()
-                    self._update_tag_list()
-                    
-                    # Select the new note
-                    for i in range(self.notes_list.count()):
-                        item = self.notes_list.item(i)
-                        if item.data(Qt.UserRole) == note_id:
-                            self.notes_list.setCurrentItem(item)
-                            self._note_selected(item)
-                            break
+                    if note_data:
+                        current_time = QDateTime.currentDateTime().toString(Qt.ISODate)
+                        
+                        # Add timestamps
+                        note_data['created_at'] = current_time
+                        note_data['updated_at'] = current_time
+                        
+                        try:
+                            # Insert into database
+                            print("Inserting note into database...")
+                            note_id = self.app_state.db_manager.insert('session_notes', note_data)
+                            print(f"Inserted note with ID: {note_id}")
                             
-                    return True
-                    
+                            # If note_id is None or not returned, create a temporary ID
+                            if note_id is None:
+                                # Generate a temporary ID if database doesn't return one
+                                max_id = max([note.get('id', 0) for note in self.notes]) if self.notes else 0
+                                note_id = max_id + 1
+                                print(f"Using generated ID: {note_id} as database did not return an ID")
+                            
+                            # Add ID to the note data
+                            note_data['id'] = note_id
+                            
+                            # Add to our local data
+                            self.notes.insert(0, note_data)
+                            print(f"Added note {note_id} to notes list")
+                            
+                            # Reload notes
+                            self.filtered_notes = self.notes.copy()
+                            self._update_notes_list()
+                            self._update_tag_list()
+                            
+                            # Select the new note
+                            for i in range(self.notes_list.count()):
+                                item = self.notes_list.item(i)
+                                if item.data(Qt.UserRole) == note_id:
+                                    self.notes_list.setCurrentItem(item)
+                                    self._note_selected(item)
+                                    break
+                            
+                            return True
+                        except Exception as e:
+                            import traceback
+                            print(f"Error in database insert: {str(e)}")
+                            print(traceback.format_exc())
+                            QMessageBox.critical(self, "Database Error", 
+                                f"Error inserting note into database: {str(e)}")
+                            return False
+                    else:
+                        print("No note data returned from dialog")
+                        return False
                 except Exception as e:
-                    QMessageBox.critical(self, "Error", f"Failed to save note: {e}")
-                    
-        return False
+                    import traceback
+                    print(f"Error in _create_note_with_content: {str(e)}")
+                    print(traceback.format_exc())
+                    QMessageBox.critical(self, "Error", 
+                        f"Error creating note: {str(e)}")
+                    return False
+            return False
+        except Exception as e:
+            import traceback
+            print(f"Error in _create_note_with_content: {str(e)}")
+            print(traceback.format_exc())
+            QMessageBox.critical(self, "Error", 
+                f"Error creating note: {str(e)}")
+            return False
+
+    def __repr__(self):
+        """String representation of the panel for debugging"""
+        return f"SessionNotesPanel(id={id(self)})"
+    
+    def debug_info(self):
+        """Print debug information about this panel"""
+        print(f"SessionNotesPanel: id={id(self)}")
+        print(f"  _create_note_with_content method exists: {hasattr(self, '_create_note_with_content')}")
+        print(f"  Current note count: {len(self.notes)}")
+        print(f"  Is visible: {self.isVisible()}")
+        print(f"  Parent: {self.parent()}")
+        if self.parent():
+            print(f"  Parent is visible: {self.parent().isVisible()}")
+        return True

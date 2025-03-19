@@ -13,6 +13,7 @@ from datetime import datetime
 
 from app.core.llm_service import LLMService
 from app.data.llm_data_manager import LLMDataManager
+from app.core.config import get_app_dir
 
 
 class AppState:
@@ -33,7 +34,7 @@ class AppState:
         }
         
         # Ensure application directories exist
-        self.app_dir = Path.home() / ".dm_screen"
+        self.app_dir = get_app_dir()
         self.data_dir = self.app_dir / "data"
         self.config_dir = self.app_dir / "config"
         self.backup_dir = self.app_dir / "backups"
@@ -282,3 +283,32 @@ class AppState:
         # Close LLM data manager
         if hasattr(self, 'llm_data_manager'):
             self.llm_data_manager.close()
+
+    def get_panel_widget(self, panel_id):
+        """
+        Get a panel widget by its ID
+        
+        Args:
+            panel_id: The ID of the panel to retrieve
+            
+        Returns:
+            The panel widget if found, None otherwise
+        """
+        # Make sure we have a panel manager
+        if not hasattr(self, 'panel_manager'):
+            print(f"AppState has no panel_manager")
+            return None
+            
+        # Get the panel dock widget
+        panel_dock = self.panel_manager.get_panel(panel_id)
+        if not panel_dock:
+            print(f"Panel dock {panel_id} not found")
+            return None
+            
+        # Get the widget inside the dock
+        panel_widget = panel_dock.widget()
+        if not panel_widget:
+            print(f"Panel {panel_id} has no widget")
+            return None
+            
+        return panel_widget

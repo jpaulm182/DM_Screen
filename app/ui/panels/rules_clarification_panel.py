@@ -9,10 +9,12 @@ from PySide6.QtWidgets import (
     QComboBox, QLabel, QTabWidget, QLineEdit, QSplitter,
     QToolButton, QMenu, QDialog, QDialogButtonBox, QFormLayout,
     QListWidget, QListWidgetItem, QFileDialog, QInputDialog,
-    QScrollArea, QMessageBox, QGroupBox, QCheckBox, QSpinBox
+    QScrollArea, QMessageBox, QGroupBox, QCheckBox, QSpinBox,
+    QProgressBar
 )
-from PySide6.QtCore import Qt, Signal, Slot, QSize
+from PySide6.QtCore import Qt, Signal, Slot, QSize, QDateTime
 from PySide6.QtGui import QIcon, QAction, QTextCursor, QFont
+from PySide6.QtWidgets import QApplication
 
 from app.ui.panels.base_panel import BasePanel
 
@@ -370,9 +372,8 @@ Format your answer in clear sections with markdown formatting for readability. M
         self.save_button.setEnabled(True)
         self.save_to_notes_button.setEnabled(True)
         
-        # Generate timestamp 
-        from datetime import datetime
-        timestamp = datetime.now().isoformat()
+        # Generate timestamp in Qt ISODate format for consistency
+        timestamp = QDateTime.currentDateTime().toString(Qt.ISODate)
         
         # Store the response for saving
         self.current_generation = {
@@ -430,69 +431,133 @@ Format your answer in clear sections with markdown formatting for readability. M
     
     def _save_to_session_notes(self):
         """Save the current rule clarification to session notes"""
+        notes_widget = None
+        
+        # Check if we have a current generation
         if not hasattr(self, 'current_generation') or not self.current_generation:
+            QMessageBox.warning(self, "Empty Content", "There is no rule clarification to save.")
             return
         
         # Extract a title from the query
         query_text = self.current_generation.get("query", "")
         title = query_text[:50] + ("..." if len(query_text) > 50 else "")
         
-        # Get timestamp
-        from datetime import datetime
-        timestamp = self.current_generation.get("timestamp") or datetime.now().isoformat()
+        # Get response and timestamp
+        response = self.current_generation.get("content", "")
         
-        # Format content for session notes
-        formatted_content = f"## Rule Clarification: {title}\n\n"
-        formatted_content += f"**Question:**\n{query_text}\n\n"
-        formatted_content += f"**Clarification:**\n{self.current_generation['content']}\n\n"
-        formatted_content += f"**Model:** {self.model_combo.currentText()}\n"
-        formatted_content += f"**Date:** {timestamp}\n"
+        # Handle timestamp in a way that works with both string timestamps and QDateTime
+        timestamp = self.current_generation.get("timestamp")
+        if not timestamp:
+            timestamp = QDateTime.currentDateTime().toString(Qt.ISODate)
         
-        # Get the session notes panel using our helper method
-        notes_widget = self.get_panel("session_notes")
-        print(f"Rules Clarification - Session notes widget obtained: {notes_widget is not None}")
+        # Format the content for notes
+        content = (
+            f"# Rules Clarification\n\n"
+            f"## Query\n{query_text}\n\n"
+            f"## Response\n{response}\n\n"
+            f"**Model:** {self.model_combo.currentText()}\n"
+            f"*Generated on {timestamp}*"
+        )
         
+        # Method 1: Try to get the session notes panel directly from app_state
+        try:
+            print("Method 1: Using app_state.get_panel_widget")
+            notes_widget = self.app_state.get_panel_widget("session_notes")
+            if notes_widget:
+                print(f"Method 1 success: {notes_widget}")
+        except Exception as e:
+            print(f"Method 1 failed: {str(e)}")
+        
+        # Method 2: Try using helper method
+        if not notes_widget:
+            try:
+                print("Method 2: Using get_panel helper")
+                notes_widget = self.get_panel("session_notes")
+                if notes_widget:
+                    print(f"Method 2 success: {notes_widget}")
+            except Exception as e:
+                print(f"Method 2 failed: {str(e)}")
+        
+        # Method 3: Try using panel_manager directly
+        if not notes_widget:
+            try:
+                print("Method 3: Using app_state.panel_manager directly")
+                if hasattr(self.app_state, 'panel_manager'):
+                    panel_dock = self.app_state.panel_manager.get_panel("session_notes")
+                    if panel_dock:
+                        notes_widget = panel_dock.widget()
+                        print(f"Method 3 success: {notes_widget}")
+            except Exception as e:
+                print(f"Method 3 failed: {str(e)}")
+        
+        # Method 4: Try using main window
+        if not notes_widget:
+            try:
+                print("Method 4: Using main window")
+                main_window = self.window()
+                if hasattr(main_window, 'panel_manager'):
+                    panel_dock = main_window.panel_manager.get_panel("session_notes")
+                    if panel_dock:
+                        notes_widget = panel_dock.widget()
+                        print(f"Method 4 success: {notes_widget}")
+            except Exception as e:
+                print(f"Method 4 failed: {str(e)}")
+        
+        # Check if we have the widget and create the note
         if notes_widget:
-            # Make sure the parent panel is visible
-            dock = notes_widget.parent()
-            if dock:
-                dock.show()
+            print(f"Session notes widget found: {notes_widget}")
+            
+            # Ensure panel is visible
+            parent_dock = notes_widget.parent()
+            if parent_dock and hasattr(parent_dock, 'setVisible'):
+                parent_dock.setVisible(True)
+                parent_dock.raise_()
             
             # Verify the widget has the required method
             if not hasattr(notes_widget, '_create_note_with_content'):
-                QMessageBox.warning(
-                    self,
-                    "Session Notes Error",
-                    "The Session Notes panel doesn't have the required functionality to create notes."
-                )
+                error_msg = "Session notes panel doesn't have the required method"
+                print(error_msg)
+                QMessageBox.warning(self, "Error", error_msg)
                 return
             
-            # Create a new note with the rule clarification
-            success = notes_widget._create_note_with_content(
-                f"Rule Clarification: {title}", 
-                formatted_content,
-                tags="rules,clarification,ai"
-            )
-            
-            if success:
-                QMessageBox.information(
-                    self, 
-                    "Rule Added", 
-                    f"The rule clarification has been added to your session notes."
+            # Try to create the note
+            try:
+                success = notes_widget._create_note_with_content(
+                    title=f"Rule Clarification: {title}",
+                    content=content,
+                    tags="rules,clarification,ai"
                 )
-            else:
-                QMessageBox.warning(
-                    self,
-                    "Note Creation Failed",
-                    "Failed to create note in session notes panel."
-                )
+                
+                if success:
+                    QMessageBox.information(
+                        self, "Note Created", 
+                        "The rule clarification has been added to your session notes"
+                    )
+                else:
+                    QMessageBox.warning(
+                        self, "Note Not Created", 
+                        "The note creation was cancelled or failed"
+                    )
+            except Exception as e:
+                error_msg = f"An error occurred while trying to create the note: {str(e)}"
+                print(f"Error creating note: {str(e)}")
+                QMessageBox.critical(self, "Error", error_msg)
         else:
-            # Panel not available, show error message
-            QMessageBox.warning(
-                self, 
-                "Session Notes Not Available", 
-                "The Session Notes panel is not available. Please open it first."
-            )
+            # No session notes panel found - inform the user
+            error_msg = "Session Notes panel is not available. Please open it first."
+            print(error_msg)
+            QMessageBox.warning(self, "Session Notes Not Available", error_msg)
+            
+            # Try to show the Session Notes panel if possible
+            try:
+                if hasattr(self.app_state, 'panel_manager') and hasattr(self.app_state.panel_manager, 'show_panel'):
+                    self.app_state.panel_manager.show_panel("session_notes")
+                    QMessageBox.information(
+                        self, "Panel Opened", 
+                        "The Session Notes panel has been opened. Please try again."
+                    )
+            except Exception as e:
+                print(f"Failed to open Session Notes panel: {str(e)}")
     
     def _clear_form(self):
         """Clear the form and reset to default state"""

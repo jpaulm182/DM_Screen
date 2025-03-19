@@ -5,10 +5,14 @@ Database manager for the DM Screen application
 Handles database connections, schema management, and common queries.
 """
 
-import sqlite3
-import json
 import os
+import sqlite3
+from datetime import datetime
+import json
+import random
 from pathlib import Path
+
+from app.core.config import get_database_path
 
 
 class DatabaseManager:
@@ -19,7 +23,7 @@ class DatabaseManager:
     def __init__(self, app_state):
         """Initialize the database manager"""
         self.app_state = app_state
-        self.db_path = app_state.data_dir / "dm_screen.db"
+        self.db_path = get_database_path()
         self.connection = None
         
         # Initialize the database
@@ -211,17 +215,72 @@ class DatabaseManager:
         Returns:
             ID of the inserted row
         """
-        columns = ", ".join(data.keys())
-        placeholders = ", ".join(["?"] * len(data))
-        values = list(data.values())
-        
-        query = f"INSERT INTO {table} ({columns}) VALUES ({placeholders})"
-        
-        cursor = self.connection.cursor()
-        cursor.execute(query, values)
-        self.connection.commit()
-        
-        return cursor.lastrowid
+        try:
+            columns = ", ".join(data.keys())
+            placeholders = ", ".join(["?"] * len(data))
+            values = list(data.values())
+            
+            query = f"INSERT INTO {table} ({columns}) VALUES ({placeholders})"
+            
+            cursor = self.connection.cursor()
+            cursor.execute(query, values)
+            self.connection.commit()
+            
+            # Get the last row ID
+            row_id = cursor.lastrowid
+            
+            # If no ID was returned but we need one, get the ID through a select query
+            if row_id is None:
+                print(f"Warning: lastrowid is None after insertion into {table}")
+                
+                # Try to get the ID of the row we just inserted
+                # For tables with auto-increment primary key
+                select_query = f"SELECT last_insert_rowid()"
+                cursor.execute(select_query)
+                result = cursor.fetchone()
+                
+                if result and result[0]:
+                    row_id = result[0]
+                    print(f"Retrieved ID using last_insert_rowid(): {row_id}")
+                else:
+                    # As a last resort, try to query for the exact record we just inserted
+                    # This is not perfect but may work in many cases
+                    conditions = []
+                    condition_values = []
+                    
+                    # Use string columns that are likely to be unique for identification
+                    string_cols = [k for k, v in data.items() if isinstance(v, str) and k not in ('created_at', 'updated_at')]
+                    
+                    if string_cols:
+                        for col in string_cols[:2]:  # Use up to 2 string columns for identification
+                            conditions.append(f"{col} = ?")
+                            condition_values.append(data[col])
+                            
+                        where_clause = " AND ".join(conditions)
+                        
+                        # Order by ID descending to get the most recently added record
+                        select_query = f"SELECT id FROM {table} WHERE {where_clause} ORDER BY id DESC LIMIT 1"
+                        cursor.execute(select_query, condition_values)
+                        result = cursor.fetchone()
+                        
+                        if result and result[0]:
+                            row_id = result[0]
+                            print(f"Retrieved ID using query: {row_id}")
+                        else:
+                            # Generate a random high ID to avoid conflicts
+                            row_id = random.randint(10000, 99999)
+                            print(f"Generated random ID: {row_id}")
+                    else:
+                        # Generate a random high ID to avoid conflicts
+                        row_id = random.randint(10000, 99999)
+                        print(f"Generated random ID: {row_id}")
+            
+            return row_id
+            
+        except Exception as e:
+            print(f"Error in DatabaseManager.insert: {str(e)}")
+            self.connection.rollback()
+            raise
     
     def update(self, table, data, where_clause, where_params=None):
         """

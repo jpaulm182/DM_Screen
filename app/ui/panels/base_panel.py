@@ -67,15 +67,39 @@ class BasePanel(QWidget):
         Returns:
             The panel widget if found, None otherwise
         """
-        # Find the panel manager (parent of parent)
-        panel_manager = self.parent() and self.parent().parent()
+        # First try to get panel manager directly from app_state
+        if hasattr(self.app_state, 'panel_manager'):
+            panel_manager = self.app_state.panel_manager
+        else:
+            # Try to find panel manager by traversing up the widget hierarchy
+            # Look for the main window
+            parent = self.parent()
+            main_window = None
+            
+            # Try to find main window up to 3 levels deep
+            for _ in range(3):
+                if not parent:
+                    break
+                if hasattr(parent, 'panel_manager'):
+                    main_window = parent
+                    break
+                parent = parent.parent()
+            
+            if main_window and hasattr(main_window, 'panel_manager'):
+                panel_manager = main_window.panel_manager
+            else:
+                # Last resort: try to find the panel manager as parent of dock widget
+                panel_manager = self.parent() and self.parent().parent()
+                if not hasattr(panel_manager, 'get_panel'):
+                    print(f"Could not find panel manager from {self.__class__.__name__}")
+                    return None
         
-        if not panel_manager:
-            print(f"Could not find panel manager from {self.__class__.__name__}")
+        # Get the requested panel dock widget
+        if not hasattr(panel_manager, 'get_panel'):
+            print(f"Panel manager doesn't have get_panel method")
             return None
             
-        # Get the requested panel
-        panel_dock = getattr(panel_manager, 'get_panel', lambda x: None)(panel_id)
+        panel_dock = panel_manager.get_panel(panel_id)
         
         if not panel_dock:
             print(f"Could not find panel {panel_id}")
@@ -85,7 +109,8 @@ class BasePanel(QWidget):
         panel_widget = panel_dock.widget()
         
         if not panel_widget:
-            print(f"Panel {panel_id} has no widget")
+            print(f"Panel {panel_id} found but it has no widget")
             return None
             
+        print(f"Successfully retrieved {panel_id} panel")
         return panel_widget

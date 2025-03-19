@@ -25,7 +25,7 @@ def main():
     app.setApplicationName("DM Screen")
     app.setApplicationVersion("0.1.0")
     
-    # Initialize application state
+    # Initialize application state~
     app_state = AppState()
     
     # Create and show the main window

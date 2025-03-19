@@ -36,7 +36,11 @@ class MainWindow(QMainWindow):
         self.welcome_panel = None  # Keep track of welcome panel
         self.stored_visible_panels = []  # Store visible panels when welcome panel is shown
         
+        # Create the panel manager
         self.panel_manager = PanelManager(self, app_state)
+        
+        # Make panel manager available to app_state for easier access
+        app_state.panel_manager = self.panel_manager
         
         # Apply the current theme
         self.current_theme = app_state.get_setting("theme", "dark")

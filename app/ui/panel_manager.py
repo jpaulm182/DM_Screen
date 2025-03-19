@@ -389,8 +389,33 @@ class PanelManager(QObject):
                     panel.restore_state(panel_state)
     
     def get_panel(self, name):
-        """Get a panel by name"""
-        return self.panels.get(name)
+        """
+        Get a panel by name
+        
+        Args:
+            name: Panel ID or name
+            
+        Returns:
+            The panel dock widget or None if not found
+        """
+        print(f"PanelManager.get_panel called for: {name}")
+        print(f"Available panels: {list(self.panels.keys())}")
+        
+        # Standardize panel name
+        name = name.lower().strip()
+        
+        # Look for exact match first
+        panel = self.panels.get(name)
+        
+        # If not found, try case-insensitive match
+        if not panel:
+            for panel_id, dock in self.panels.items():
+                if panel_id.lower() == name:
+                    panel = dock
+                    break
+        
+        print(f"Panel {name} found: {panel is not None}")
+        return panel
 
     def toggle_panel(self, panel_type):
         """Toggle a panel on or off"""
@@ -406,6 +431,16 @@ class PanelManager(QObject):
             # Panel doesn't exist yet, create it
             self.create_panel(panel_type)
             return True  # Panel was created and should be visible
+    
+    def show_panel(self, panel_type):
+        """Show a panel, creating it if it doesn't exist"""
+        if panel_type in self.panels and self.panels[panel_type]:
+            self.panels[panel_type].show()
+            self.panels[panel_type].raise_()
+            return True
+        else:
+            # Panel doesn't exist yet, create it
+            return self.create_panel(panel_type)
 
     def smart_organize_panels(self):
         """Smart organization of panels to maximize usable space"""
