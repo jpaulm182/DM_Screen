@@ -104,6 +104,9 @@ class PlayerCharacter:
 class PlayerCharacterPanel(BasePanel):
     """Player Character Quick Reference Panel"""
     
+    # Signal emitted when adding character to combat
+    add_to_combat = Signal(object)  # Emits character data
+    
     def __init__(self, app_state):
         """Initialize the player character panel"""
         # Initialize attributes before parent constructor
@@ -146,6 +149,11 @@ class PlayerCharacterPanel(BasePanel):
         self.delete_btn = QPushButton("Delete")
         self.delete_btn.clicked.connect(self._delete_character)
         toolbar_layout.addWidget(self.delete_btn)
+        
+        # Add to combat button
+        self.add_to_combat_btn = QPushButton("Add to Combat")
+        self.add_to_combat_btn.clicked.connect(self._add_to_combat)
+        toolbar_layout.addWidget(self.add_to_combat_btn)
         
         main_layout.addLayout(toolbar_layout)
         
@@ -702,6 +710,12 @@ class PlayerCharacterPanel(BasePanel):
             return
             
         self.characters[self.current_character_index].notes = self.notes_edit.toPlainText()
+    
+    def _add_to_combat(self):
+        """Add the current character to the combat tracker"""
+        if self.current_character_index >= 0:
+            character = self.characters[self.current_character_index]
+            self.add_to_combat.emit(character)
     
     def save_state(self):
         """Save the panel state"""

@@ -728,6 +728,60 @@ class CombatTrackerPanel(BasePanel):
             print(f"Error adding monster: {str(e)}")  # Debug print
             QMessageBox.warning(
                 self,
-                "Add Monster Error",
-                f"Failed to add monster: {str(e)}"
+                "Error",
+                f"Failed to add monster to combat: {str(e)}"
+            )
+    
+    def add_character(self, character):
+        """Add a player character to the combat tracker from the character panel"""
+        print("Combat Tracker received character:", character.name)  # Debug print
+        try:
+            # Extract relevant data
+            name = character.name
+            hp = character.current_hp
+            ac = character.armor_class
+            
+            # Get initiative with bonus
+            initiative_roll = random.randint(1, 20)
+            initiative = initiative_roll + character.initiative_bonus
+            
+            print(f"Adding combatant - Name: {name}, Initiative: {initiative}, HP: {hp}, AC: {ac}")  # Debug print
+            
+            # Create new row
+            row = self.initiative_table.rowCount()
+            self.initiative_table.insertRow(row)
+            
+            # Create items
+            name_item = QTableWidgetItem(name)
+            initiative_item = QTableWidgetItem(str(initiative))
+            hp_item = QTableWidgetItem(str(hp))
+            hp_item.setData(Qt.UserRole, character.max_hp)  # Store max HP
+            ac_item = QTableWidgetItem(str(ac))
+            status_item = QTableWidgetItem("")
+            concentration_item = QTableWidgetItem()
+            concentration_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            concentration_item.setCheckState(Qt.Unchecked)
+            notes_item = QTableWidgetItem(f"{character.race} {character.character_class} (Lvl {character.level})")
+            
+            # Set items
+            self.initiative_table.setItem(row, 0, name_item)
+            self.initiative_table.setItem(row, 1, initiative_item)
+            self.initiative_table.setItem(row, 2, hp_item)
+            self.initiative_table.setItem(row, 3, ac_item)
+            self.initiative_table.setItem(row, 4, status_item)
+            self.initiative_table.setItem(row, 5, concentration_item)
+            self.initiative_table.setItem(row, 6, notes_item)
+            
+            # If combat hasn't started, sort by initiative
+            if not self.combat_started:
+                self._sort_initiative()
+                
+            print("Character successfully added to combat")  # Debug print
+            
+        except Exception as e:
+            print(f"Error adding character: {str(e)}")  # Debug print
+            QMessageBox.warning(
+                self,
+                "Error",
+                f"Failed to add character to combat: {str(e)}"
             )

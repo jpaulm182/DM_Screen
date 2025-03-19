@@ -234,6 +234,11 @@ class PanelManager(QObject):
             if conditions_panel and hasattr(conditions_panel, "apply_condition"):
                 conditions_panel.apply_condition.connect(combat_tracker.apply_condition)
             
+            # Connect player character panel to combat tracker
+            player_character_panel = self.panels["player_character"].widget()
+            if player_character_panel and hasattr(player_character_panel, "add_to_combat"):
+                player_character_panel.add_to_combat.connect(combat_tracker.add_character)
+            
             # Connect weather panel and time tracker panel (future integration)
             weather_panel = self.panels["weather"].widget()
             time_tracker = self.panels["time_tracker"].widget()
