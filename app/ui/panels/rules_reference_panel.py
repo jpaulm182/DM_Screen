@@ -306,7 +306,13 @@ class RulesReferencePanel(BasePanel):
             return
             
         category = current.parent().text(0)
-        rule = current.text(0)
+        rule_text = current.text(0)
+        
+        # Remove star prefix if present
+        if rule_text.startswith("★ "):
+            rule = rule_text[2:]  # Remove the star and space
+        else:
+            rule = rule_text
         
         if category in RULES and rule in RULES[category]:
             self.current_category = category
@@ -352,10 +358,18 @@ class RulesReferencePanel(BasePanel):
         
         # Get the rule info
         category = item.parent().text(0)
-        rule = item.text(0)
+        rule_text = item.text(0)
+        
+        # Remove star prefix if present
+        if rule_text.startswith("★ "):
+            rule = rule_text[2:]  # Remove the star and space
+        else:
+            rule = rule_text
+        
+        # Check if this rule is bookmarked
+        is_bookmarked = (category, rule) in self.bookmarks
         
         # Add bookmark action
-        is_bookmarked = (category, rule) in self.bookmarks
         bookmark_action = menu.addAction(self.bookmark_action_text)
         bookmark_action.setCheckable(True)
         bookmark_action.setChecked(is_bookmarked)
@@ -440,28 +454,37 @@ class RulesReferencePanel(BasePanel):
         # Format content for session notes
         formatted_content = f"## {rule_title}\n\n{rule_content}\n\n### DM Clarification\n\n"
         
-        # Get session notes panel
-        session_notes_panel = None
-        if "session_notes" in self.app_state.panels:
-            session_notes_panel = self.app_state.panels["session_notes"]
+        # Get session notes panel from panel_manager instead of app_state
+        panel_manager = self.parent().parent()  # Get to the PanelManager
+        session_notes_panel = panel_manager.get_panel("session_notes")
         
         if session_notes_panel:
-            # If session notes panel exists, create a new note with the rule
-            dialog = session_notes_panel._create_note_with_content(
+            # Make sure the session notes panel is visible
+            session_notes_panel.show()
+            
+            # Create a new note with the rule content
+            success = session_notes_panel._create_note_with_content(
                 f"Rule: {rule_title}", 
                 formatted_content,
                 tags="rules,clarification"
             )
-            if dialog:
+            
+            if success:
                 QMessageBox.information(
                     self, 
                     "Rule Added", 
                     f"The rule '{rule_title}' has been added to your session notes."
                 )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Note Creation Failed",
+                    "Failed to create note in session notes panel."
+                )
         else:
-            # Otherwise, show a message that the session notes panel is not available
+            # Panel not available, show error message
             QMessageBox.warning(
                 self, 
                 "Session Notes Not Available", 
-                "The Session Notes panel is not currently available. Please open it first."
+                "The Session Notes panel is not available. Please open it first."
             ) 

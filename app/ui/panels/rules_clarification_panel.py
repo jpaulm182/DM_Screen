@@ -117,10 +117,14 @@ class RulesClarificationPanel(BasePanel):
         self.save_button = QPushButton("Save Result")
         self.save_button.setEnabled(False)
         
+        self.save_to_notes_button = QPushButton("Save to Session Notes")
+        self.save_to_notes_button.setEnabled(False)
+        
         self.clear_button = QPushButton("Clear")
         
         query_buttons_layout.addWidget(self.query_button)
         query_buttons_layout.addWidget(self.save_button)
+        query_buttons_layout.addWidget(self.save_to_notes_button)
         query_buttons_layout.addWidget(self.clear_button)
         
         # Add elements to query input layout
@@ -178,6 +182,7 @@ class RulesClarificationPanel(BasePanel):
         # Button connections
         self.query_button.clicked.connect(self._generate_rule_clarification)
         self.save_button.clicked.connect(self._save_rule)
+        self.save_to_notes_button.clicked.connect(self._save_to_session_notes)
         self.clear_button.clicked.connect(self._clear_form)
         
         # Topic button connections
@@ -342,8 +347,12 @@ Format your answer in clear sections with markdown formatting for readability. M
         self.query_button.setEnabled(True)
         
         if error:
+            self.rule_display.setPlainText(f"Error: {error}")
+            self.rule_display.setStyleSheet("color: red;")
             self.status_label.setText(f"Error: {error}")
             self.status_label.setStyleSheet("color: red;")
+            self.save_button.setEnabled(False)
+            self.save_to_notes_button.setEnabled(False)
             return
         
         # Update UI with generated rule clarification
@@ -351,14 +360,22 @@ Format your answer in clear sections with markdown formatting for readability. M
         self.status_label.setText("Rule clarification generated!")
         self.status_label.setStyleSheet("color: green;")
         
-        # Enable save button
+        # Add to history
+        query_text = self.query_input.toPlainText()
+        item = QListWidgetItem(query_text[:50] + ("..." if len(query_text) > 50 else ""))
+        item.setData(Qt.UserRole, query_text)
+        self.history_list.insertItem(0, item)
+        
+        # Enable save buttons
         self.save_button.setEnabled(True)
+        self.save_to_notes_button.setEnabled(True)
         
         # Store the response for saving
         self.current_generation = {
             "content": response,
             "type": "rule_clarification",
-            "query": self.query_input.toPlainText().strip()
+            "query": self.query_input.toPlainText().strip(),
+            "timestamp": self.llm_service.get_timestamp()
         }
     
     def _save_rule(self):
@@ -404,6 +421,60 @@ Format your answer in clear sections with markdown formatting for readability. M
         if query_text:
             self.query_input.setPlainText(query_text)
     
+    def _save_to_session_notes(self):
+        """Save the current rule clarification to session notes"""
+        if not hasattr(self, 'current_generation') or not self.current_generation:
+            return
+        
+        # Extract a title from the query
+        query_text = self.current_generation.get("query", "")
+        title = query_text[:50] + ("..." if len(query_text) > 50 else "")
+        
+        # Format content for session notes
+        formatted_content = f"## Rule Clarification: {title}\n\n"
+        formatted_content += f"**Question:**\n{query_text}\n\n"
+        formatted_content += f"**Clarification:**\n{self.current_generation['content']}\n\n"
+        formatted_content += f"**Model:** {self.model_combo.currentText()}\n"
+        formatted_content += f"**Date:** {self.current_generation.get('timestamp', self.llm_service.get_timestamp())}\n"
+        
+        # Get session notes panel from panel_manager
+        panel_manager = self.parent().parent()  # Get to the PanelManager
+        session_notes_panel = panel_manager.get_panel("session_notes")
+        
+        if session_notes_panel:
+            # Make sure session notes panel is visible
+            session_notes_panel.show()
+            
+            # Get the widget inside the dock widget
+            notes_widget = session_notes_panel.widget()
+            
+            # Create a new note with the rule clarification
+            success = notes_widget._create_note_with_content(
+                f"Rule Clarification: {title}", 
+                formatted_content,
+                tags="rules,clarification,ai"
+            )
+            
+            if success:
+                QMessageBox.information(
+                    self, 
+                    "Rule Added", 
+                    f"The rule clarification has been added to your session notes."
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Note Creation Failed",
+                    "Failed to create note in session notes panel."
+                )
+        else:
+            # Panel not available, show error message
+            QMessageBox.warning(
+                self, 
+                "Session Notes Not Available", 
+                "The Session Notes panel is not available. Please open it first."
+            )
+    
     def _clear_form(self):
         """Clear the form and reset to default state"""
         # Reset input fields
@@ -413,8 +484,9 @@ Format your answer in clear sections with markdown formatting for readability. M
         self.rule_display.clear()
         self.rule_display.setPlaceholderText("Rule interpretations will appear here...")
         
-        # Disable save button
+        # Disable save buttons
         self.save_button.setEnabled(False)
+        self.save_to_notes_button.setEnabled(False)
         
         # Reset status
         self.status_label.setText("Ready")
