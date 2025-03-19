@@ -454,16 +454,27 @@ class RulesReferencePanel(BasePanel):
         # Format content for session notes
         formatted_content = f"## {rule_title}\n\n{rule_content}\n\n### DM Clarification\n\n"
         
-        # Get session notes panel from panel_manager instead of app_state
-        panel_manager = self.parent().parent()  # Get to the PanelManager
-        session_notes_panel = panel_manager.get_panel("session_notes")
+        # Get the session notes panel using our helper method
+        notes_widget = self.get_panel("session_notes")
+        print(f"Rules Reference - Session notes widget obtained: {notes_widget is not None}")
         
-        if session_notes_panel:
-            # Make sure the session notes panel is visible
-            session_notes_panel.show()
+        if notes_widget:
+            # Make sure the parent panel is visible 
+            dock = notes_widget.parent()
+            if dock:
+                dock.show()
+            
+            # Verify the widget has the required method
+            if not hasattr(notes_widget, '_create_note_with_content'):
+                QMessageBox.warning(
+                    self,
+                    "Session Notes Error",
+                    "The Session Notes panel doesn't have the required functionality to create notes."
+                )
+                return
             
             # Create a new note with the rule content
-            success = session_notes_panel._create_note_with_content(
+            success = notes_widget._create_note_with_content(
                 f"Rule: {rule_title}", 
                 formatted_content,
                 tags="rules,clarification"

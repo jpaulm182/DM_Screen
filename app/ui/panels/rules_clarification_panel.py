@@ -370,12 +370,16 @@ Format your answer in clear sections with markdown formatting for readability. M
         self.save_button.setEnabled(True)
         self.save_to_notes_button.setEnabled(True)
         
+        # Generate timestamp 
+        from datetime import datetime
+        timestamp = datetime.now().isoformat()
+        
         # Store the response for saving
         self.current_generation = {
             "content": response,
             "type": "rule_clarification",
             "query": self.query_input.toPlainText().strip(),
-            "timestamp": self.llm_service.get_timestamp()
+            "timestamp": timestamp
         }
     
     def _save_rule(self):
@@ -389,13 +393,16 @@ Format your answer in clear sections with markdown formatting for readability. M
         
         # Save to data manager
         try:
+            # Create prompt for saving
+            prompt = self._create_rules_prompt(query_text)
+            
             # Generate unique ID for this content
             content_id = self.llm_data_manager.add_generated_content(
                 title=title,
                 content_type="rule_clarification",
                 content=self.current_generation["content"],
                 model_id=self.model_combo.currentData(),
-                prompt=self._create_rules_prompt(query_text),
+                prompt=prompt,
                 tags=["rules", "clarification"]
             )
             
@@ -430,23 +437,35 @@ Format your answer in clear sections with markdown formatting for readability. M
         query_text = self.current_generation.get("query", "")
         title = query_text[:50] + ("..." if len(query_text) > 50 else "")
         
+        # Get timestamp
+        from datetime import datetime
+        timestamp = self.current_generation.get("timestamp") or datetime.now().isoformat()
+        
         # Format content for session notes
         formatted_content = f"## Rule Clarification: {title}\n\n"
         formatted_content += f"**Question:**\n{query_text}\n\n"
         formatted_content += f"**Clarification:**\n{self.current_generation['content']}\n\n"
         formatted_content += f"**Model:** {self.model_combo.currentText()}\n"
-        formatted_content += f"**Date:** {self.current_generation.get('timestamp', self.llm_service.get_timestamp())}\n"
+        formatted_content += f"**Date:** {timestamp}\n"
         
-        # Get session notes panel from panel_manager
-        panel_manager = self.parent().parent()  # Get to the PanelManager
-        session_notes_panel = panel_manager.get_panel("session_notes")
+        # Get the session notes panel using our helper method
+        notes_widget = self.get_panel("session_notes")
+        print(f"Rules Clarification - Session notes widget obtained: {notes_widget is not None}")
         
-        if session_notes_panel:
-            # Make sure session notes panel is visible
-            session_notes_panel.show()
+        if notes_widget:
+            # Make sure the parent panel is visible
+            dock = notes_widget.parent()
+            if dock:
+                dock.show()
             
-            # Get the widget inside the dock widget
-            notes_widget = session_notes_panel.widget()
+            # Verify the widget has the required method
+            if not hasattr(notes_widget, '_create_note_with_content'):
+                QMessageBox.warning(
+                    self,
+                    "Session Notes Error",
+                    "The Session Notes panel doesn't have the required functionality to create notes."
+                )
+                return
             
             # Create a new note with the rule clarification
             success = notes_widget._create_note_with_content(

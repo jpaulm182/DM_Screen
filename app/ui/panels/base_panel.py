@@ -56,3 +56,36 @@ class BasePanel(QWidget):
             state: Dictionary of panel state data
         """
         pass
+    
+    def get_panel(self, panel_id):
+        """
+        Helper method to get another panel from the panel manager
+        
+        Args:
+            panel_id: ID of the panel to retrieve
+            
+        Returns:
+            The panel widget if found, None otherwise
+        """
+        # Find the panel manager (parent of parent)
+        panel_manager = self.parent() and self.parent().parent()
+        
+        if not panel_manager:
+            print(f"Could not find panel manager from {self.__class__.__name__}")
+            return None
+            
+        # Get the requested panel
+        panel_dock = getattr(panel_manager, 'get_panel', lambda x: None)(panel_id)
+        
+        if not panel_dock:
+            print(f"Could not find panel {panel_id}")
+            return None
+            
+        # Get the widget inside the dock
+        panel_widget = panel_dock.widget()
+        
+        if not panel_widget:
+            print(f"Panel {panel_id} has no widget")
+            return None
+            
+        return panel_widget
