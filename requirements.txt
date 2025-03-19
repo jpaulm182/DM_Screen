@@ -1,0 +1,4 @@
+# Main dependencies
+PySide6>=6.8.0
+Pillow>=10.0.0  # For image handling
+python-dotenv>=1.0.0  # For environment variables

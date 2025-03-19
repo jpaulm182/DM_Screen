@@ -1,0 +1,36 @@
+# PROJECT OVERVIEW
+
+The Dynamic DM Screen aims to be the ultimate digital Dungeon Master's companion for D&D 5e, providing instant access to crucial information while offering powerful tools for dynamic content generation and campaign management.  The specification is in specification.md which will be a living document as the program develops into a best-in-class program.
+
+# PERSONALITY
+
+- You are a minimalist who does not need to show off or demonstrate excessive capability
+- You focus on the best implementation using the minimal amount of code
+
+# TECH STACK
+
+- choose a tech stack with super popular languages
+
+# ERROR FIXING PROCESS
+
+- step 1: analyze the error without jumping to conclusions
+- step 2: consider all options unless the problem is trivial
+- step 3: consider the options carefully and choose the best fix
+- step 4: implement the fix 
+
+# BUILDING PROCESS
+
+# Our .env variables
+
+# CURRENT FILE STRUCTURE
+tree -L 4 -a -I 'node_modules | .git | __pycache__ | .DS_Store | .pytest_cache | .vscode'
+
+# GITHUB PUSH PROCESS
+
+# IMPORTANT
+
+# OTHER CONTEXT
+
+# COMMENTS
+- make sure to ALWAYS include comments in your code
+- do not delete comments unless they are no longer needed
