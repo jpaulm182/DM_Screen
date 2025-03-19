@@ -85,10 +85,18 @@ class LLMWorker(QRunnable):
                 temperature=self.temperature,
                 max_tokens=self.max_tokens
             )
-            self.callback(response, None)
+            # Use try/except to safely call the callback
+            try:
+                self.callback(response, None)
+            except Exception as callback_err:
+                logging.error(f"Error in callback handler: {str(callback_err)}")
         except Exception as e:
             logging.error(f"LLM API error: {str(e)}")
-            self.callback(None, str(e))
+            # Safely call callback with error
+            try:
+                self.callback(None, str(e))
+            except Exception as callback_err:
+                logging.error(f"Error in error callback handler: {str(callback_err)}")
 
 
 class LLMService(QObject):

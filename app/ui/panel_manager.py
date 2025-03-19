@@ -24,6 +24,8 @@ from app.ui.panels.time_tracker_panel import TimeTrackerPanel
 from app.ui.panels.panel_category import PanelCategory
 from app.ui.panels.player_character_panel import PlayerCharacterPanel
 from app.ui.panels.llm_panel import LLMPanel  # Import the new LLM panel
+from app.ui.panels.npc_generator_panel import NPCGeneratorPanel  # Import the NPC Generator panel
+from app.ui.panels.rules_clarification_panel import RulesClarificationPanel  # Import the Rules Clarification panel
 
 
 class PanelManager(QObject):
@@ -60,6 +62,8 @@ class PanelManager(QObject):
         self.panels["weather"] = self._create_panel(WeatherPanel, "weather")
         self.panels["time_tracker"] = self._create_panel(TimeTrackerPanel, "time_tracker")
         self.panels["llm"] = self._create_panel(LLMPanel, "llm")  # Add the LLM panel
+        self.panels["npc_generator"] = self._create_panel(NPCGeneratorPanel, "npc_generator")  # Add the NPC Generator panel
+        self.panels["rules_clarification"] = self._create_panel(RulesClarificationPanel, "rules_clarification")  # Add the Rules Clarification panel
         
         # Organize panels by category
         self._organize_panels_by_category()
@@ -241,7 +245,16 @@ class PanelManager(QObject):
             if player_character_panel and hasattr(player_character_panel, "add_to_combat"):
                 player_character_panel.add_to_combat.connect(combat_tracker.add_character)
             
-            # Connect weather panel and time tracker panel (future integration)
+            # Connect NPC Generator to LLM panel for context sharing (if implemented)
+            npc_generator = self.panels["npc_generator"].widget()
+            llm_panel = self.panels["llm"].widget()
+            
+            # If the NPC generator has appropriate signals, connect it
+            if npc_generator and combat_tracker and hasattr(npc_generator, "npc_generated"):
+                # In future, this could add NPCs directly to combat
+                pass
+            
+            # Weather panel and time tracker panel (future integration)
             weather_panel = self.panels["weather"].widget()
             time_tracker = self.panels["time_tracker"].widget()
             

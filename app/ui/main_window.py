@@ -169,6 +169,11 @@ class MainWindow(QMainWindow):
             lambda: self.panel_manager.toggle_panel("spell_reference"))
         self.panel_actions["spell_reference"] = spell_action
         
+        rules_clarification_action = reference_menu.addAction("Rules Clarification")
+        rules_clarification_action.triggered.connect(
+            lambda: self.panel_manager.toggle_panel("rules_clarification"))
+        self.panel_actions["rules_clarification"] = rules_clarification_action
+        
         llm_action = reference_menu.addAction("AI Assistant")
         llm_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("llm"))
@@ -185,6 +190,11 @@ class MainWindow(QMainWindow):
         player_chars_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("player_character"))
         self.panel_actions["player_character"] = player_chars_action
+        
+        npc_generator_action = campaign_menu.addAction("NPC Generator")
+        npc_generator_action.triggered.connect(
+            lambda: self.panel_manager.toggle_panel("npc_generator"))
+        self.panel_actions["npc_generator"] = npc_generator_action
         
         # Utility panels
         utility_menu = panels_menu.addMenu("&Utilities")

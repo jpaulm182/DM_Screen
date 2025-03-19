@@ -25,8 +25,11 @@ class PanelCategory:
         "rules_reference": REFERENCE,
         "monster": REFERENCE,
         "spell_reference": REFERENCE,
+        "llm": REFERENCE,
+        "rules_clarification": REFERENCE,
         "session_notes": CAMPAIGN,
         "player_character": CAMPAIGN,
+        "npc_generator": CAMPAIGN,
         "weather": UTILITY,
         "time_tracker": UTILITY
     }

@@ -30,6 +30,10 @@ class LLMDataManager:
         self.llm_dir = app_state.data_dir / "llm"
         self.llm_dir.mkdir(exist_ok=True, parents=True)
         
+        # Create campaign content directory
+        self.campaign_dir = self.llm_dir / "campaigns"
+        self.campaign_dir.mkdir(exist_ok=True, parents=True)
+        
         # Initialize database
         self._init_database()
     
@@ -95,6 +99,42 @@ class LLMDataManager:
         )
         ''')
         
+        # Campaign table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS llm_campaigns (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        ''')
+        
+        # Campaign context elements table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS llm_campaign_contexts (
+            id TEXT PRIMARY KEY,
+            campaign_id TEXT NOT NULL,
+            element_type TEXT NOT NULL,
+            name TEXT NOT NULL,
+            content TEXT NOT NULL,
+            priority INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (campaign_id) REFERENCES llm_campaigns (id) ON DELETE CASCADE
+        )
+        ''')
+        
+        # Content - Campaign relationship table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS llm_content_campaigns (
+            content_id TEXT NOT NULL,
+            campaign_id TEXT NOT NULL,
+            PRIMARY KEY (content_id, campaign_id),
+            FOREIGN KEY (campaign_id) REFERENCES llm_campaigns (id) ON DELETE CASCADE
+        )
+        ''')
+        
         # Create indexes
         cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_llm_messages_conversation_id 
@@ -104,6 +144,16 @@ class LLMDataManager:
         cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_llm_generated_content_type 
         ON llm_generated_content (content_type)
+        ''')
+        
+        cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_llm_campaign_contexts_campaign_id 
+        ON llm_campaign_contexts (campaign_id)
+        ''')
+        
+        cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_llm_campaign_contexts_element_type 
+        ON llm_campaign_contexts (element_type)
         ''')
         
         # Commit changes
@@ -528,4 +578,477 @@ class LLMDataManager:
             content['tags'] = json.loads(content['tags'])
             result.append(content)
             
+        return result
+    
+    # Campaign Context Management Methods
+    
+    def create_campaign(self, name, description=None):
+        """
+        Create a new campaign for context management
+        
+        Args:
+            name: Campaign name
+            description: Optional campaign description
+            
+        Returns:
+            Campaign ID
+        """
+        campaign_id = str(uuid.uuid4())
+        timestamp = datetime.now().isoformat()
+        
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            INSERT INTO llm_campaigns 
+            (id, name, description, created_at, updated_at) 
+            VALUES (?, ?, ?, ?, ?)
+            ''',
+            (campaign_id, name, description, timestamp, timestamp)
+        )
+        
+        conn.commit()
+        
+        # Create campaign directory
+        campaign_path = self.campaign_dir / campaign_id
+        campaign_path.mkdir(exist_ok=True)
+        
+        return campaign_id
+    
+    def get_campaign(self, campaign_id):
+        """
+        Get campaign details
+        
+        Args:
+            campaign_id: Campaign ID
+            
+        Returns:
+            Dictionary with campaign details
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            SELECT * FROM llm_campaigns WHERE id = ?
+            ''',
+            (campaign_id,)
+        )
+        
+        row = cursor.fetchone()
+        if not row:
+            return None
+        
+        return dict(row)
+    
+    def get_all_campaigns(self):
+        """
+        Get all campaigns
+        
+        Returns:
+            List of campaign dictionaries
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            SELECT * FROM llm_campaigns ORDER BY name
+            '''
+        )
+        
+        return [dict(row) for row in cursor.fetchall()]
+    
+    def update_campaign(self, campaign_id, name=None, description=None):
+        """
+        Update campaign details
+        
+        Args:
+            campaign_id: Campaign ID
+            name: New campaign name (or None to keep existing)
+            description: New description (or None to keep existing)
+            
+        Returns:
+            True if updated successfully
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        # Get current values
+        cursor.execute(
+            '''
+            SELECT name, description FROM llm_campaigns WHERE id = ?
+            ''',
+            (campaign_id,)
+        )
+        
+        row = cursor.fetchone()
+        if not row:
+            return False
+        
+        # Use provided values or fall back to existing values
+        name = name if name is not None else row['name']
+        description = description if description is not None else row['description']
+        timestamp = datetime.now().isoformat()
+        
+        cursor.execute(
+            '''
+            UPDATE llm_campaigns 
+            SET name = ?, description = ?, updated_at = ? 
+            WHERE id = ?
+            ''',
+            (name, description, timestamp, campaign_id)
+        )
+        
+        conn.commit()
+        return cursor.rowcount > 0
+    
+    def delete_campaign(self, campaign_id):
+        """
+        Delete a campaign and all its context elements
+        
+        Args:
+            campaign_id: Campaign ID
+            
+        Returns:
+            True if deleted successfully
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        # Delete campaign
+        cursor.execute(
+            '''
+            DELETE FROM llm_campaigns WHERE id = ?
+            ''',
+            (campaign_id,)
+        )
+        
+        result = cursor.rowcount > 0
+        conn.commit()
+        
+        # Delete campaign directory if it exists
+        campaign_path = self.campaign_dir / campaign_id
+        if campaign_path.exists():
+            for file in campaign_path.glob('*'):
+                file.unlink()
+            campaign_path.rmdir()
+        
+        return result
+    
+    def add_context_element(self, campaign_id, element_type, name, content, priority=0):
+        """
+        Add a context element to a campaign
+        
+        Args:
+            campaign_id: Campaign ID
+            element_type: Type of element (e.g., 'character', 'location', 'plot')
+            name: Name of the element
+            content: Element content/description
+            priority: Priority for context inclusion (higher = more important)
+            
+        Returns:
+            Element ID
+        """
+        element_id = str(uuid.uuid4())
+        timestamp = datetime.now().isoformat()
+        
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            INSERT INTO llm_campaign_contexts 
+            (id, campaign_id, element_type, name, content, priority, created_at, updated_at) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (element_id, campaign_id, element_type, name, content, priority, timestamp, timestamp)
+        )
+        
+        # Update campaign's updated_at timestamp
+        cursor.execute(
+            '''
+            UPDATE llm_campaigns SET updated_at = ? WHERE id = ?
+            ''',
+            (timestamp, campaign_id)
+        )
+        
+        conn.commit()
+        return element_id
+    
+    def get_context_element(self, element_id):
+        """
+        Get a context element
+        
+        Args:
+            element_id: Element ID
+            
+        Returns:
+            Dictionary with element details
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            SELECT * FROM llm_campaign_contexts WHERE id = ?
+            ''',
+            (element_id,)
+        )
+        
+        row = cursor.fetchone()
+        if not row:
+            return None
+        
+        return dict(row)
+    
+    def update_context_element(self, element_id, name=None, content=None, priority=None):
+        """
+        Update a context element
+        
+        Args:
+            element_id: Element ID
+            name: New element name (or None to keep existing)
+            content: New content (or None to keep existing)
+            priority: New priority (or None to keep existing)
+            
+        Returns:
+            True if updated successfully
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        # Get current values
+        cursor.execute(
+            '''
+            SELECT name, content, priority, campaign_id FROM llm_campaign_contexts WHERE id = ?
+            ''',
+            (element_id,)
+        )
+        
+        row = cursor.fetchone()
+        if not row:
+            return False
+        
+        # Use provided values or fall back to existing values
+        name = name if name is not None else row['name']
+        content = content if content is not None else row['content']
+        priority = priority if priority is not None else row['priority']
+        timestamp = datetime.now().isoformat()
+        
+        cursor.execute(
+            '''
+            UPDATE llm_campaign_contexts 
+            SET name = ?, content = ?, priority = ?, updated_at = ? 
+            WHERE id = ?
+            ''',
+            (name, content, priority, timestamp, element_id)
+        )
+        
+        # Update campaign's updated_at timestamp
+        cursor.execute(
+            '''
+            UPDATE llm_campaigns SET updated_at = ? WHERE id = ?
+            ''',
+            (timestamp, row['campaign_id'])
+        )
+        
+        conn.commit()
+        return cursor.rowcount > 0
+    
+    def delete_context_element(self, element_id):
+        """
+        Delete a context element
+        
+        Args:
+            element_id: Element ID
+            
+        Returns:
+            True if deleted successfully
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        # Get campaign_id first
+        cursor.execute(
+            '''
+            SELECT campaign_id FROM llm_campaign_contexts WHERE id = ?
+            ''',
+            (element_id,)
+        )
+        
+        row = cursor.fetchone()
+        if not row:
+            return False
+        
+        campaign_id = row['campaign_id']
+        timestamp = datetime.now().isoformat()
+        
+        # Delete element
+        cursor.execute(
+            '''
+            DELETE FROM llm_campaign_contexts WHERE id = ?
+            ''',
+            (element_id,)
+        )
+        
+        result = cursor.rowcount > 0
+        
+        # Update campaign's updated_at timestamp
+        if result:
+            cursor.execute(
+                '''
+                UPDATE llm_campaigns SET updated_at = ? WHERE id = ?
+                ''',
+                (timestamp, campaign_id)
+            )
+        
+        conn.commit()
+        return result
+    
+    def get_campaign_context_elements(self, campaign_id, element_type=None, limit_by_priority=None):
+        """
+        Get context elements for a campaign
+        
+        Args:
+            campaign_id: Campaign ID
+            element_type: Optional filter by element type
+            limit_by_priority: Optional limit to top N highest priority elements
+            
+        Returns:
+            List of element dictionaries
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        query = '''
+            SELECT * FROM llm_campaign_contexts 
+            WHERE campaign_id = ?
+        '''
+        params = [campaign_id]
+        
+        if element_type:
+            query += ' AND element_type = ?'
+            params.append(element_type)
+        
+        query += ' ORDER BY priority DESC'
+        
+        if limit_by_priority is not None and isinstance(limit_by_priority, int) and limit_by_priority > 0:
+            query += ' LIMIT ?'
+            params.append(limit_by_priority)
+        
+        cursor.execute(query, params)
+        return [dict(row) for row in cursor.fetchall()]
+    
+    def get_campaign_context_for_prompt(self, campaign_id, max_elements=10, max_tokens=2000):
+        """
+        Get formatted campaign context for use in LLM prompts
+        
+        Args:
+            campaign_id: Campaign ID
+            max_elements: Maximum number of context elements to include
+            max_tokens: Approximate maximum tokens (characters / 4)
+            
+        Returns:
+            Formatted context string ready for inclusion in prompts
+        """
+        # Get campaign details
+        campaign = self.get_campaign(campaign_id)
+        if not campaign:
+            return ""
+        
+        # Get context elements sorted by priority
+        elements = self.get_campaign_context_elements(campaign_id, limit_by_priority=max_elements)
+        
+        # Format context string
+        context_parts = [f"# Campaign: {campaign['name']}"]
+        if campaign['description']:
+            context_parts.append(f"Campaign Description: {campaign['description']}")
+        
+        # Group elements by type
+        element_types = {}
+        for element in elements:
+            element_type = element['element_type']
+            if element_type not in element_types:
+                element_types[element_type] = []
+            element_types[element_type].append(element)
+        
+        # Add elements by type
+        for element_type, type_elements in element_types.items():
+            context_parts.append(f"\n## {element_type.title()}s:")
+            for element in type_elements:
+                context_parts.append(f"### {element['name']}")
+                context_parts.append(element['content'])
+        
+        # Join all parts
+        full_context = "\n".join(context_parts)
+        
+        # Truncate if necessary to approximate token limit
+        if len(full_context) > max_tokens * 4:
+            return full_context[:max_tokens * 4] + "\n\n[Context truncated due to length]"
+        
+        return full_context
+    
+    def associate_content_with_campaign(self, content_id, campaign_id):
+        """
+        Associate generated content with a campaign
+        
+        Args:
+            content_id: Content ID
+            campaign_id: Campaign ID
+            
+        Returns:
+            True if association was created
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute(
+                '''
+                INSERT INTO llm_content_campaigns (content_id, campaign_id)
+                VALUES (?, ?)
+                ''',
+                (content_id, campaign_id)
+            )
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            # Association already exists or foreign key constraint failed
+            return False
+    
+    def get_campaign_content(self, campaign_id, content_type=None, limit=100, offset=0):
+        """
+        Get content associated with a campaign
+        
+        Args:
+            campaign_id: Campaign ID
+            content_type: Optional filter by content type
+            limit: Maximum number of items to return
+            offset: Offset for pagination
+            
+        Returns:
+            List of content items
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        query = '''
+            SELECT c.* FROM llm_generated_content c
+            JOIN llm_content_campaigns cc ON c.id = cc.content_id
+            WHERE cc.campaign_id = ?
+        '''
+        params = [campaign_id]
+        
+        if content_type:
+            query += ' AND c.content_type = ?'
+            params.append(content_type)
+        
+        query += ' ORDER BY c.created_at DESC LIMIT ? OFFSET ?'
+        params.extend([limit, offset])
+        
+        cursor.execute(query, params)
+        
+        result = []
+        for row in cursor.fetchall():
+            item = dict(row)
+            item['tags'] = json.loads(item['tags'])
+            result.append(item)
+        
         return result 
