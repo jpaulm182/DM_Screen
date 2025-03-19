@@ -62,9 +62,33 @@ class PanelManager(QObject):
         
         # Only show essential panels on startup to avoid overlap
         essential_panels = ["combat_tracker", "dice_roller", "session_notes"]
-        for panel_id in essential_panels:
-            if panel_id in self.panels and self.panels[panel_id]:
-                self.panels[panel_id].show()
+        
+        # Show combat tracker and dice roller side by side (not tabified)
+        if "combat_tracker" in self.panels and self.panels["combat_tracker"]:
+            self.panels["combat_tracker"].show()
+        
+        if "dice_roller" in self.panels and self.panels["dice_roller"]:
+            self.panels["dice_roller"].show()
+        
+        # If both combat tracker and dice roller are shown, split them horizontally
+        if "combat_tracker" in self.panels and self.panels["combat_tracker"]:
+            self.main_window.splitDockWidget(
+                self.panels["combat_tracker"],
+                self.panels["dice_roller"],
+                Qt.Horizontal
+            )
+        
+        # Show session notes (in a different dock area)
+        if "session_notes" in self.panels and self.panels["session_notes"]:
+            self.panels["session_notes"].show()
+        
+        # Split session notes vertically with combat panels
+        if "combat_tracker" in self.panels and self.panels["combat_tracker"]:
+            self.main_window.splitDockWidget(
+                self.panels["combat_tracker"],
+                self.panels["session_notes"],
+                Qt.Vertical
+            )
         
         # Raise the combat tracker initially
         if "combat_tracker" in self.panels and self.panels["combat_tracker"]:
@@ -101,30 +125,42 @@ class PanelManager(QObject):
             else:  # UTILITY
                 self.main_window.addDockWidget(Qt.BottomDockWidgetArea, dock)
         
-        # Tabify related panels within the same category
-        self._tabify_panels_by_category()
+        # Stack related panels in the same category, but don't tabify all of them
+        self._stack_similar_panels()
     
-    def _tabify_panels_by_category(self):
-        """Tabify related panels within the same category"""
-        # Process each category
-        for category, panel_ids in self.panel_categories.items():
-            if len(panel_ids) < 2:
-                continue
-                
-            # Get the first panel in this category as the reference
-            first_panel_id = panel_ids[0]
-            first_panel = self.panels.get(first_panel_id)
-            
-            if not first_panel:
-                continue
-                
-            # Tabify all other panels in this category with the first one
-            for i in range(1, len(panel_ids)):
-                panel_id = panel_ids[i]
-                panel = self.panels.get(panel_id)
-                
-                if panel:
-                    self.main_window.tabifyDockWidget(first_panel, panel)
+    def _stack_similar_panels(self):
+        """Stack some related panels while allowing others to be side by side"""
+        # For each category, we'll organize based on panel function
+        
+        # Reference category: tabify conditions, monster, and spell reference panels
+        reference_tabs = ["conditions", "monster", "spell_reference"]
+        self._tabify_specific_panels(reference_tabs)
+        
+        # Utility category: tabify weather and time tracker panels
+        utility_tabs = ["weather", "time_tracker"]
+        self._tabify_specific_panels(utility_tabs)
+        
+        # Combat category: allow combat_tracker and dice_roller to be separate
+        # We don't tabify these as they're frequently used together
+    
+    def _tabify_specific_panels(self, panel_ids):
+        """Tabify a specific set of panels if they exist"""
+        first_panel = None
+        
+        # Find the first available panel to use as reference
+        for panel_id in panel_ids:
+            if panel_id in self.panels and self.panels[panel_id]:
+                first_panel = self.panels[panel_id]
+                break
+        
+        if not first_panel:
+            return
+        
+        # Tabify the remaining panels with the first one
+        for panel_id in panel_ids:
+            if (panel_id in self.panels and self.panels[panel_id] and 
+                self.panels[panel_id] != first_panel):
+                self.main_window.tabifyDockWidget(first_panel, self.panels[panel_id])
     
     def _create_panel(self, panel_class, panel_id):
         """Create a new panel instance wrapped in a QDockWidget"""
@@ -283,15 +319,34 @@ class PanelManager(QObject):
         self._tabify_panel_with_category(panel_type, category)
     
     def _tabify_panel_with_category(self, panel_type, category):
-        """Tabify a panel with others in its category"""
-        # Find another visible panel in this category to tabify with
-        for other_panel_id in self.panel_categories[category]:
-            if other_panel_id != panel_type and self.panels[other_panel_id].isVisible():
-                self.main_window.tabifyDockWidget(
-                    self.panels[other_panel_id],
-                    self.panels[panel_type]
-                )
-                return
+        """Tabify a panel with others in its category if appropriate"""
+        # For combat panels, we don't automatically tabify
+        if category == PanelCategory.COMBAT:
+            return
+        
+        # For reference panels, tabify with existing reference panels if visible
+        reference_tabs = ["conditions", "monster", "spell_reference"]
+        if category == PanelCategory.REFERENCE and panel_type in reference_tabs:
+            for other_id in reference_tabs:
+                if (other_id != panel_type and other_id in self.panels and 
+                    self.panels[other_id].isVisible()):
+                    self.main_window.tabifyDockWidget(
+                        self.panels[other_id],
+                        self.panels[panel_type]
+                    )
+                    return
+                
+        # For utility panels, tabify with existing utility panels if visible
+        utility_tabs = ["weather", "time_tracker"]
+        if category == PanelCategory.UTILITY and panel_type in utility_tabs:
+            for other_id in utility_tabs:
+                if (other_id != panel_type and other_id in self.panels and 
+                    self.panels[other_id].isVisible()):
+                    self.main_window.tabifyDockWidget(
+                        self.panels[other_id],
+                        self.panels[panel_type]
+                    )
+                    return
     
     def update_theme(self, theme):
         """Update the theme for all panels"""
@@ -336,12 +391,15 @@ class PanelManager(QObject):
         if panel_type in self.panels and self.panels[panel_type]:
             if self.panels[panel_type].isVisible():
                 self.panels[panel_type].hide()
+                return False  # Panel is now hidden
             else:
                 self.panels[panel_type].show()
                 self.panels[panel_type].raise_()
+                return True  # Panel is now visible
         else:
             # Panel doesn't exist yet, create it
             self.create_panel(panel_type)
+            return True  # Panel was created and should be visible
 
     def smart_organize_panels(self):
         """Smart organization of panels to maximize usable space"""
@@ -363,23 +421,23 @@ class PanelManager(QObject):
         # - Campaign: Bottom Left
         # - Utility: Bottom Right
         
-        # Organize combat panels
+        # Organize combat panels - allow combat_tracker and dice_roller to be side by side
         combat_panels = [p for p in self.panel_categories.get(PanelCategory.COMBAT, []) 
                          if p in visible_panels]
         if combat_panels:
-            # Add first panel
-            first_panel = combat_panels[0]
-            self.main_window.addDockWidget(Qt.TopDockWidgetArea, self.panels[first_panel])
-            self.panels[first_panel].show()
-            
-            # Tabify remaining combat panels
-            for i in range(1, len(combat_panels)):
-                panel_id = combat_panels[i]
-                self.main_window.tabifyDockWidget(
-                    self.panels[first_panel],
-                    self.panels[panel_id]
-                )
+            # Add all combat panels to the top-left area
+            for i, panel_id in enumerate(combat_panels):
+                self.main_window.addDockWidget(Qt.TopDockWidgetArea, self.panels[panel_id])
                 self.panels[panel_id].show()
+                
+            # If we have more than one combat panel, split them horizontally
+            if len(combat_panels) > 1:
+                for i in range(1, len(combat_panels)):
+                    self.main_window.splitDockWidget(
+                        self.panels[combat_panels[0]],
+                        self.panels[combat_panels[i]],
+                        Qt.Horizontal
+                    )
         
         # Organize reference panels
         reference_panels = [p for p in self.panel_categories.get(PanelCategory.REFERENCE, []) 
@@ -390,14 +448,30 @@ class PanelManager(QObject):
             self.main_window.addDockWidget(Qt.TopDockWidgetArea, self.panels[first_panel])
             self.panels[first_panel].show()
             
-            # Tabify remaining reference panels
-            for i in range(1, len(reference_panels)):
-                panel_id = reference_panels[i]
-                self.main_window.tabifyDockWidget(
-                    self.panels[first_panel],
-                    self.panels[panel_id]
-                )
-                self.panels[panel_id].show()
+            # Group reference panels that should be tabified
+            reference_tabs = ["conditions", "monster", "spell_reference"]
+            tab_group = [p for p in reference_panels if p in reference_tabs]
+            non_tab_group = [p for p in reference_panels if p not in reference_tabs]
+            
+            # Tabify panels in the tab group
+            if len(tab_group) > 1:
+                for i in range(1, len(tab_group)):
+                    self.main_window.tabifyDockWidget(
+                        self.panels[tab_group[0]],
+                        self.panels[tab_group[i]]
+                    )
+                    self.panels[tab_group[i]].show()
+                
+            # Add other reference panels side by side
+            if non_tab_group:
+                for panel_id in non_tab_group:
+                    if panel_id != first_panel:  # Skip the first panel we already added
+                        self.main_window.splitDockWidget(
+                            self.panels[first_panel],
+                            self.panels[panel_id],
+                            Qt.Vertical
+                        )
+                        self.panels[panel_id].show()
             
             # Split combat and reference horizontally if both exist
             if combat_panels:
@@ -442,14 +516,30 @@ class PanelManager(QObject):
             self.main_window.addDockWidget(Qt.BottomDockWidgetArea, self.panels[first_panel])
             self.panels[first_panel].show()
             
-            # Tabify remaining utility panels
-            for i in range(1, len(utility_panels)):
-                panel_id = utility_panels[i]
-                self.main_window.tabifyDockWidget(
-                    self.panels[first_panel],
-                    self.panels[panel_id]
-                )
-                self.panels[panel_id].show()
+            # Group utility panels that should be tabified
+            utility_tabs = ["weather", "time_tracker"]
+            tab_group = [p for p in utility_panels if p in utility_tabs]
+            non_tab_group = [p for p in utility_panels if p not in utility_tabs]
+            
+            # Tabify panels in the tab group
+            if len(tab_group) > 1:
+                for i in range(1, len(tab_group)):
+                    self.main_window.tabifyDockWidget(
+                        self.panels[tab_group[0]],
+                        self.panels[tab_group[i]]
+                    )
+                    self.panels[tab_group[i]].show()
+            
+            # Add other utility panels side by side
+            if non_tab_group:
+                for panel_id in non_tab_group:
+                    if panel_id != first_panel:  # Skip the first panel we already added
+                        self.main_window.splitDockWidget(
+                            self.panels[first_panel],
+                            self.panels[panel_id],
+                            Qt.Vertical
+                        )
+                        self.panels[panel_id].show()
             
             # Split horizontally with campaign panels if they exist,
             # otherwise split vertically with reference panels
