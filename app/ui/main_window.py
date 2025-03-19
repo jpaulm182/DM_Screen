@@ -6,16 +6,19 @@ Implements the main UI window with dynamic layout system and panel management.
 """
 
 from PySide6.QtWidgets import (
-    QMainWindow, QDockWidget, QToolBar, QMenu, QMenuBar,
-    QStatusBar, QFileDialog, QMessageBox, QLabel
+    QApplication, QMainWindow, QDockWidget, QToolBar, QMenu, QMenuBar,
+    QStatusBar, QFileDialog, QMessageBox, QLabel, QInputDialog, QComboBox
 )
-from PySide6.QtCore import Qt, QSize, QTimer
-from PySide6.QtGui import QIcon, QAction
+from PySide6.QtCore import Qt, QSize, QTimer, QByteArray
+from PySide6.QtGui import QIcon, QAction, QKeySequence
+from datetime import datetime
 
 from app.ui.panel_manager import PanelManager
 from app.ui.panels.welcome_panel import WelcomePanel
 from app.ui.theme_manager import apply_theme
 from app.ui.panels.panel_category import PanelCategory
+from app.ui.layout_name_dialog import LayoutNameDialog
+from app.ui.layout_select_dialog import LayoutSelectDialog
 
 
 class MainWindow(QMainWindow):
@@ -44,8 +47,7 @@ class MainWindow(QMainWindow):
         self._create_status_bar()
         
         # Load the default layout or show welcome screen
-        if not self.app_state.load_layout():
-            self._show_welcome_panel()
+        self._load_initial_layout()
         
         # Start UI update timer for panel states
         self.update_timer = QTimer(self)
@@ -94,9 +96,23 @@ class MainWindow(QMainWindow):
         save_layout_action.setShortcut("Ctrl+Alt+S")
         save_layout_action.triggered.connect(self._save_layout)
         
+        save_layout_as_action = layout_menu.addAction("Save Layout &As...")
+        save_layout_as_action.triggered.connect(self._save_layout_as)
+        
+        layout_menu.addSeparator()
+        
         load_layout_action = layout_menu.addAction("&Load Layout")
         load_layout_action.setShortcut("Ctrl+Alt+L")
         load_layout_action.triggered.connect(self._load_layout)
+        
+        manage_layouts_action = layout_menu.addAction("&Manage Layouts")
+        manage_layouts_action.triggered.connect(self._manage_layouts)
+        
+        layout_menu.addSeparator()
+        
+        # Add layout presets submenu
+        self.preset_layouts_menu = layout_menu.addMenu("Preset Layouts")
+        self._populate_preset_layouts_menu()
         
         # Add Smart Organize action
         smart_organize_action = view_menu.addAction("Smart &Organize Panels")
@@ -158,6 +174,11 @@ class MainWindow(QMainWindow):
             lambda: self.panel_manager.toggle_panel("session_notes"))
         self.panel_actions["session_notes"] = notes_action
         
+        player_chars_action = campaign_menu.addAction("Player Characters")
+        player_chars_action.triggered.connect(
+            lambda: self.panel_manager.toggle_panel("player_character"))
+        self.panel_actions["player_character"] = player_chars_action
+        
         # Utility panels
         utility_menu = panels_menu.addMenu("&Utilities")
         weather_action = utility_menu.addAction("Weather Generator")
@@ -174,9 +195,48 @@ class MainWindow(QMainWindow):
         help_menu = self.menuBar().addMenu("&Help")
         help_menu.addAction("&About").triggered.connect(self._show_about)
     
+    def _populate_preset_layouts_menu(self):
+        """Populate the preset layouts menu with available layouts"""
+        self.preset_layouts_menu.clear()
+        
+        # Get all available layouts
+        layouts = self.app_state.get_available_layouts()
+        
+        # Add preset layouts to menu
+        preset_layouts = {name: data for name, data in layouts.items() 
+                         if data.get("is_preset", False)}
+        
+        # Sort by category
+        by_category = {}
+        for name, data in preset_layouts.items():
+            category = data.get("category", "Custom")
+            if category not in by_category:
+                by_category[category] = []
+            by_category[category].append((name, data))
+        
+        if not preset_layouts:
+            empty_action = self.preset_layouts_menu.addAction("No presets available")
+            empty_action.setEnabled(False)
+            return
+        
+        # Add actions by category
+        for category in sorted(by_category.keys()):
+            # Add category as submenu if there are multiple items
+            if len(by_category[category]) > 1:
+                category_menu = self.preset_layouts_menu.addMenu(category)
+                for name, _ in sorted(by_category[category]):
+                    action = category_menu.addAction(name)
+                    action.triggered.connect(lambda checked=False, n=name: self._load_preset_layout(n))
+            # Otherwise add directly
+            elif by_category[category]:
+                name, _ = by_category[category][0]
+                action = self.preset_layouts_menu.addAction(f"{name} ({category})")
+                action.triggered.connect(lambda checked=False, n=name: self._load_preset_layout(n))
+    
     def _create_toolbar(self):
         """Create the main toolbar"""
         toolbar = QToolBar("Main Toolbar")
+        toolbar.setObjectName("MainToolbar")  # Set object name to fix state saving
         toolbar.setMovable(False)
         toolbar.setIconSize(QSize(24, 24))
         self.addToolBar(toolbar)
@@ -194,6 +254,19 @@ class MainWindow(QMainWindow):
         organize_action = toolbar.addAction("Smart Organize")
         organize_action.setToolTip("Smart Organize Panels (Ctrl+Alt+O)")
         organize_action.triggered.connect(self._smart_organize_panels)
+        
+        # Add layout selector
+        toolbar.addSeparator()
+        layout_label = QLabel("Layout:")
+        toolbar.addWidget(layout_label)
+        
+        self.layout_selector = QMenu("Layouts")
+        
+        layout_button = toolbar.addAction("Select Layout")
+        layout_button.setMenu(self.layout_selector)
+        
+        # Populate layout selector
+        self._update_layout_selector()
         
         toolbar.addSeparator()
         
@@ -248,6 +321,11 @@ class MainWindow(QMainWindow):
         notes_action.triggered.connect(lambda: self.panel_manager.toggle_panel("session_notes"))
         self.panel_actions["session_notes_toolbar"] = notes_action
         
+        char_action = toolbar.addAction("Characters")
+        char_action.setToolTip("Player Characters (Ctrl+P)")
+        char_action.triggered.connect(lambda: self.panel_manager.toggle_panel("player_character"))
+        self.panel_actions["player_character_toolbar"] = char_action
+        
         toolbar.addSeparator()
         
         # Utility section
@@ -263,6 +341,57 @@ class MainWindow(QMainWindow):
         time_action.setToolTip("Time Tracker (Ctrl+I)")
         time_action.triggered.connect(lambda: self.panel_manager.toggle_panel("time_tracker"))
         self.panel_actions["time_tracker_toolbar"] = time_action
+    
+    def _update_layout_selector(self):
+        """Update the layout selector menu with available layouts"""
+        self.layout_selector.clear()
+        
+        # Add quick actions
+        save_action = self.layout_selector.addAction("Save Current Layout")
+        save_action.triggered.connect(self._save_layout)
+        
+        load_action = self.layout_selector.addAction("Load Layout...")
+        load_action.triggered.connect(self._load_layout)
+        
+        self.layout_selector.addSeparator()
+        
+        # Add current layout indicator
+        current_layout_action = self.layout_selector.addAction(
+            f"Current: {self.app_state.current_layout_name}")
+        current_layout_action.setEnabled(False)
+        
+        self.layout_selector.addSeparator()
+        
+        # Get all available layouts
+        layouts = self.app_state.get_available_layouts()
+        
+        # Add preset layouts
+        preset_menu = self.layout_selector.addMenu("Preset Layouts")
+        
+        preset_layouts = {name: data for name, data in layouts.items() 
+                         if data.get("is_preset", False)}
+        
+        if not preset_layouts:
+            empty_action = preset_menu.addAction("No presets available")
+            empty_action.setEnabled(False)
+        else:
+            for name in sorted(preset_layouts.keys()):
+                action = preset_menu.addAction(name)
+                action.triggered.connect(lambda checked=False, n=name: self._load_preset_layout(n))
+        
+        # Add user layouts
+        user_menu = self.layout_selector.addMenu("User Layouts")
+        
+        user_layouts = {name: data for name, data in layouts.items() 
+                       if not data.get("is_preset", False)}
+        
+        if not user_layouts:
+            empty_action = user_menu.addAction("No user layouts available")
+            empty_action.setEnabled(False)
+        else:
+            for name in sorted(user_layouts.keys()):
+                action = user_menu.addAction(name)
+                action.triggered.connect(lambda checked=False, n=name: self._load_preset_layout(n))
     
     def _update_panel_action_states(self):
         """Update the state of all panel-related UI elements"""
@@ -333,6 +462,56 @@ class MainWindow(QMainWindow):
         welcome = WelcomePanel(self.panel_manager)
         self.setCentralWidget(welcome)
     
+    def _load_initial_layout(self):
+        """Load the initial layout or show welcome screen if no layout is available"""
+        success, data, ui_state = self.app_state.load_layout()
+        
+        if success:
+            # Apply the layout
+            self._apply_layout(data, ui_state)
+        else:
+            # Show welcome screen if no layout available
+            self._show_welcome_panel()
+    
+    def _apply_layout(self, layout_data, ui_state):
+        """Apply a loaded layout to the application
+        
+        Args:
+            layout_data (dict): The layout configuration data
+            ui_state (bytes): The UI state to restore with restoreState()
+        """
+        # Check if we have panel data
+        if not layout_data or "visible_panels" not in layout_data:
+            return
+        
+        # First, hide all existing panels
+        self.panel_manager.close_all_panels()
+            
+        # Show the visible panels from the layout
+        for panel_id in layout_data.get("visible_panels", []):
+            panel = self.panel_manager.get_panel(panel_id)
+            if panel:
+                panel.show()
+        
+        # Restore panel states if available
+        if "panel_states" in layout_data:
+            self.panel_manager.restore_state(layout_data["panel_states"])
+            
+        # Restore UI state
+        if ui_state:
+            self.restoreState(ui_state)
+            
+        # Ensure no panels overlap window edges
+        self._adjust_panel_positions()
+        
+        # Update UI
+        self._update_panel_action_states()
+        self._update_layout_selector()
+        
+        # Update status
+        self.statusBar().showMessage(
+            f"Loaded layout: {self.app_state.current_layout_name}")
+    
     def _new_session(self):
         """Create a new session, clearing current panels"""
         reply = QMessageBox.question(
@@ -369,17 +548,159 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Saved session: {file_path}")
     
     def _save_layout(self):
-        """Save the current layout configuration"""
-        # TODO: Implement dialog to name the layout
-        self.app_state.save_layout()
-        self.statusBar().showMessage("Layout saved")
+        """Save the current layout configuration to the current layout name"""
+        # Get the current visible panels
+        visible_panels = []
+        for panel_id, dock in self.panel_manager.panels.items():
+            if dock and dock.isVisible():
+                visible_panels.append(panel_id)
+                
+        # Save panel states
+        panel_states = self.panel_manager.save_state()
+        
+        # Create layout data dictionary
+        layout_data = {
+            "visible_panels": visible_panels,
+            "panel_states": panel_states
+        }
+        
+        # Get UI state
+        ui_state = self.saveState()
+        
+        # Save to current layout
+        current_name = self.app_state.current_layout_name
+        success = self.app_state.save_layout(
+            name=current_name,
+            layout_data=layout_data,
+            ui_state=ui_state
+        )
+        
+        if success:
+            self.statusBar().showMessage(f"Layout saved as '{current_name}'")
+            # Update UI
+            self._update_layout_selector()
+        else:
+            self.statusBar().showMessage("Failed to save layout")
+    
+    def _save_layout_as(self):
+        """Save the current layout with a new name"""
+        # Get a list of existing layout names
+        existing_layouts = list(self.app_state.get_available_layouts().keys())
+        
+        # Show the layout name dialog
+        dialog = LayoutNameDialog(
+            self, 
+            existing_layouts=existing_layouts,
+            current_layout=self.app_state.current_layout_name
+        )
+        
+        if dialog.exec_():
+            # Get the layout name and preset status
+            layout_name = dialog.layout_name
+            is_preset = dialog.is_preset
+            category = dialog.preset_category if is_preset else None
+            
+            # Get the current visible panels
+            visible_panels = []
+            for panel_id, dock in self.panel_manager.panels.items():
+                if dock and dock.isVisible():
+                    visible_panels.append(panel_id)
+                    
+            # Save panel states
+            panel_states = self.panel_manager.save_state()
+            
+            # Create layout data dictionary
+            layout_data = {
+                "visible_panels": visible_panels,
+                "panel_states": panel_states,
+                "description": f"Custom layout created on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            }
+            
+            # Get UI state
+            ui_state = self.saveState()
+            
+            # Save the layout
+            success = self.app_state.save_layout(
+                name=layout_name,
+                layout_data=layout_data,
+                ui_state=ui_state,
+                is_preset=is_preset,
+                category=category
+            )
+            
+            if success:
+                self.statusBar().showMessage(f"Layout saved as '{layout_name}'")
+                # Update UI
+                self._update_layout_selector()
+                self._populate_preset_layouts_menu()
+            else:
+                self.statusBar().showMessage("Failed to save layout")
     
     def _load_layout(self):
-        """Load a saved layout configuration"""
-        # TODO: Implement layout selection dialog
-        self.app_state.load_layout()
-        self.statusBar().showMessage("Layout loaded")
-        self._update_panel_action_states()
+        """Load a saved layout configuration through a selection dialog"""
+        # Get available layouts
+        layouts = self.app_state.get_available_layouts()
+        
+        # Show layout selection dialog
+        dialog = LayoutSelectDialog(
+            self,
+            layouts=layouts,
+            current_layout=self.app_state.current_layout_name
+        )
+        
+        if dialog.exec_():
+            selected_layout = dialog.selected_layout
+            if selected_layout:
+                self._load_preset_layout(selected_layout)
+    
+    def _load_preset_layout(self, layout_name):
+        """Load a specific layout by name
+        
+        Args:
+            layout_name (str): Name of the layout to load
+        """
+        # Load the layout from app state
+        success, data, ui_state = self.app_state.load_layout(layout_name)
+        
+        if success:
+            # Apply the layout
+            self._apply_layout(data, ui_state)
+        else:
+            self.statusBar().showMessage(f"Failed to load layout '{layout_name}'")
+    
+    def _manage_layouts(self):
+        """Open the layout management dialog to delete or export layouts"""
+        # Get available layouts
+        layouts = self.app_state.get_available_layouts()
+        
+        # Show layout selection dialog
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle("Delete Layout")
+        dialog.setLabelText("Select layout to delete:")
+        dialog.setComboBoxItems(sorted(layouts.keys()))
+        dialog.setComboBoxEditable(False)
+        
+        if dialog.exec_():
+            layout_name = dialog.textValue()
+            
+            # Confirm deletion
+            reply = QMessageBox.question(
+                self, "Delete Layout",
+                f"Are you sure you want to delete the layout '{layout_name}'?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
+                # Delete the layout
+                success = self.app_state.delete_layout(layout_name)
+                
+                if success:
+                    self.statusBar().showMessage(f"Deleted layout '{layout_name}'")
+                    # Update UI
+                    self._update_layout_selector()
+                    self._populate_preset_layouts_menu()
+                else:
+                    self.statusBar().showMessage(f"Failed to delete layout '{layout_name}'")
     
     def _smart_organize_panels(self):
         """Smart organize all visible panels"""
@@ -435,7 +756,41 @@ class MainWindow(QMainWindow):
             if reply == QMessageBox.Yes:
                 self._save_session()
         
-        # Always save the current layout
-        self.app_state.save_layout()
+        # Always save the current layout before exiting
+        self._save_layout()
         
         event.accept()
+
+    def _adjust_panel_positions(self):
+        """Adjust panel positions to ensure they don't overlap toolbar or window edges"""
+        # Give panels a moment to position themselves
+        QTimer.singleShot(100, self._do_adjust_panel_positions)
+    
+    def _do_adjust_panel_positions(self):
+        """Actually perform the panel position adjustment"""
+        main_window_geometry = self.geometry()
+        toolbar_height = self.toolBarArea(Qt.TopToolBarArea).height()
+        statusbar_height = self.statusBar().height()
+        
+        # Get effective area
+        min_y = toolbar_height + 5
+        max_y = main_window_geometry.height() - statusbar_height - 5
+        min_x = 5
+        max_x = main_window_geometry.width() - 5
+        
+        # Adjust panel positions if needed
+        for dock in self.findChildren(QDockWidget):
+            if dock.isFloating():
+                dock_geometry = dock.geometry()
+                
+                # Ensure panel is visible
+                if dock_geometry.top() < min_y:
+                    dock_geometry.moveTop(min_y)
+                if dock_geometry.bottom() > max_y:
+                    dock_geometry.moveBottom(max_y)
+                if dock_geometry.left() < min_x:
+                    dock_geometry.moveLeft(min_x)
+                if dock_geometry.right() > max_x:
+                    dock_geometry.moveRight(max_x)
+                
+                dock.setGeometry(dock_geometry)

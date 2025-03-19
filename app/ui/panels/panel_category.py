@@ -26,6 +26,7 @@ class PanelCategory:
         "monster": REFERENCE,
         "spell_reference": REFERENCE,
         "session_notes": CAMPAIGN,
+        "player_character": CAMPAIGN,
         "weather": UTILITY,
         "time_tracker": UTILITY
     }

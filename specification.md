@@ -18,10 +18,12 @@ Core Features
 1. Dynamic Layout System
     - ✅ Customizable multi-panel interface
     - ✅ Drag-and-drop organization of information panels
-    - ❌ Save/load different layouts for different campaign types
+    - ✅ Save/load different layouts for different campaign types
     - ✅ Responsive design supporting multiple screen sizes
     - ✅ Dark/light mode support
     - ❌ Font size adjustments for accessibility
+    - ✅ Smart panel organization based on category
+    - ✅ Simultaneous view of related panels (combat, reference, etc.)
 
 2. Essential Reference Panels
     - ✅ Combat tracker with initiative management
@@ -58,7 +60,7 @@ World Building Tools
 4. Campaign Management
     - ✅ Session notes with searchable tags
     - ✅ Initiative tracker with HP/status management
-    - ❌ Player character quick reference
+    - ✅ Player character quick reference
     - ⚠️ Custom monster/NPC storage (basic version implemented)
     - ✅ Bookmark system for frequent references (implemented in Rules panel)
     - ❌ Session timer with break reminders
@@ -110,14 +112,33 @@ User Interface Guidelines
     - ⚠️ Keyboard shortcuts for common actions (implemented for Combat Tracker)
     - ❌ Context-sensitive help system
     - ❌ Unified search across all content
+    - ✅ Visual panel state indicators (active panel highlighting)
 
 Next Implementation Steps:
-1. 🔜 Add layout save/load functionality
-2. 🔜 Enhance Monster panel with custom monster creation
-3. 🔜 Add font size adjustment for accessibility
-4. 🔜 Implement Player character quick reference panel
-5. 🔜 Add Calendar system with moon phases/festivals
-6. 🔜 Add combat difficulty calculator
+1. 🔜 Enhance Monster panel with custom monster creation
+2. 🔜 Add font size adjustment for accessibility
+3. 🔜 Add Calendar system with moon phases/festivals
+4. 🔜 Add combat difficulty calculator
+5. 🔜 Implement Session timer with break reminders
+6. 🔜 Add Sound effect/ambient music integration
+
+Layout Save/Load Feature Specification:
+- ✅ Allow users to save current panel layout configuration
+- ✅ Provide named presets (Combat Focus, Exploration, Social, etc.)
+- ✅ Save panel visibility, position, and size
+- ✅ Include user-created custom layouts with custom names
+- ✅ Quick-switch between layouts via dropdown menu
+- ✅ Export/import layouts for sharing between installations
+
+Player Character Quick Reference Specification:
+- ✅ Store basic character information (name, race, class, level)
+- ✅ Track key stats (AC, HP, ability scores, saving throws)
+- ✅ Note special abilities, features, and equipment
+- ✅ Quick access to character spell lists (for spellcasters)
+- ✅ Visual indicators for conditions and status effects
+- ✅ Integration with combat tracker for initiative and effects
+- ✅ Support for multiple party members
+- ⚠️ Basic character sheet import functionality (planned but not fully implemented)
 
 Planned Integrations
 

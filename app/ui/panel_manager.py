@@ -22,6 +22,7 @@ from app.ui.panels.session_notes_panel import SessionNotesPanel
 from app.ui.panels.weather_panel import WeatherPanel
 from app.ui.panels.time_tracker_panel import TimeTrackerPanel
 from app.ui.panels.panel_category import PanelCategory
+from app.ui.panels.player_character_panel import PlayerCharacterPanel
 
 
 class PanelManager(QObject):
@@ -54,16 +55,14 @@ class PanelManager(QObject):
         self.panels["monster"] = self._create_panel(MonsterPanel, "monster")
         self.panels["spell_reference"] = self._create_panel(SpellReferencePanel, "spell_reference")
         self.panels["session_notes"] = self._create_panel(SessionNotesPanel, "session_notes")
+        self.panels["player_character"] = self._create_panel(PlayerCharacterPanel, "player_character")
         self.panels["weather"] = self._create_panel(WeatherPanel, "weather")
         self.panels["time_tracker"] = self._create_panel(TimeTrackerPanel, "time_tracker")
         
         # Organize panels by category
         self._organize_panels_by_category()
         
-        # Only show essential panels on startup to avoid overlap
-        essential_panels = ["combat_tracker", "dice_roller", "session_notes"]
-        
-        # Show combat tracker and dice roller side by side (not tabified)
+        # Show specific panels by default
         if "combat_tracker" in self.panels and self.panels["combat_tracker"]:
             self.panels["combat_tracker"].show()
         
@@ -282,6 +281,8 @@ class PanelManager(QObject):
             self.panels[panel_type] = self._create_panel(WeatherPanel, panel_type)
         elif panel_type == "time_tracker":
             self.panels[panel_type] = self._create_panel(TimeTrackerPanel, panel_type)
+        elif panel_type == "player_character":
+            self.panels[panel_type] = self._create_panel(PlayerCharacterPanel, panel_type)
         else:
             QMessageBox.warning(
                 self.main_window,
@@ -410,10 +411,17 @@ class PanelManager(QObject):
                 visible_panels[panel_id] = True
                 dock.hide()
         
-        # Step 2: Determine screen quadrants
+        # Step 2: Determine screen quadrants - account for toolbar and status bar
         main_window_geometry = self.main_window.geometry()
-        center_x = main_window_geometry.width() // 2
-        center_y = main_window_geometry.height() // 2
+        effective_height = main_window_geometry.height() - 50  # Account for toolbar/statusbar
+        effective_width = main_window_geometry.width() 
+        center_x = effective_width // 2
+        center_y = effective_height // 2
+        
+        # Force reset dock widget locations to avoid stacking issues
+        for panel_id in self.panels:
+            if self.panels[panel_id]:
+                self.panels[panel_id].setFloating(False)
         
         # Step 3: Organize by category in specific quadrants
         # - Combat: Top Left
