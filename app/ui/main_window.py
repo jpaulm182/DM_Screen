@@ -57,17 +57,21 @@ class MainWindow(QMainWindow):
         file_menu = self.menuBar().addMenu("&File")
         
         new_action = file_menu.addAction("&New Session")
+        new_action.setShortcut("Ctrl+Shift+N")
         new_action.triggered.connect(self._new_session)
         
         open_action = file_menu.addAction("&Open Session")
+        open_action.setShortcut("Ctrl+O")
         open_action.triggered.connect(self._open_session)
         
         save_action = file_menu.addAction("&Save Session")
+        save_action.setShortcut("Ctrl+Shift+S")
         save_action.triggered.connect(self._save_session)
         
         file_menu.addSeparator()
         
         exit_action = file_menu.addAction("E&xit")
+        exit_action.setShortcut("Alt+F4")
         exit_action.triggered.connect(self.close)
         
         # View menu
@@ -75,18 +79,22 @@ class MainWindow(QMainWindow):
         
         layout_menu = view_menu.addMenu("&Layouts")
         save_layout_action = layout_menu.addAction("&Save Current Layout")
+        save_layout_action.setShortcut("Ctrl+Alt+S")
         save_layout_action.triggered.connect(self._save_layout)
         
         load_layout_action = layout_menu.addAction("&Load Layout")
+        load_layout_action.setShortcut("Ctrl+Alt+L")
         load_layout_action.triggered.connect(self._load_layout)
         
         view_menu.addSeparator()
         
         theme_menu = view_menu.addMenu("&Theme")
         dark_theme_action = theme_menu.addAction("&Dark")
+        dark_theme_action.setShortcut("Ctrl+Alt+D")
         dark_theme_action.triggered.connect(lambda: self._change_theme("dark"))
         
         light_theme_action = theme_menu.addAction("&Light")
+        light_theme_action.setShortcut("Ctrl+Alt+T")
         light_theme_action.triggered.connect(lambda: self._change_theme("light"))
         
         # Panels menu
@@ -94,51 +102,74 @@ class MainWindow(QMainWindow):
         
         # Combat Tracker
         combat_action = QAction("Combat &Tracker", self)
+        combat_action.setShortcut("Ctrl+T")
         combat_action.triggered.connect(lambda: self.panel_manager.create_panel("combat_tracker"))
         panels_menu.addAction(combat_action)
         
         # Dice Roller
         dice_action = QAction("&Dice Roller", self)
+        dice_action.setShortcut("Ctrl+D")
         dice_action.triggered.connect(lambda: self.panel_manager.create_panel("dice_roller"))
         panels_menu.addAction(dice_action)
         
         # Conditions Reference
         conditions_action = QAction("&Conditions", self)
+        conditions_action.setShortcut("Ctrl+C")
         conditions_action.triggered.connect(lambda: self.panel_manager.create_panel("conditions"))
         panels_menu.addAction(conditions_action)
         
         # Rules Reference
         rules_action = QAction("&Rules Reference", self)
+        rules_action.setShortcut("Ctrl+R")
         rules_action.triggered.connect(lambda: self.panel_manager.create_panel("rules_reference"))
         panels_menu.addAction(rules_action)
         
         # Monster Reference
         monster_action = QAction("&Monster Reference", self)
+        monster_action.setShortcut("Ctrl+M")
         monster_action.triggered.connect(lambda: self.panel_manager.create_panel("monster"))
         panels_menu.addAction(monster_action)
         
         # Spell Reference
         spell_action = QAction("&Spell Reference", self)
+        spell_action.setShortcut("Ctrl+S")
         spell_action.triggered.connect(lambda: self.panel_manager.create_panel("spell_reference"))
         panels_menu.addAction(spell_action)
+        
+        # Weather Panel
+        weather_action = QAction("&Weather", self)
+        weather_action.setShortcut("Ctrl+W")
+        weather_action.triggered.connect(lambda: self.panel_manager.create_panel("weather"))
+        panels_menu.addAction(weather_action)
+        
+        # Time Tracker Panel
+        time_action = QAction("T&ime Tracker", self)
+        time_action.setShortcut("Ctrl+I")
+        time_action.triggered.connect(lambda: self.panel_manager.create_panel("time_tracker"))
+        panels_menu.addAction(time_action)
+        
+        # Session Notes Panel
+        notes_action = QAction("Session &Notes", self)
+        notes_action.setShortcut("Ctrl+N")
+        notes_action.triggered.connect(lambda: self.panel_manager.create_panel("session_notes"))
+        panels_menu.addAction(notes_action)
+        
+        panels_menu.addSeparator()
         
         # Generators menu
         generators_menu = panels_menu.addMenu("&Generators")
         
         encounter_action = generators_menu.addAction("&Encounter Generator")
+        encounter_action.setShortcut("Ctrl+Shift+E")
         encounter_action.triggered.connect(lambda: self.panel_manager.create_panel("encounter_generator"))
         
         treasure_action = generators_menu.addAction("&Treasure Generator")
+        treasure_action.setShortcut("Ctrl+Shift+T")
         treasure_action.triggered.connect(lambda: self.panel_manager.create_panel("treasure_generator"))
         
         npc_action = generators_menu.addAction("&NPC Generator")
+        npc_action.setShortcut("Ctrl+Shift+N")
         npc_action.triggered.connect(lambda: self.panel_manager.create_panel("npc_generator"))
-        
-        # Tools menu
-        tools_menu = panels_menu.addMenu("&Tools")
-        
-        notes_action = tools_menu.addAction("&Session Notes")
-        notes_action.triggered.connect(lambda: self.panel_manager.create_panel("session_notes"))
         
         # Help menu
         help_menu = self.menuBar().addMenu("&Help")
@@ -155,24 +186,38 @@ class MainWindow(QMainWindow):
         
         # Add quick access actions
         new_action = toolbar.addAction("New")
+        new_action.setToolTip("New Session (Ctrl+Shift+N)")
         new_action.triggered.connect(self._new_session)
         
         save_action = toolbar.addAction("Save")
+        save_action.setToolTip("Save Session (Ctrl+Shift+S)")
         save_action.triggered.connect(self._save_session)
         
         toolbar.addSeparator()
         
         dice_action = toolbar.addAction("Dice")
+        dice_action.setToolTip("Dice Roller (Ctrl+D)")
         dice_action.triggered.connect(lambda: self.panel_manager.create_panel("dice_roller"))
         
         combat_action = toolbar.addAction("Combat")
+        combat_action.setToolTip("Combat Tracker (Ctrl+T)")
         combat_action.triggered.connect(lambda: self.panel_manager.create_panel("combat_tracker"))
         
         spell_action = toolbar.addAction("Spells")
+        spell_action.setToolTip("Spell Reference (Ctrl+S)")
         spell_action.triggered.connect(lambda: self.panel_manager.create_panel("spell_reference"))
         
         notes_action = toolbar.addAction("Notes")
+        notes_action.setToolTip("Session Notes (Ctrl+N)")
         notes_action.triggered.connect(lambda: self.panel_manager.create_panel("session_notes"))
+        
+        weather_action = toolbar.addAction("Weather")
+        weather_action.setToolTip("Weather Panel (Ctrl+W)")
+        weather_action.triggered.connect(lambda: self.panel_manager.create_panel("weather"))
+        
+        time_action = toolbar.addAction("Time")
+        time_action.setToolTip("Time Tracker (Ctrl+I)")
+        time_action.triggered.connect(lambda: self.panel_manager.create_panel("time_tracker"))
     
     def _create_status_bar(self):
         """Create the status bar"""
