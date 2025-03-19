@@ -433,7 +433,7 @@ class NPCGeneratorPanel(BasePanel):
         # Save to data manager
         try:
             # Generate unique ID for this content
-            content_id = self.llm_data_manager.save_generated_content(
+            content_id = self.llm_data_manager.add_generated_content(
                 title=title,
                 content_type="npc",
                 content=self.current_generation["content"],
