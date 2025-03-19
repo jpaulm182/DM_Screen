@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QDockWidget, QToolBar, QMenu, QMenuBar,
     QStatusBar, QFileDialog, QMessageBox, QLabel
 )
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtGui import QIcon, QAction
 
 from app.ui.panel_manager import PanelManager
@@ -27,20 +27,30 @@ class MainWindow(QMainWindow):
         """Initialize the main window and UI components"""
         super().__init__()
         self.app_state = app_state
-        self.panel_manager = PanelManager(self, app_state)
         
-        self._setup_ui()
-        self._create_menus()
-        self._create_toolbar()
-        self._create_status_bar()
+        # Initialize panel-related UI elements mapping before creating panels
+        self.panel_actions = {}  # Actions for each panel
+        
+        self.panel_manager = PanelManager(self, app_state)
         
         # Apply the current theme
         self.current_theme = app_state.get_setting("theme", "dark")
         apply_theme(self, self.current_theme)
         
+        # Setup UI components
+        self._setup_ui()
+        self._create_menus()
+        self._create_toolbar()
+        self._create_status_bar()
+        
         # Load the default layout or show welcome screen
         if not self.app_state.load_layout():
             self._show_welcome_panel()
+        
+        # Start UI update timer for panel states
+        self.update_timer = QTimer(self)
+        self.update_timer.timeout.connect(self._update_panel_action_states)
+        self.update_timer.start(500)  # Update every 500ms
     
     def _setup_ui(self):
         """Configure the main window UI properties"""
@@ -109,33 +119,56 @@ class MainWindow(QMainWindow):
         
         # Combat panels
         combat_menu = panels_menu.addMenu("&Combat Tools")
-        combat_menu.addAction("Combat Tracker").triggered.connect(
+        combat_tracker_action = combat_menu.addAction("Combat Tracker")
+        combat_tracker_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("combat_tracker"))
-        combat_menu.addAction("Dice Roller").triggered.connect(
+        self.panel_actions["combat_tracker"] = combat_tracker_action
+        
+        dice_roller_action = combat_menu.addAction("Dice Roller")
+        dice_roller_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("dice_roller"))
+        self.panel_actions["dice_roller"] = dice_roller_action
         
         # Reference panels
         reference_menu = panels_menu.addMenu("&Reference")
-        reference_menu.addAction("Rules Reference").triggered.connect(
+        rules_action = reference_menu.addAction("Rules Reference")
+        rules_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("rules_reference"))
-        reference_menu.addAction("Conditions").triggered.connect(
+        self.panel_actions["rules_reference"] = rules_action
+        
+        conditions_action = reference_menu.addAction("Conditions")
+        conditions_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("conditions"))
-        reference_menu.addAction("Monsters").triggered.connect(
+        self.panel_actions["conditions"] = conditions_action
+        
+        monster_action = reference_menu.addAction("Monsters")
+        monster_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("monster"))
-        reference_menu.addAction("Spells").triggered.connect(
+        self.panel_actions["monster"] = monster_action
+        
+        spell_action = reference_menu.addAction("Spells")
+        spell_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("spell_reference"))
+        self.panel_actions["spell_reference"] = spell_action
             
         # Campaign Management panels
         campaign_menu = panels_menu.addMenu("&Campaign")
-        campaign_menu.addAction("Session Notes").triggered.connect(
+        notes_action = campaign_menu.addAction("Session Notes")
+        notes_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("session_notes"))
+        self.panel_actions["session_notes"] = notes_action
         
         # Utility panels
         utility_menu = panels_menu.addMenu("&Utilities")
-        utility_menu.addAction("Weather Generator").triggered.connect(
+        weather_action = utility_menu.addAction("Weather Generator")
+        weather_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("weather"))
-        utility_menu.addAction("Time Tracker").triggered.connect(
+        self.panel_actions["weather"] = weather_action
+        
+        time_action = utility_menu.addAction("Time Tracker")
+        time_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("time_tracker"))
+        self.panel_actions["time_tracker"] = time_action
         
         # Help menu
         help_menu = self.menuBar().addMenu("&Help")
@@ -171,10 +204,12 @@ class MainWindow(QMainWindow):
         dice_action = toolbar.addAction("Dice")
         dice_action.setToolTip("Dice Roller (Ctrl+D)")
         dice_action.triggered.connect(lambda: self.panel_manager.toggle_panel("dice_roller"))
+        self.panel_actions["dice_roller_toolbar"] = dice_action
         
         combat_action = toolbar.addAction("Combat")
         combat_action.setToolTip("Combat Tracker (Ctrl+T)")
         combat_action.triggered.connect(lambda: self.panel_manager.toggle_panel("combat_tracker"))
+        self.panel_actions["combat_tracker_toolbar"] = combat_action
         
         toolbar.addSeparator()
         
@@ -185,18 +220,22 @@ class MainWindow(QMainWindow):
         spell_action = toolbar.addAction("Spells")
         spell_action.setToolTip("Spell Reference (Ctrl+S)")
         spell_action.triggered.connect(lambda: self.panel_manager.toggle_panel("spell_reference"))
+        self.panel_actions["spell_reference_toolbar"] = spell_action
         
         conditions_action = toolbar.addAction("Conditions")
         conditions_action.setToolTip("Conditions Reference")
         conditions_action.triggered.connect(lambda: self.panel_manager.toggle_panel("conditions"))
+        self.panel_actions["conditions_toolbar"] = conditions_action
         
         rules_action = toolbar.addAction("Rules")
         rules_action.setToolTip("Rules Reference")
         rules_action.triggered.connect(lambda: self.panel_manager.toggle_panel("rules_reference"))
+        self.panel_actions["rules_reference_toolbar"] = rules_action
         
         monster_action = toolbar.addAction("Monsters")
         monster_action.setToolTip("Monster Reference")
         monster_action.triggered.connect(lambda: self.panel_manager.toggle_panel("monster"))
+        self.panel_actions["monster_toolbar"] = monster_action
         
         toolbar.addSeparator()
         
@@ -207,6 +246,7 @@ class MainWindow(QMainWindow):
         notes_action = toolbar.addAction("Notes")
         notes_action.setToolTip("Session Notes (Ctrl+N)")
         notes_action.triggered.connect(lambda: self.panel_manager.toggle_panel("session_notes"))
+        self.panel_actions["session_notes_toolbar"] = notes_action
         
         toolbar.addSeparator()
         
@@ -217,10 +257,70 @@ class MainWindow(QMainWindow):
         weather_action = toolbar.addAction("Weather")
         weather_action.setToolTip("Weather Panel (Ctrl+W)")
         weather_action.triggered.connect(lambda: self.panel_manager.toggle_panel("weather"))
+        self.panel_actions["weather_toolbar"] = weather_action
         
         time_action = toolbar.addAction("Time")
         time_action.setToolTip("Time Tracker (Ctrl+I)")
         time_action.triggered.connect(lambda: self.panel_manager.toggle_panel("time_tracker"))
+        self.panel_actions["time_tracker_toolbar"] = time_action
+    
+    def _update_panel_action_states(self):
+        """Update the state of all panel-related UI elements"""
+        # First, update menu items
+        for panel_id, action in self.panel_actions.items():
+            # Extract the base panel id from toolbar items
+            base_panel_id = panel_id.split('_toolbar')[0]
+            
+            # Set checkable for checkbox-like behavior
+            action.setCheckable(True)
+            
+            # Set checked state based on panel visibility
+            if action.isCheckable():
+                action.setChecked(self.panel_manager.is_panel_visible(base_panel_id))
+        
+        # Apply visual styling to toolbar buttons
+        self._style_toolbar_buttons()
+    
+    def _style_toolbar_buttons(self):
+        """Apply styling to toolbar buttons based on panel states"""
+        toolbar = self.findChild(QToolBar)
+        if not toolbar:
+            return
+            
+        # Set appropriate styling for each action in the toolbar
+        for action in toolbar.actions():
+            if not action.text():  # Skip separators
+                continue
+                
+            # Find the corresponding panel if any
+            panel_id = None
+            for key, act in self.panel_actions.items():
+                if act == action:
+                    panel_id = key.split('_toolbar')[0] if '_toolbar' in key else key
+                    break
+            
+            if panel_id and self.panel_manager.is_panel_visible(panel_id):
+                # Use a background color from the panel's category
+                category = PanelCategory.get_category(panel_id)
+                colors = PanelCategory.get_colors(panel_id, self.current_theme)
+                
+                if colors:
+                    # Style the active button
+                    toolbar_btn = toolbar.widgetForAction(action)
+                    if toolbar_btn:
+                        toolbar_btn.setStyleSheet(f"""
+                            background-color: {colors['title_bg'].name()};
+                            color: {colors['title_text'].name()};
+                            font-weight: bold;
+                            border: 1px solid white;
+                            border-radius: 3px;
+                            padding: 4px;
+                        """)
+            else:
+                # Reset to default style
+                toolbar_btn = toolbar.widgetForAction(action)
+                if toolbar_btn:
+                    toolbar_btn.setStyleSheet("")
     
     def _create_status_bar(self):
         """Create the status bar"""
@@ -244,6 +344,7 @@ class MainWindow(QMainWindow):
         if reply == QMessageBox.Yes:
             self.panel_manager.close_all_panels()
             self._show_welcome_panel()
+            self._update_panel_action_states()
     
     def _open_session(self):
         """Open a saved session file"""
@@ -278,11 +379,13 @@ class MainWindow(QMainWindow):
         # TODO: Implement layout selection dialog
         self.app_state.load_layout()
         self.statusBar().showMessage("Layout loaded")
+        self._update_panel_action_states()
     
     def _smart_organize_panels(self):
         """Smart organize all visible panels"""
         message = self.panel_manager.smart_organize_panels()
         self.statusBar().showMessage(message)
+        self._update_panel_action_states()
     
     def _change_theme(self, theme_name):
         """Change the application theme"""
@@ -297,6 +400,9 @@ class MainWindow(QMainWindow):
         self.current_theme = theme_name
         
         self.statusBar().showMessage(f"Theme changed to {theme_name}")
+        
+        # Update button styling
+        self._update_panel_action_states()
     
     def _show_about(self):
         """Show about dialog"""
@@ -310,6 +416,9 @@ class MainWindow(QMainWindow):
     
     def closeEvent(self, event):
         """Handle application close event"""
+        # Stop the update timer
+        self.update_timer.stop()
+        
         # Prompt to save session if auto-save is disabled
         if not self.app_state.get_setting("auto_save", True):
             reply = QMessageBox.question(

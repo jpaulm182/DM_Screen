@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QLabel, QGroupBox
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont, QPixmap
 
 from app.ui.panels.panel_category import PanelCategory
@@ -20,7 +20,13 @@ class WelcomePanel(QWidget):
         """Initialize the welcome panel"""
         super().__init__()
         self.panel_manager = panel_manager
+        self.panel_buttons = {}  # Store buttons by panel_type for state updates
         self._setup_ui()
+        
+        # Set up timer to refresh button states
+        self.update_timer = QTimer(self)
+        self.update_timer.timeout.connect(self._update_button_states)
+        self.update_timer.start(500)  # Update every 500ms
     
     def _setup_ui(self):
         """Set up the welcome panel UI"""
@@ -146,6 +152,9 @@ class WelcomePanel(QWidget):
             ]
         )
         layout.addWidget(utility_group, row, 1)
+        
+        # Initial update of button states
+        self._update_button_states()
     
     def _create_category_group(self, title, category, panels):
         """Create a group box with buttons for a category of panels"""
@@ -182,38 +191,93 @@ class WelcomePanel(QWidget):
             button = QPushButton(title)
             button.setMinimumSize(140, 80)
             button.setToolTip(tooltip + " (click to toggle panel on/off)")
+            button.setProperty("panel_type", panel_type)
             
-            # Style the button
-            if colors:
-                button.setStyleSheet(f"""
-                    QPushButton {{
-                        font-size: 12px;
-                        padding: 8px;
-                        background-color: {colors['title_bg'].name()};
-                        color: {colors['title_text'].name()};
-                        border: 1px solid {colors['border'].name()};
-                        border-radius: 4px;
-                    }}
-                    QPushButton:hover {{
-                        background-color: {colors['border'].name()};
-                    }}
-                """)
+            # Store button reference for later state updates
+            self.panel_buttons[panel_type] = button
+            
+            # Apply initial style based on panel visibility
+            self._apply_button_style(button, panel_type, colors)
                 
             button.clicked.connect(lambda checked, pt=panel_type: self._toggle_panel(pt))
             grid.addWidget(button, row, col)
         
         return group
     
+    def _apply_button_style(self, button, panel_type, colors):
+        """Apply appropriate style to button based on panel state"""
+        is_active = self.panel_manager.is_panel_visible(panel_type)
+        
+        if is_active:
+            # Active style - brighter with highlighted border
+            button.setStyleSheet(f"""
+                QPushButton {{
+                    font-size: 12px;
+                    padding: 8px;
+                    background-color: {colors['border'].name()};
+                    color: {colors['title_text'].name()};
+                    border: 2px solid white;
+                    border-radius: 4px;
+                    font-weight: bold;
+                }}
+                QPushButton:hover {{
+                    background-color: {colors['title_bg'].name()};
+                    border: 2px solid white;
+                }}
+            """)
+        else:
+            # Inactive style - normal appearance
+            button.setStyleSheet(f"""
+                QPushButton {{
+                    font-size: 12px;
+                    padding: 8px;
+                    background-color: {colors['title_bg'].name()};
+                    color: {colors['title_text'].name()};
+                    border: 1px solid {colors['border'].name()};
+                    border-radius: 4px;
+                }}
+                QPushButton:hover {{
+                    background-color: {colors['border'].name()};
+                }}
+            """)
+    
+    def _update_button_states(self):
+        """Update all button states based on panel visibility"""
+        for panel_type, button in self.panel_buttons.items():
+            colors = PanelCategory.get_colors(panel_type)
+            if colors:
+                self._apply_button_style(button, panel_type, colors)
+    
     def _toggle_panel(self, panel_type):
         """Toggle a panel of the specified type"""
         self.panel_manager.toggle_panel(panel_type)
+        
+        # Immediately update the button style for immediate feedback
+        button = self.panel_buttons.get(panel_type)
+        if button:
+            colors = PanelCategory.get_colors(panel_type)
+            if colors:
+                self._apply_button_style(button, panel_type, colors)
         
     def _smart_organize(self):
         """Trigger smart organization of panels"""
         # Call the smart organize function on the panel manager
         result = self.panel_manager.smart_organize_panels()
         
+        # Update all button states
+        self._update_button_states()
+        
         # If there's a parent main window with a status bar, show a message
         main_window = self.window()
         if main_window and hasattr(main_window, "statusBar"):
             main_window.statusBar().showMessage(result)
+            
+    def hideEvent(self, event):
+        """Stop the timer when the panel is hidden"""
+        self.update_timer.stop()
+        super().hideEvent(event)
+        
+    def showEvent(self, event):
+        """Restart the timer when the panel is shown"""
+        self.update_timer.start(500)
+        super().showEvent(event)
