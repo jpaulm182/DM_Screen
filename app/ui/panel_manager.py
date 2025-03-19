@@ -5,8 +5,9 @@ Panel management system for the DM Screen application
 Handles creating, organizing, and managing dockable panels.
 """
 
-from PySide6.QtWidgets import QDockWidget, QMessageBox
+from PySide6.QtWidgets import QDockWidget, QMessageBox, QLabel, QWidget
 from PySide6.QtCore import Qt, QObject
+from PySide6.QtGui import QPalette, QColor
 
 # Import all panel types
 from app.ui.panels.combat_tracker_panel import CombatTrackerPanel
@@ -20,6 +21,8 @@ from app.ui.panels.spell_reference_panel import SpellReferencePanel
 from app.ui.panels.session_notes_panel import SessionNotesPanel
 from app.ui.panels.weather_panel import WeatherPanel
 from app.ui.panels.time_tracker_panel import TimeTrackerPanel
+from app.ui.panels.panel_category import PanelCategory
+
 
 class PanelManager(QObject):
     """
@@ -32,6 +35,8 @@ class PanelManager(QObject):
         self.main_window = main_window
         self.app_state = app_state
         self.panels = {}  # Dictionary of active panels
+        self.panel_categories = {}  # Group panels by category
+        self.current_theme = app_state.get_setting("theme", "dark")
         
         # Initialize panels
         self._init_panels()
@@ -41,52 +46,87 @@ class PanelManager(QObject):
     
     def _init_panels(self):
         """Initialize all available panels"""
-        # Create panels
-        self.panels["combat_tracker"] = self._create_panel(CombatTrackerPanel)
-        self.panels["dice_roller"] = self._create_panel(DiceRollerPanel)
-        self.panels["conditions"] = self._create_panel(ConditionsPanel)
-        self.panels["rules_reference"] = self._create_panel(RulesReferencePanel)
-        self.panels["monster"] = self._create_panel(MonsterPanel)
-        self.panels["spell_reference"] = self._create_panel(SpellReferencePanel)
-        self.panels["session_notes"] = self._create_panel(SessionNotesPanel)
-        self.panels["weather"] = self._create_panel(WeatherPanel)
-        self.panels["time_tracker"] = self._create_panel(TimeTrackerPanel)
+        # Create panels but don't show them all by default
+        self.panels["combat_tracker"] = self._create_panel(CombatTrackerPanel, "combat_tracker")
+        self.panels["dice_roller"] = self._create_panel(DiceRollerPanel, "dice_roller")
+        self.panels["conditions"] = self._create_panel(ConditionsPanel, "conditions")
+        self.panels["rules_reference"] = self._create_panel(RulesReferencePanel, "rules_reference")
+        self.panels["monster"] = self._create_panel(MonsterPanel, "monster")
+        self.panels["spell_reference"] = self._create_panel(SpellReferencePanel, "spell_reference")
+        self.panels["session_notes"] = self._create_panel(SessionNotesPanel, "session_notes")
+        self.panels["weather"] = self._create_panel(WeatherPanel, "weather")
+        self.panels["time_tracker"] = self._create_panel(TimeTrackerPanel, "time_tracker")
         
-        # Set initial dock locations
-        self.main_window.addDockWidget(Qt.LeftDockWidgetArea, self.panels["dice_roller"])
-        self.main_window.addDockWidget(Qt.LeftDockWidgetArea, self.panels["combat_tracker"])
-        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.panels["conditions"])
-        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.panels["rules_reference"])
-        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.panels["monster"])
-        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.panels["spell_reference"])
-        self.main_window.addDockWidget(Qt.BottomDockWidgetArea, self.panels["session_notes"])
-        self.main_window.addDockWidget(Qt.BottomDockWidgetArea, self.panels["weather"])
-        self.main_window.addDockWidget(Qt.BottomDockWidgetArea, self.panels["time_tracker"])
+        # Organize panels by category
+        self._organize_panels_by_category()
         
-        # Tabify related panels
-        self.main_window.tabifyDockWidget(
-            self.panels["conditions"],
-            self.panels["rules_reference"]
-        )
-        self.main_window.tabifyDockWidget(
-            self.panels["rules_reference"],
-            self.panels["monster"]
-        )
-        self.main_window.tabifyDockWidget(
-            self.panels["monster"],
-            self.panels["spell_reference"]
-        )
-        
-        # Tabify weather and time tracker
-        self.main_window.tabifyDockWidget(
-            self.panels["weather"],
-            self.panels["time_tracker"]
-        )
+        # Only show essential panels on startup to avoid overlap
+        essential_panels = ["combat_tracker", "dice_roller", "session_notes"]
+        for panel_id in essential_panels:
+            if panel_id in self.panels and self.panels[panel_id]:
+                self.panels[panel_id].show()
         
         # Raise the combat tracker initially
-        self.panels["combat_tracker"].raise_()
+        if "combat_tracker" in self.panels and self.panels["combat_tracker"]:
+            self.panels["combat_tracker"].raise_()
     
-    def _create_panel(self, panel_class):
+    def _organize_panels_by_category(self):
+        """Organize panels into logical groups by category"""
+        # Group panels by category
+        for panel_id, dock in self.panels.items():
+            if not dock:
+                continue
+                
+            category = PanelCategory.get_category(panel_id)
+            
+            if category not in self.panel_categories:
+                self.panel_categories[category] = []
+                
+            self.panel_categories[category].append(panel_id)
+        
+        # Place panels in appropriate dock areas based on category
+        for panel_id, dock in self.panels.items():
+            if not dock:
+                continue
+                
+            category = PanelCategory.get_category(panel_id)
+            
+            # Set dock area based on category
+            if category == PanelCategory.COMBAT:
+                self.main_window.addDockWidget(Qt.LeftDockWidgetArea, dock)
+            elif category == PanelCategory.REFERENCE:
+                self.main_window.addDockWidget(Qt.RightDockWidgetArea, dock)
+            elif category == PanelCategory.CAMPAIGN:
+                self.main_window.addDockWidget(Qt.TopDockWidgetArea, dock)
+            else:  # UTILITY
+                self.main_window.addDockWidget(Qt.BottomDockWidgetArea, dock)
+        
+        # Tabify related panels within the same category
+        self._tabify_panels_by_category()
+    
+    def _tabify_panels_by_category(self):
+        """Tabify related panels within the same category"""
+        # Process each category
+        for category, panel_ids in self.panel_categories.items():
+            if len(panel_ids) < 2:
+                continue
+                
+            # Get the first panel in this category as the reference
+            first_panel_id = panel_ids[0]
+            first_panel = self.panels.get(first_panel_id)
+            
+            if not first_panel:
+                continue
+                
+            # Tabify all other panels in this category with the first one
+            for i in range(1, len(panel_ids)):
+                panel_id = panel_ids[i]
+                panel = self.panels.get(panel_id)
+                
+                if panel:
+                    self.main_window.tabifyDockWidget(first_panel, panel)
+    
+    def _create_panel(self, panel_class, panel_id):
         """Create a new panel instance wrapped in a QDockWidget"""
         try:
             # Create panel instance
@@ -102,6 +142,12 @@ class PanelManager(QObject):
                 QDockWidget.DockWidgetFloatable
             )
             
+            # Apply category styling
+            self._apply_panel_styling(dock, panel_id)
+            
+            # Hide by default to avoid overlap
+            dock.hide()
+            
             return dock
             
         except Exception as e:
@@ -112,6 +158,31 @@ class PanelManager(QObject):
             )
             return None
     
+    def _apply_panel_styling(self, dock, panel_id):
+        """Apply color coding and styling to the panel based on its category"""
+        # Get colors for this panel's category
+        colors = PanelCategory.get_colors(panel_id, self.current_theme)
+        category = PanelCategory.get_category(panel_id)
+        
+        if colors:
+            # Apply title bar styling
+            title_style = f"""
+                QDockWidget::title {{
+                    background-color: {colors['title_bg'].name()};
+                    color: {colors['title_text'].name()};
+                    font-weight: bold;
+                    padding-left: 5px;
+                }}
+                QDockWidget {{
+                    border: 1px solid {colors['border'].name()};
+                }}
+            """
+            dock.setStyleSheet(title_style)
+            
+            # Add category prefix to title
+            category_name = PanelCategory.get_category_display_name(category)
+            dock.setWindowTitle(f"[{category_name}] {dock.windowTitle()}")
+    
     def _connect_panel_signals(self):
         """Connect signals between panels"""
         try:
@@ -119,16 +190,9 @@ class PanelManager(QObject):
             monster_panel = self.panels["monster"].widget()
             combat_tracker = self.panels["combat_tracker"].widget()
             
-            # Debug print to check panel instances
-            print("Monster Panel:", monster_panel)
-            print("Combat Tracker:", combat_tracker)
-            
             if monster_panel and combat_tracker:
                 if hasattr(monster_panel, "add_to_combat"):
-                    print("Connecting add_to_combat signal")
                     monster_panel.add_to_combat.connect(combat_tracker.add_monster)
-                else:
-                    print("Monster panel missing add_to_combat signal")
             
             # Connect conditions panel to combat tracker
             conditions_panel = self.panels["conditions"].widget()
@@ -161,23 +225,23 @@ class PanelManager(QObject):
         
         # Create new panel based on type
         if panel_type == "combat_tracker":
-            self.panels[panel_type] = self._create_panel(CombatTrackerPanel)
+            self.panels[panel_type] = self._create_panel(CombatTrackerPanel, panel_type)
         elif panel_type == "dice_roller":
-            self.panels[panel_type] = self._create_panel(DiceRollerPanel)
+            self.panels[panel_type] = self._create_panel(DiceRollerPanel, panel_type)
         elif panel_type == "conditions":
-            self.panels[panel_type] = self._create_panel(ConditionsPanel)
+            self.panels[panel_type] = self._create_panel(ConditionsPanel, panel_type)
         elif panel_type == "rules_reference":
-            self.panels[panel_type] = self._create_panel(RulesReferencePanel)
+            self.panels[panel_type] = self._create_panel(RulesReferencePanel, panel_type)
         elif panel_type == "monster":
-            self.panels[panel_type] = self._create_panel(MonsterPanel)
+            self.panels[panel_type] = self._create_panel(MonsterPanel, panel_type)
         elif panel_type == "spell_reference":
-            self.panels[panel_type] = self._create_panel(SpellReferencePanel)
+            self.panels[panel_type] = self._create_panel(SpellReferencePanel, panel_type)
         elif panel_type == "session_notes":
-            self.panels[panel_type] = self._create_panel(SessionNotesPanel)
+            self.panels[panel_type] = self._create_panel(SessionNotesPanel, panel_type)
         elif panel_type == "weather":
-            self.panels[panel_type] = self._create_panel(WeatherPanel)
+            self.panels[panel_type] = self._create_panel(WeatherPanel, panel_type)
         elif panel_type == "time_tracker":
-            self.panels[panel_type] = self._create_panel(TimeTrackerPanel)
+            self.panels[panel_type] = self._create_panel(TimeTrackerPanel, panel_type)
         else:
             QMessageBox.warning(
                 self.main_window,
@@ -186,10 +250,57 @@ class PanelManager(QObject):
             )
             return
         
-        # Add the new panel to the main window
-        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.panels[panel_type])
+        # Add the new panel to the main window in the appropriate dock area
+        category = PanelCategory.get_category(panel_type)
+        
+        if category == PanelCategory.COMBAT:
+            self.main_window.addDockWidget(Qt.LeftDockWidgetArea, self.panels[panel_type])
+        elif category == PanelCategory.REFERENCE:
+            self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.panels[panel_type])
+        elif category == PanelCategory.CAMPAIGN:
+            self.main_window.addDockWidget(Qt.TopDockWidgetArea, self.panels[panel_type])
+        else:  # UTILITY
+            self.main_window.addDockWidget(Qt.BottomDockWidgetArea, self.panels[panel_type])
+        
+        # Update panel styling
+        self._apply_panel_styling(self.panels[panel_type], panel_type)
+        
+        # Show and raise the panel
         self.panels[panel_type].show()
         self.panels[panel_type].raise_()
+        
+        # Update panel categories
+        if category not in self.panel_categories:
+            self.panel_categories[category] = []
+        if panel_type not in self.panel_categories[category]:
+            self.panel_categories[category].append(panel_type)
+            
+        # Tabify with other panels in the same category if appropriate
+        self._tabify_panel_with_category(panel_type, category)
+    
+    def _tabify_panel_with_category(self, panel_type, category):
+        """Tabify a panel with others in its category"""
+        # Find another visible panel in this category to tabify with
+        for other_panel_id in self.panel_categories[category]:
+            if other_panel_id != panel_type and self.panels[other_panel_id].isVisible():
+                self.main_window.tabifyDockWidget(
+                    self.panels[other_panel_id],
+                    self.panels[panel_type]
+                )
+                return
+    
+    def update_theme(self, theme):
+        """Update the theme for all panels"""
+        self.current_theme = theme
+        for panel_id, dock in self.panels.items():
+            if dock:
+                self._apply_panel_styling(dock, panel_id)
+    
+    def close_all_panels(self):
+        """Close all panels"""
+        for dock in self.panels.values():
+            if dock:
+                dock.hide()
     
     def save_state(self):
         """Save the state of all panels"""

@@ -7,7 +7,7 @@ Implements the main UI window with dynamic layout system and panel management.
 
 from PySide6.QtWidgets import (
     QMainWindow, QDockWidget, QToolBar, QMenu, QMenuBar,
-    QStatusBar, QFileDialog, QMessageBox
+    QStatusBar, QFileDialog, QMessageBox, QLabel
 )
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon, QAction
@@ -15,6 +15,7 @@ from PySide6.QtGui import QIcon, QAction
 from app.ui.panel_manager import PanelManager
 from app.ui.panels.welcome_panel import WelcomePanel
 from app.ui.theme_manager import apply_theme
+from app.ui.panels.panel_category import PanelCategory
 
 
 class MainWindow(QMainWindow):
@@ -34,7 +35,8 @@ class MainWindow(QMainWindow):
         self._create_status_bar()
         
         # Apply the current theme
-        apply_theme(self, app_state.get_setting("theme", "dark"))
+        self.current_theme = app_state.get_setting("theme", "dark")
+        apply_theme(self, self.current_theme)
         
         # Load the default layout or show welcome screen
         if not self.app_state.load_layout():
@@ -100,82 +102,39 @@ class MainWindow(QMainWindow):
         # Panels menu
         panels_menu = self.menuBar().addMenu("&Panels")
         
-        # Combat Tracker
-        combat_action = QAction("Combat &Tracker", self)
-        combat_action.setShortcut("Ctrl+T")
-        combat_action.triggered.connect(lambda: self.panel_manager.create_panel("combat_tracker"))
-        panels_menu.addAction(combat_action)
+        # Combat panels
+        combat_menu = panels_menu.addMenu("&Combat Tools")
+        combat_menu.addAction("Combat Tracker").triggered.connect(
+            lambda: self.panel_manager.create_panel("combat_tracker"))
+        combat_menu.addAction("Dice Roller").triggered.connect(
+            lambda: self.panel_manager.create_panel("dice_roller"))
         
-        # Dice Roller
-        dice_action = QAction("&Dice Roller", self)
-        dice_action.setShortcut("Ctrl+D")
-        dice_action.triggered.connect(lambda: self.panel_manager.create_panel("dice_roller"))
-        panels_menu.addAction(dice_action)
+        # Reference panels
+        reference_menu = panels_menu.addMenu("&Reference")
+        reference_menu.addAction("Rules Reference").triggered.connect(
+            lambda: self.panel_manager.create_panel("rules_reference"))
+        reference_menu.addAction("Conditions").triggered.connect(
+            lambda: self.panel_manager.create_panel("conditions"))
+        reference_menu.addAction("Monsters").triggered.connect(
+            lambda: self.panel_manager.create_panel("monster"))
+        reference_menu.addAction("Spells").triggered.connect(
+            lambda: self.panel_manager.create_panel("spell_reference"))
+            
+        # Campaign Management panels
+        campaign_menu = panels_menu.addMenu("&Campaign")
+        campaign_menu.addAction("Session Notes").triggered.connect(
+            lambda: self.panel_manager.create_panel("session_notes"))
         
-        # Conditions Reference
-        conditions_action = QAction("&Conditions", self)
-        conditions_action.setShortcut("Ctrl+C")
-        conditions_action.triggered.connect(lambda: self.panel_manager.create_panel("conditions"))
-        panels_menu.addAction(conditions_action)
-        
-        # Rules Reference
-        rules_action = QAction("&Rules Reference", self)
-        rules_action.setShortcut("Ctrl+R")
-        rules_action.triggered.connect(lambda: self.panel_manager.create_panel("rules_reference"))
-        panels_menu.addAction(rules_action)
-        
-        # Monster Reference
-        monster_action = QAction("&Monster Reference", self)
-        monster_action.setShortcut("Ctrl+M")
-        monster_action.triggered.connect(lambda: self.panel_manager.create_panel("monster"))
-        panels_menu.addAction(monster_action)
-        
-        # Spell Reference
-        spell_action = QAction("&Spell Reference", self)
-        spell_action.setShortcut("Ctrl+S")
-        spell_action.triggered.connect(lambda: self.panel_manager.create_panel("spell_reference"))
-        panels_menu.addAction(spell_action)
-        
-        # Weather Panel
-        weather_action = QAction("&Weather", self)
-        weather_action.setShortcut("Ctrl+W")
-        weather_action.triggered.connect(lambda: self.panel_manager.create_panel("weather"))
-        panels_menu.addAction(weather_action)
-        
-        # Time Tracker Panel
-        time_action = QAction("T&ime Tracker", self)
-        time_action.setShortcut("Ctrl+I")
-        time_action.triggered.connect(lambda: self.panel_manager.create_panel("time_tracker"))
-        panels_menu.addAction(time_action)
-        
-        # Session Notes Panel
-        notes_action = QAction("Session &Notes", self)
-        notes_action.setShortcut("Ctrl+N")
-        notes_action.triggered.connect(lambda: self.panel_manager.create_panel("session_notes"))
-        panels_menu.addAction(notes_action)
-        
-        panels_menu.addSeparator()
-        
-        # Generators menu
-        generators_menu = panels_menu.addMenu("&Generators")
-        
-        encounter_action = generators_menu.addAction("&Encounter Generator")
-        encounter_action.setShortcut("Ctrl+Shift+E")
-        encounter_action.triggered.connect(lambda: self.panel_manager.create_panel("encounter_generator"))
-        
-        treasure_action = generators_menu.addAction("&Treasure Generator")
-        treasure_action.setShortcut("Ctrl+Shift+T")
-        treasure_action.triggered.connect(lambda: self.panel_manager.create_panel("treasure_generator"))
-        
-        npc_action = generators_menu.addAction("&NPC Generator")
-        npc_action.setShortcut("Ctrl+Shift+N")
-        npc_action.triggered.connect(lambda: self.panel_manager.create_panel("npc_generator"))
+        # Utility panels
+        utility_menu = panels_menu.addMenu("&Utilities")
+        utility_menu.addAction("Weather Generator").triggered.connect(
+            lambda: self.panel_manager.create_panel("weather"))
+        utility_menu.addAction("Time Tracker").triggered.connect(
+            lambda: self.panel_manager.create_panel("time_tracker"))
         
         # Help menu
         help_menu = self.menuBar().addMenu("&Help")
-        
-        about_action = help_menu.addAction("&About")
-        about_action.triggered.connect(self._show_about)
+        help_menu.addAction("&About").triggered.connect(self._show_about)
     
     def _create_toolbar(self):
         """Create the main toolbar"""
@@ -195,6 +154,10 @@ class MainWindow(QMainWindow):
         
         toolbar.addSeparator()
         
+        # Combat tools section
+        combat_label = QLabel("Combat:")
+        toolbar.addWidget(combat_label)
+        
         dice_action = toolbar.addAction("Dice")
         dice_action.setToolTip("Dice Roller (Ctrl+D)")
         dice_action.triggered.connect(lambda: self.panel_manager.create_panel("dice_roller"))
@@ -203,13 +166,43 @@ class MainWindow(QMainWindow):
         combat_action.setToolTip("Combat Tracker (Ctrl+T)")
         combat_action.triggered.connect(lambda: self.panel_manager.create_panel("combat_tracker"))
         
+        toolbar.addSeparator()
+        
+        # Reference section
+        ref_label = QLabel("Reference:")
+        toolbar.addWidget(ref_label)
+        
         spell_action = toolbar.addAction("Spells")
         spell_action.setToolTip("Spell Reference (Ctrl+S)")
         spell_action.triggered.connect(lambda: self.panel_manager.create_panel("spell_reference"))
         
+        conditions_action = toolbar.addAction("Conditions")
+        conditions_action.setToolTip("Conditions Reference")
+        conditions_action.triggered.connect(lambda: self.panel_manager.create_panel("conditions"))
+        
+        rules_action = toolbar.addAction("Rules")
+        rules_action.setToolTip("Rules Reference")
+        rules_action.triggered.connect(lambda: self.panel_manager.create_panel("rules_reference"))
+        
+        monster_action = toolbar.addAction("Monsters")
+        monster_action.setToolTip("Monster Reference")
+        monster_action.triggered.connect(lambda: self.panel_manager.create_panel("monster"))
+        
+        toolbar.addSeparator()
+        
+        # Campaign section
+        campaign_label = QLabel("Campaign:")
+        toolbar.addWidget(campaign_label)
+        
         notes_action = toolbar.addAction("Notes")
         notes_action.setToolTip("Session Notes (Ctrl+N)")
         notes_action.triggered.connect(lambda: self.panel_manager.create_panel("session_notes"))
+        
+        toolbar.addSeparator()
+        
+        # Utility section
+        utility_label = QLabel("Utilities:")
+        toolbar.addWidget(utility_label)
         
         weather_action = toolbar.addAction("Weather")
         weather_action.setToolTip("Weather Panel (Ctrl+W)")
@@ -273,24 +266,31 @@ class MainWindow(QMainWindow):
     def _load_layout(self):
         """Load a saved layout configuration"""
         # TODO: Implement layout selection dialog
-        if self.app_state.load_layout():
-            # Apply the loaded layout
-            self.panel_manager.apply_layout(self.app_state.layout_config)
-            self.statusBar().showMessage("Layout loaded")
+        self.app_state.load_layout()
+        self.statusBar().showMessage("Layout loaded")
     
-    def _change_theme(self, theme):
+    def _change_theme(self, theme_name):
         """Change the application theme"""
-        self.app_state.set_setting("theme", theme)
-        apply_theme(self, theme)
-        self.statusBar().showMessage(f"Theme changed to {theme}")
+        # Apply theme to UI
+        apply_theme(self, theme_name)
+        
+        # Update panel_manager theme
+        self.panel_manager.update_theme(theme_name)
+        
+        # Store theme in settings
+        self.app_state.set_setting("theme", theme_name)
+        self.current_theme = theme_name
+        
+        self.statusBar().showMessage(f"Theme changed to {theme_name}")
     
     def _show_about(self):
-        """Show the about dialog"""
+        """Show about dialog"""
         QMessageBox.about(
-            self, "About DM Screen V0",
-            "DM Screen V0\n\n"
-            "A dynamic Dungeon Master's screen for D&D 5e.\n\n"
-            "Created by jpaulm182"
+            self,
+            "About DM Screen",
+            "DM Screen V0.1.0\n\n"
+            "A dynamic Dungeon Master's Screen for D&D 5e\n"
+            "Provides quick access to rules, references, and tools."
         )
     
     def closeEvent(self, event):
