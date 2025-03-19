@@ -1,0 +1,42 @@
+{
+    "Temperature": {
+        "Glacial": "Unprotected creatures must make a DC 10 Constitution saving throw every hour or gain one level of exhaustion. Movement through snow is halved.",
+        "Freezing": "Unprotected creatures must make a DC 10 Constitution saving throw every hour or gain one level of exhaustion.",
+        "Frigid": "Creatures have disadvantage on Constitution saves to avoid exhaustion from cold.",
+        "Cold": "No significant mechanical effects, but uncomfortable without proper clothing.",
+        "Cool": "No mechanical effects.",
+        "Mild": "Comfortable temperature with no mechanical effects.",
+        "Warm": "No mechanical effects, but uncomfortable for heavily dressed characters.",
+        "Hot": "Creatures have disadvantage on Constitution saves to avoid exhaustion from heat.",
+        "Scorching": "Unprotected creatures must make a DC 10 Constitution saving throw every hour or gain one level of exhaustion.",
+        "Blistering": "Unprotected creatures must make a DC 10 Constitution saving throw every hour or gain one level of exhaustion. Water consumption is doubled.",
+        "Humid": "Constitution checks to avoid exhaustion are made with disadvantage in hot, humid conditions."
+    },
+    "Wind": {
+        "Calm": "No wind effects. Smoke rises vertically.",
+        "Breeze": "No mechanical effects. Light objects might be moved slightly.",
+        "Windy": "Disadvantage on ranged weapon attacks and Perception checks that rely on hearing.",
+        "Gale": "Disadvantage on ranged weapon attacks. Small creatures must succeed on a DC 10 Strength saving throw or be knocked prone when moving against the wind.",
+        "Hot Wind": "Creatures have disadvantage on Constitution saves against exhaustion from heat.",
+        "Blizzard": "Heavily obscured area (effectively blinded beyond 5 feet). Disadvantage on Perception checks. Movement is halved.",
+        "Sandstorm": "Heavily obscured area (effectively blinded beyond 5 feet). Disadvantage on Perception checks. Creatures must cover mouth and nose or suffer disadvantage on Constitution saves.",
+        "Tropical Storm": "Heavily obscured area outdoors (effectively blinded beyond 10 feet). Disadvantage on Perception checks and ranged attacks.",
+        "Hurricane": "Heavily obscured area (effectively blinded beyond 5 feet). Creatures must succeed on a DC 15 Strength saving throw or be knocked prone and pushed 5 feet at the start of each turn."
+    },
+    "Precipitation": {
+        "None": "No precipitation effects.",
+        "Drizzle": "No mechanical effects.",
+        "Light Rain": "No significant mechanical effects.",
+        "Rain": "Disadvantage on Perception checks that rely on sight or hearing. Fire-based effects have disadvantage or reduced effectiveness.",
+        "Heavy Rain": "Lightly obscured area. Disadvantage on Perception checks that rely on sight or hearing. Fire-based spells and effects have disadvantage or reduced effectiveness.",
+        "Thunderstorm": "As heavy rain, plus occasional thunder and lightning. Characters in metal armor have disadvantage on Dexterity saving throws against lightning damage.",
+        "Monsoon": "Heavily obscured area (effectively blinded beyond 20 feet). Disadvantage on all Perception checks. Movement is halved. Fire-based effects automatically fail.",
+        "Sleet": "Lightly obscured area. Surfaces become slippery (difficult terrain).",
+        "Freezing Rain": "Surfaces become extremely slippery (difficult terrain). Dexterity (Acrobatics) checks to avoid falling are made with disadvantage.",
+        "Light Snow": "No significant mechanical effects.",
+        "Snow": "Lightly obscured area. Movement costs are doubled unless using snowshoes or similar equipment.",
+        "Heavy Snow": "Lightly obscured area. Movement costs are doubled unless using snowshoes or similar equipment. Tracks are covered in 1d4 hours.",
+        "Blizzard": "Heavily obscured area (effectively blinded beyond 5 feet). Movement costs are tripled.",
+        "Hail": "Creatures in the open take 1d4 bludgeoning damage per minute of exposure."
+    }
+}

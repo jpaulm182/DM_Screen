@@ -1,0 +1,407 @@
+{
+    "Arctic": {
+        "Winter": {
+            "temperature": [
+                "Freezing",
+                "Frigid",
+                "Glacial",
+                "Cold"
+            ],
+            "wind": [
+                "Calm",
+                "Breeze",
+                "Windy",
+                "Gale",
+                "Blizzard"
+            ],
+            "precipitation": [
+                "None",
+                "Light Snow",
+                "Heavy Snow",
+                "Blizzard"
+            ]
+        },
+        "Spring": {
+            "temperature": [
+                "Freezing",
+                "Cold",
+                "Chilly",
+                "Cool"
+            ],
+            "wind": [
+                "Calm",
+                "Breeze",
+                "Windy",
+                "Gale"
+            ],
+            "precipitation": [
+                "None",
+                "Light Snow",
+                "Snow",
+                "Sleet",
+                "Freezing Rain"
+            ]
+        },
+        "Summer": {
+            "temperature": [
+                "Cold",
+                "Cool",
+                "Mild",
+                "Warm"
+            ],
+            "wind": [
+                "Calm",
+                "Breeze",
+                "Windy"
+            ],
+            "precipitation": [
+                "None",
+                "Drizzle",
+                "Light Rain",
+                "Rain"
+            ]
+        },
+        "Fall": {
+            "temperature": [
+                "Cool",
+                "Cold",
+                "Chilly",
+                "Freezing"
+            ],
+            "wind": [
+                "Calm",
+                "Breeze",
+                "Windy",
+                "Gale"
+            ],
+            "precipitation": [
+                "None",
+                "Drizzle",
+                "Rain",
+                "Sleet",
+                "Light Snow"
+            ]
+        }
+    },
+    "Desert": {
+        "Winter": {
+            "temperature": [
+                "Cold",
+                "Cool",
+                "Mild",
+                "Warm"
+            ],
+            "wind": [
+                "Calm",
+                "Breeze",
+                "Windy",
+                "Sandstorm"
+            ],
+            "precipitation": [
+                "None",
+                "Light Rain",
+                "Rain"
+            ]
+        },
+        "Spring": {
+            "temperature": [
+                "Cool",
+                "Mild",
+                "Warm",
+                "Hot"
+            ],
+            "wind": [
+                "Calm",
+                "Breeze",
+                "Windy",
+                "Sandstorm"
+            ],
+            "precipitation": [
+                "None",
+                "Light Rain"
+            ]
+        },
+        "Summer": {
+            "temperature": [
+                "Warm",
+                "Hot",
+                "Scorching",
+                "Blistering"
+            ],
+            "wind": [
+                "Calm",
+                "Breeze",
+                "Hot Wind",
+                "Sandstorm"
+            ],
+            "precipitation": [
+                "None",
+                "None",
+                "None",
+                "Light Rain"
+            ]
+        },
+        "Fall": {
+            "temperature": [
+                "Hot",
+                "Warm",
+                "Mild",
+                "Cool"
+            ],
+            "wind": [
+                "Calm",
+                "Breeze",
+                "Windy",
+                "Sandstorm"
+            ],
+            "precipitation": [
+                "None",
+                "Light Rain",
+                "Rain"
+            ]
+        }
+    },
+    "Temperate": {
+        "Winter": {
+            "temperature": [
+                "Freezing",
+                "Cold",
+                "Chilly",
+                "Cool"
+            ],
+            "wind": [
+                "Calm",
+                "Breeze",
+                "Windy",
+                "Gale"
+            ],
+            "precipitation": [
+                "None",
+                "Drizzle",
+                "Rain",
+                "Sleet",
+                "Snow",
+                "Heavy Snow"
+            ]
+        },
+        "Spring": {
+            "temperature": [
+                "Cool",
+                "Mild",
+                "Warm"
+            ],
+            "wind": [
+                "Calm",
+                "Breeze",
+                "Windy"
+            ],
+            "precipitation": [
+                "None",
+                "Drizzle",
+                "Light Rain",
+                "Rain",
+                "Thunderstorm"
+            ]
+        },
+        "Summer": {
+            "temperature": [
+                "Mild",
+                "Warm",
+                "Hot"
+            ],
+            "wind": [
+                "Calm",
+                "Breeze",
+                "Windy"
+            ],
+            "precipitation": [
+                "None",
+                "Drizzle",
+                "Rain",
+                "Thunderstorm"
+            ]
+        },
+        "Fall": {
+            "temperature": [
+                "Warm",
+                "Mild",
+                "Cool",
+                "Cold"
+            ],
+            "wind": [
+                "Calm",
+                "Breeze",
+                "Windy",
+                "Gale"
+            ],
+            "precipitation": [
+                "None",
+                "Drizzle",
+                "Rain",
+                "Heavy Rain"
+            ]
+        }
+    },
+    "Tropical": {
+        "Winter": {
+            "temperature": [
+                "Warm",
+                "Hot"
+            ],
+            "wind": [
+                "Calm",
+                "Breeze",
+                "Windy",
+                "Tropical Storm"
+            ],
+            "precipitation": [
+                "None",
+                "Drizzle",
+                "Rain",
+                "Heavy Rain",
+                "Thunderstorm"
+            ]
+        },
+        "Spring": {
+            "temperature": [
+                "Warm",
+                "Hot",
+                "Humid"
+            ],
+            "wind": [
+                "Calm",
+                "Breeze",
+                "Windy",
+                "Tropical Storm"
+            ],
+            "precipitation": [
+                "None",
+                "Drizzle",
+                "Rain",
+                "Heavy Rain",
+                "Monsoon"
+            ]
+        },
+        "Summer": {
+            "temperature": [
+                "Hot",
+                "Humid",
+                "Scorching"
+            ],
+            "wind": [
+                "Calm",
+                "Breeze",
+                "Windy",
+                "Hurricane"
+            ],
+            "precipitation": [
+                "None",
+                "Rain",
+                "Heavy Rain",
+                "Monsoon",
+                "Hurricane"
+            ]
+        },
+        "Fall": {
+            "temperature": [
+                "Hot",
+                "Warm",
+                "Humid"
+            ],
+            "wind": [
+                "Calm",
+                "Breeze",
+                "Windy",
+                "Tropical Storm"
+            ],
+            "precipitation": [
+                "None",
+                "Drizzle",
+                "Rain",
+                "Heavy Rain",
+                "Thunderstorm"
+            ]
+        }
+    },
+    "Mountain": {
+        "Winter": {
+            "temperature": [
+                "Glacial",
+                "Freezing",
+                "Frigid",
+                "Cold"
+            ],
+            "wind": [
+                "Calm",
+                "Breeze",
+                "Windy",
+                "Gale",
+                "Blizzard"
+            ],
+            "precipitation": [
+                "None",
+                "Snow",
+                "Heavy Snow",
+                "Blizzard"
+            ]
+        },
+        "Spring": {
+            "temperature": [
+                "Freezing",
+                "Cold",
+                "Cool",
+                "Mild"
+            ],
+            "wind": [
+                "Calm",
+                "Breeze",
+                "Windy",
+                "Gale"
+            ],
+            "precipitation": [
+                "None",
+                "Rain",
+                "Snow",
+                "Sleet"
+            ]
+        },
+        "Summer": {
+            "temperature": [
+                "Cool",
+                "Mild",
+                "Warm"
+            ],
+            "wind": [
+                "Calm",
+                "Breeze",
+                "Windy"
+            ],
+            "precipitation": [
+                "None",
+                "Rain",
+                "Thunderstorm",
+                "Hail"
+            ]
+        },
+        "Fall": {
+            "temperature": [
+                "Mild",
+                "Cool",
+                "Cold",
+                "Freezing"
+            ],
+            "wind": [
+                "Calm",
+                "Breeze",
+                "Windy",
+                "Gale"
+            ],
+            "precipitation": [
+                "None",
+                "Rain",
+                "Sleet",
+                "Snow"
+            ]
+        }
+    }
+}

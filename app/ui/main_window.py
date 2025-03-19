@@ -112,6 +112,16 @@ class MainWindow(QMainWindow):
         rules_action.triggered.connect(lambda: self.panel_manager.create_panel("rules_reference"))
         panels_menu.addAction(rules_action)
         
+        # Monster Reference
+        monster_action = QAction("&Monster Reference", self)
+        monster_action.triggered.connect(lambda: self.panel_manager.create_panel("monster"))
+        panels_menu.addAction(monster_action)
+        
+        # Spell Reference
+        spell_action = QAction("&Spell Reference", self)
+        spell_action.triggered.connect(lambda: self.panel_manager.create_panel("spell_reference"))
+        panels_menu.addAction(spell_action)
+        
         # Generators menu
         generators_menu = panels_menu.addMenu("&Generators")
         
@@ -157,6 +167,9 @@ class MainWindow(QMainWindow):
         
         combat_action = toolbar.addAction("Combat")
         combat_action.triggered.connect(lambda: self.panel_manager.create_panel("combat_tracker"))
+        
+        spell_action = toolbar.addAction("Spells")
+        spell_action.triggered.connect(lambda: self.panel_manager.create_panel("spell_reference"))
         
         notes_action = toolbar.addAction("Notes")
         notes_action.triggered.connect(lambda: self.panel_manager.create_panel("session_notes"))

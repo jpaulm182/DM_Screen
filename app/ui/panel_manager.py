@@ -15,6 +15,11 @@ from app.ui.panels.welcome_panel import WelcomePanel
 from app.ui.panels.conditions_panel import ConditionsPanel
 from app.ui.panels.rules_reference_panel import RulesReferencePanel
 from app.ui.panels.monster_panel import MonsterPanel
+from app.ui.panels.spell_reference_panel import SpellReferencePanel
+# from app.ui.panels.minimal_spell_panel import MinimalSpellPanel
+from app.ui.panels.session_notes_panel import SessionNotesPanel
+from app.ui.panels.weather_panel import WeatherPanel
+from app.ui.panels.time_tracker_panel import TimeTrackerPanel
 
 class PanelManager(QObject):
     """
@@ -42,6 +47,10 @@ class PanelManager(QObject):
         self.panels["conditions"] = self._create_panel(ConditionsPanel)
         self.panels["rules_reference"] = self._create_panel(RulesReferencePanel)
         self.panels["monster"] = self._create_panel(MonsterPanel)
+        self.panels["spell_reference"] = self._create_panel(SpellReferencePanel)
+        self.panels["session_notes"] = self._create_panel(SessionNotesPanel)
+        self.panels["weather"] = self._create_panel(WeatherPanel)
+        self.panels["time_tracker"] = self._create_panel(TimeTrackerPanel)
         
         # Set initial dock locations
         self.main_window.addDockWidget(Qt.LeftDockWidgetArea, self.panels["dice_roller"])
@@ -49,6 +58,10 @@ class PanelManager(QObject):
         self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.panels["conditions"])
         self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.panels["rules_reference"])
         self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.panels["monster"])
+        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.panels["spell_reference"])
+        self.main_window.addDockWidget(Qt.BottomDockWidgetArea, self.panels["session_notes"])
+        self.main_window.addDockWidget(Qt.BottomDockWidgetArea, self.panels["weather"])
+        self.main_window.addDockWidget(Qt.BottomDockWidgetArea, self.panels["time_tracker"])
         
         # Tabify related panels
         self.main_window.tabifyDockWidget(
@@ -58,6 +71,16 @@ class PanelManager(QObject):
         self.main_window.tabifyDockWidget(
             self.panels["rules_reference"],
             self.panels["monster"]
+        )
+        self.main_window.tabifyDockWidget(
+            self.panels["monster"],
+            self.panels["spell_reference"]
+        )
+        
+        # Tabify weather and time tracker
+        self.main_window.tabifyDockWidget(
+            self.panels["weather"],
+            self.panels["time_tracker"]
         )
         
         # Raise the combat tracker initially
@@ -112,12 +135,61 @@ class PanelManager(QObject):
             if conditions_panel and hasattr(conditions_panel, "apply_condition"):
                 conditions_panel.apply_condition.connect(combat_tracker.apply_condition)
             
+            # Connect weather panel and time tracker panel (future integration)
+            weather_panel = self.panels["weather"].widget()
+            time_tracker = self.panels["time_tracker"].widget()
+            
+            # This connection would be implemented when the signal/slot is ready
+            # if weather_panel and time_tracker:
+            #     if hasattr(time_tracker, "update_weather") and hasattr(weather_panel, "generate_weather"):
+            #         time_tracker.update_weather.connect(weather_panel.generate_weather)
+            
         except Exception as e:
             QMessageBox.warning(
                 self.main_window,
                 "Signal Connection Error",
                 f"Failed to connect panel signals: {str(e)}"
             )
+    
+    def create_panel(self, panel_type):
+        """Create a specific panel and show it"""
+        if panel_type in self.panels and self.panels[panel_type]:
+            # Panel already exists, just show it
+            self.panels[panel_type].show()
+            self.panels[panel_type].raise_()
+            return
+        
+        # Create new panel based on type
+        if panel_type == "combat_tracker":
+            self.panels[panel_type] = self._create_panel(CombatTrackerPanel)
+        elif panel_type == "dice_roller":
+            self.panels[panel_type] = self._create_panel(DiceRollerPanel)
+        elif panel_type == "conditions":
+            self.panels[panel_type] = self._create_panel(ConditionsPanel)
+        elif panel_type == "rules_reference":
+            self.panels[panel_type] = self._create_panel(RulesReferencePanel)
+        elif panel_type == "monster":
+            self.panels[panel_type] = self._create_panel(MonsterPanel)
+        elif panel_type == "spell_reference":
+            self.panels[panel_type] = self._create_panel(SpellReferencePanel)
+        elif panel_type == "session_notes":
+            self.panels[panel_type] = self._create_panel(SessionNotesPanel)
+        elif panel_type == "weather":
+            self.panels[panel_type] = self._create_panel(WeatherPanel)
+        elif panel_type == "time_tracker":
+            self.panels[panel_type] = self._create_panel(TimeTrackerPanel)
+        else:
+            QMessageBox.warning(
+                self.main_window,
+                "Panel Creation Error",
+                f"Unknown panel type: {panel_type}"
+            )
+            return
+        
+        # Add the new panel to the main window
+        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.panels[panel_type])
+        self.panels[panel_type].show()
+        self.panels[panel_type].raise_()
     
     def save_state(self):
         """Save the state of all panels"""

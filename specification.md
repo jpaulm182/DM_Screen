@@ -28,11 +28,11 @@ Core Features
     - ✅ Condition reference with quick-apply functionality
     - ✅ Basic rules quick-reference
     - ✅ NPC/Monster stat block viewer
-    - 🔜 Spell reference and tracker
+    - ✅ Spell reference and tracker
     - ✅ DC/Check difficulty guidelines (part of rules reference)
     - ✅ Cover and terrain effects (part of rules reference)
-    - 🔜 Weather and environmental effects
-    - ❌ Time and travel pace tracker
+    - ✅ Weather and environmental effects
+    - ✅ Time and travel pace tracker
 
 3. Dynamic Content Generation
     - ❌ Terrain-based encounter tables
@@ -56,7 +56,7 @@ World Building Tools
     - ❌ Plot hook generator
 
 4. Campaign Management
-    - 🔜 Session notes with searchable tags
+    - ✅ Session notes with searchable tags
     - ✅ Initiative tracker with HP/status management
     - ❌ Player character quick reference
     - ⚠️ Custom monster/NPC storage (basic version implemented)
@@ -66,7 +66,7 @@ World Building Tools
 5. Advanced Features
     - ✅ Dice roller with custom formulas
     - ❌ Sound effect/ambient music integration
-    - 🔜 Weather system with effects on gameplay
+    - ✅ Weather system with effects on gameplay
     - ❌ Calendar system with moon phases/festivals
     - ❌ Combat difficulty calculator
     - ❌ Experience point calculator
@@ -112,11 +112,12 @@ User Interface Guidelines
     - ❌ Unified search across all content
 
 Next Implementation Steps:
-1. 🔜 Add Spell reference and tracker
-2. 🔜 Add Session notes panel with searchable tags
-3. 🔜 Add Weather and environmental effects panel
-4. 🔜 Add layout save/load functionality
-5. 🔜 Enhance Monster panel with custom monster creation
+1. 🔜 Add layout save/load functionality
+2. 🔜 Enhance Monster panel with custom monster creation
+3. 🔜 Add font size adjustment for accessibility
+4. 🔜 Implement Player character quick reference panel
+5. 🔜 Add Calendar system with moon phases/festivals
+6. 🔜 Add combat difficulty calculator
 
 Planned Integrations
 
