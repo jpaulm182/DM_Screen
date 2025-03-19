@@ -52,6 +52,36 @@ class WelcomePanel(QWidget):
         welcome_text.setFont(welcome_font)
         layout.addWidget(welcome_text)
         
+        # Smart Organize button at top
+        organize_button = QPushButton("Smart Panel Organization")
+        organize_button.setMinimumSize(200, 50)
+        organize_button.setStyleSheet("""
+            QPushButton {
+                font-size: 14px;
+                font-weight: bold;
+                padding: 10px;
+                background-color: #444499;
+                color: white;
+                border-radius: 5px;
+                border: 2px solid #333388;
+            }
+            QPushButton:hover {
+                background-color: #5555AA;
+            }
+            QPushButton:pressed {
+                background-color: #333388;
+            }
+        """)
+        organize_button.setToolTip("Automatically organize your open panels for optimal layout")
+        organize_button.clicked.connect(self._smart_organize)
+        
+        # Add the organize button with some space around it
+        organize_layout = QHBoxLayout()
+        organize_layout.addStretch()
+        organize_layout.addWidget(organize_button)
+        organize_layout.addStretch()
+        layout.addLayout(organize_layout)
+        
         # Button grid layout for panels
         panels_layout = QGridLayout()
         panels_layout.setSpacing(15)
@@ -151,7 +181,7 @@ class WelcomePanel(QWidget):
             row, col = divmod(i, 2)  # Arrange in 2 columns
             button = QPushButton(title)
             button.setMinimumSize(140, 80)
-            button.setToolTip(tooltip)
+            button.setToolTip(tooltip + " (click to toggle panel on/off)")
             
             # Style the button
             if colors:
@@ -169,11 +199,21 @@ class WelcomePanel(QWidget):
                     }}
                 """)
                 
-            button.clicked.connect(lambda checked, pt=panel_type: self._open_panel(pt))
+            button.clicked.connect(lambda checked, pt=panel_type: self._toggle_panel(pt))
             grid.addWidget(button, row, col)
         
         return group
     
-    def _open_panel(self, panel_type):
-        """Open a panel of the specified type"""
-        self.panel_manager.create_panel(panel_type)
+    def _toggle_panel(self, panel_type):
+        """Toggle a panel of the specified type"""
+        self.panel_manager.toggle_panel(panel_type)
+        
+    def _smart_organize(self):
+        """Trigger smart organization of panels"""
+        # Call the smart organize function on the panel manager
+        result = self.panel_manager.smart_organize_panels()
+        
+        # If there's a parent main window with a status bar, show a message
+        main_window = self.window()
+        if main_window and hasattr(main_window, "statusBar"):
+            main_window.statusBar().showMessage(result)

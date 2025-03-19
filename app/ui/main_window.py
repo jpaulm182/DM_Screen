@@ -88,6 +88,11 @@ class MainWindow(QMainWindow):
         load_layout_action.setShortcut("Ctrl+Alt+L")
         load_layout_action.triggered.connect(self._load_layout)
         
+        # Add Smart Organize action
+        smart_organize_action = view_menu.addAction("Smart &Organize Panels")
+        smart_organize_action.setShortcut("Ctrl+Alt+O")
+        smart_organize_action.triggered.connect(self._smart_organize_panels)
+        
         view_menu.addSeparator()
         
         theme_menu = view_menu.addMenu("&Theme")
@@ -105,32 +110,32 @@ class MainWindow(QMainWindow):
         # Combat panels
         combat_menu = panels_menu.addMenu("&Combat Tools")
         combat_menu.addAction("Combat Tracker").triggered.connect(
-            lambda: self.panel_manager.create_panel("combat_tracker"))
+            lambda: self.panel_manager.toggle_panel("combat_tracker"))
         combat_menu.addAction("Dice Roller").triggered.connect(
-            lambda: self.panel_manager.create_panel("dice_roller"))
+            lambda: self.panel_manager.toggle_panel("dice_roller"))
         
         # Reference panels
         reference_menu = panels_menu.addMenu("&Reference")
         reference_menu.addAction("Rules Reference").triggered.connect(
-            lambda: self.panel_manager.create_panel("rules_reference"))
+            lambda: self.panel_manager.toggle_panel("rules_reference"))
         reference_menu.addAction("Conditions").triggered.connect(
-            lambda: self.panel_manager.create_panel("conditions"))
+            lambda: self.panel_manager.toggle_panel("conditions"))
         reference_menu.addAction("Monsters").triggered.connect(
-            lambda: self.panel_manager.create_panel("monster"))
+            lambda: self.panel_manager.toggle_panel("monster"))
         reference_menu.addAction("Spells").triggered.connect(
-            lambda: self.panel_manager.create_panel("spell_reference"))
+            lambda: self.panel_manager.toggle_panel("spell_reference"))
             
         # Campaign Management panels
         campaign_menu = panels_menu.addMenu("&Campaign")
         campaign_menu.addAction("Session Notes").triggered.connect(
-            lambda: self.panel_manager.create_panel("session_notes"))
+            lambda: self.panel_manager.toggle_panel("session_notes"))
         
         # Utility panels
         utility_menu = panels_menu.addMenu("&Utilities")
         utility_menu.addAction("Weather Generator").triggered.connect(
-            lambda: self.panel_manager.create_panel("weather"))
+            lambda: self.panel_manager.toggle_panel("weather"))
         utility_menu.addAction("Time Tracker").triggered.connect(
-            lambda: self.panel_manager.create_panel("time_tracker"))
+            lambda: self.panel_manager.toggle_panel("time_tracker"))
         
         # Help menu
         help_menu = self.menuBar().addMenu("&Help")
@@ -152,6 +157,11 @@ class MainWindow(QMainWindow):
         save_action.setToolTip("Save Session (Ctrl+Shift+S)")
         save_action.triggered.connect(self._save_session)
         
+        # Add Smart Organize button
+        organize_action = toolbar.addAction("Smart Organize")
+        organize_action.setToolTip("Smart Organize Panels (Ctrl+Alt+O)")
+        organize_action.triggered.connect(self._smart_organize_panels)
+        
         toolbar.addSeparator()
         
         # Combat tools section
@@ -160,11 +170,11 @@ class MainWindow(QMainWindow):
         
         dice_action = toolbar.addAction("Dice")
         dice_action.setToolTip("Dice Roller (Ctrl+D)")
-        dice_action.triggered.connect(lambda: self.panel_manager.create_panel("dice_roller"))
+        dice_action.triggered.connect(lambda: self.panel_manager.toggle_panel("dice_roller"))
         
         combat_action = toolbar.addAction("Combat")
         combat_action.setToolTip("Combat Tracker (Ctrl+T)")
-        combat_action.triggered.connect(lambda: self.panel_manager.create_panel("combat_tracker"))
+        combat_action.triggered.connect(lambda: self.panel_manager.toggle_panel("combat_tracker"))
         
         toolbar.addSeparator()
         
@@ -174,19 +184,19 @@ class MainWindow(QMainWindow):
         
         spell_action = toolbar.addAction("Spells")
         spell_action.setToolTip("Spell Reference (Ctrl+S)")
-        spell_action.triggered.connect(lambda: self.panel_manager.create_panel("spell_reference"))
+        spell_action.triggered.connect(lambda: self.panel_manager.toggle_panel("spell_reference"))
         
         conditions_action = toolbar.addAction("Conditions")
         conditions_action.setToolTip("Conditions Reference")
-        conditions_action.triggered.connect(lambda: self.panel_manager.create_panel("conditions"))
+        conditions_action.triggered.connect(lambda: self.panel_manager.toggle_panel("conditions"))
         
         rules_action = toolbar.addAction("Rules")
         rules_action.setToolTip("Rules Reference")
-        rules_action.triggered.connect(lambda: self.panel_manager.create_panel("rules_reference"))
+        rules_action.triggered.connect(lambda: self.panel_manager.toggle_panel("rules_reference"))
         
         monster_action = toolbar.addAction("Monsters")
         monster_action.setToolTip("Monster Reference")
-        monster_action.triggered.connect(lambda: self.panel_manager.create_panel("monster"))
+        monster_action.triggered.connect(lambda: self.panel_manager.toggle_panel("monster"))
         
         toolbar.addSeparator()
         
@@ -196,7 +206,7 @@ class MainWindow(QMainWindow):
         
         notes_action = toolbar.addAction("Notes")
         notes_action.setToolTip("Session Notes (Ctrl+N)")
-        notes_action.triggered.connect(lambda: self.panel_manager.create_panel("session_notes"))
+        notes_action.triggered.connect(lambda: self.panel_manager.toggle_panel("session_notes"))
         
         toolbar.addSeparator()
         
@@ -206,11 +216,11 @@ class MainWindow(QMainWindow):
         
         weather_action = toolbar.addAction("Weather")
         weather_action.setToolTip("Weather Panel (Ctrl+W)")
-        weather_action.triggered.connect(lambda: self.panel_manager.create_panel("weather"))
+        weather_action.triggered.connect(lambda: self.panel_manager.toggle_panel("weather"))
         
         time_action = toolbar.addAction("Time")
         time_action.setToolTip("Time Tracker (Ctrl+I)")
-        time_action.triggered.connect(lambda: self.panel_manager.create_panel("time_tracker"))
+        time_action.triggered.connect(lambda: self.panel_manager.toggle_panel("time_tracker"))
     
     def _create_status_bar(self):
         """Create the status bar"""
@@ -268,6 +278,11 @@ class MainWindow(QMainWindow):
         # TODO: Implement layout selection dialog
         self.app_state.load_layout()
         self.statusBar().showMessage("Layout loaded")
+    
+    def _smart_organize_panels(self):
+        """Smart organize all visible panels"""
+        message = self.panel_manager.smart_organize_panels()
+        self.statusBar().showMessage(message)
     
     def _change_theme(self, theme_name):
         """Change the application theme"""

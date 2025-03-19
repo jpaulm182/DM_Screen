@@ -216,12 +216,16 @@ class PanelManager(QObject):
             )
     
     def create_panel(self, panel_type):
-        """Create a specific panel and show it"""
+        """Create a specific panel and show it, or toggle if already visible"""
         if panel_type in self.panels and self.panels[panel_type]:
-            # Panel already exists, just show it
-            self.panels[panel_type].show()
-            self.panels[panel_type].raise_()
-            return
+            # Panel already exists, toggle visibility
+            if self.panels[panel_type].isVisible():
+                self.panels[panel_type].hide()
+                return
+            else:
+                self.panels[panel_type].show()
+                self.panels[panel_type].raise_()
+                return
         
         # Create new panel based on type
         if panel_type == "combat_tracker":
@@ -326,3 +330,154 @@ class PanelManager(QObject):
     def get_panel(self, name):
         """Get a panel by name"""
         return self.panels.get(name)
+
+    def toggle_panel(self, panel_type):
+        """Toggle a panel on or off"""
+        if panel_type in self.panels and self.panels[panel_type]:
+            if self.panels[panel_type].isVisible():
+                self.panels[panel_type].hide()
+            else:
+                self.panels[panel_type].show()
+                self.panels[panel_type].raise_()
+        else:
+            # Panel doesn't exist yet, create it
+            self.create_panel(panel_type)
+
+    def smart_organize_panels(self):
+        """Smart organization of panels to maximize usable space"""
+        # Step 1: Temporary hide all panels to reorganize them
+        visible_panels = {}
+        for panel_id, dock in self.panels.items():
+            if dock and dock.isVisible():
+                visible_panels[panel_id] = True
+                dock.hide()
+        
+        # Step 2: Determine screen quadrants
+        main_window_geometry = self.main_window.geometry()
+        center_x = main_window_geometry.width() // 2
+        center_y = main_window_geometry.height() // 2
+        
+        # Step 3: Organize by category in specific quadrants
+        # - Combat: Top Left
+        # - Reference: Top Right 
+        # - Campaign: Bottom Left
+        # - Utility: Bottom Right
+        
+        # Organize combat panels
+        combat_panels = [p for p in self.panel_categories.get(PanelCategory.COMBAT, []) 
+                         if p in visible_panels]
+        if combat_panels:
+            # Add first panel
+            first_panel = combat_panels[0]
+            self.main_window.addDockWidget(Qt.TopDockWidgetArea, self.panels[first_panel])
+            self.panels[first_panel].show()
+            
+            # Tabify remaining combat panels
+            for i in range(1, len(combat_panels)):
+                panel_id = combat_panels[i]
+                self.main_window.tabifyDockWidget(
+                    self.panels[first_panel],
+                    self.panels[panel_id]
+                )
+                self.panels[panel_id].show()
+        
+        # Organize reference panels
+        reference_panels = [p for p in self.panel_categories.get(PanelCategory.REFERENCE, []) 
+                           if p in visible_panels]
+        if reference_panels:
+            # Add first panel
+            first_panel = reference_panels[0]
+            self.main_window.addDockWidget(Qt.TopDockWidgetArea, self.panels[first_panel])
+            self.panels[first_panel].show()
+            
+            # Tabify remaining reference panels
+            for i in range(1, len(reference_panels)):
+                panel_id = reference_panels[i]
+                self.main_window.tabifyDockWidget(
+                    self.panels[first_panel],
+                    self.panels[panel_id]
+                )
+                self.panels[panel_id].show()
+            
+            # Split combat and reference horizontally if both exist
+            if combat_panels:
+                self.main_window.splitDockWidget(
+                    self.panels[combat_panels[0]],
+                    self.panels[reference_panels[0]],
+                    Qt.Horizontal
+                )
+        
+        # Organize campaign panels
+        campaign_panels = [p for p in self.panel_categories.get(PanelCategory.CAMPAIGN, []) 
+                          if p in visible_panels]
+        if campaign_panels:
+            # Add first panel
+            first_panel = campaign_panels[0]
+            self.main_window.addDockWidget(Qt.BottomDockWidgetArea, self.panels[first_panel])
+            self.panels[first_panel].show()
+            
+            # Tabify remaining campaign panels
+            for i in range(1, len(campaign_panels)):
+                panel_id = campaign_panels[i]
+                self.main_window.tabifyDockWidget(
+                    self.panels[first_panel],
+                    self.panels[panel_id]
+                )
+                self.panels[panel_id].show()
+            
+            # Split vertically with top panels if they exist
+            if combat_panels:
+                self.main_window.splitDockWidget(
+                    self.panels[combat_panels[0]],
+                    self.panels[campaign_panels[0]],
+                    Qt.Vertical
+                )
+        
+        # Organize utility panels
+        utility_panels = [p for p in self.panel_categories.get(PanelCategory.UTILITY, []) 
+                         if p in visible_panels]
+        if utility_panels:
+            # Add first panel
+            first_panel = utility_panels[0]
+            self.main_window.addDockWidget(Qt.BottomDockWidgetArea, self.panels[first_panel])
+            self.panels[first_panel].show()
+            
+            # Tabify remaining utility panels
+            for i in range(1, len(utility_panels)):
+                panel_id = utility_panels[i]
+                self.main_window.tabifyDockWidget(
+                    self.panels[first_panel],
+                    self.panels[panel_id]
+                )
+                self.panels[panel_id].show()
+            
+            # Split horizontally with campaign panels if they exist,
+            # otherwise split vertically with reference panels
+            if campaign_panels:
+                self.main_window.splitDockWidget(
+                    self.panels[campaign_panels[0]],
+                    self.panels[utility_panels[0]],
+                    Qt.Horizontal
+                )
+            elif reference_panels:
+                self.main_window.splitDockWidget(
+                    self.panels[reference_panels[0]],
+                    self.panels[utility_panels[0]],
+                    Qt.Vertical
+                )
+        
+        # Step 4: Raise the appropriate panels in each area to make them visible
+        for category, panel_ids in self.panel_categories.items():
+            for panel_id in panel_ids:
+                if panel_id in visible_panels:
+                    self.panels[panel_id].raise_()
+                    break
+                
+        # Return success message
+        return "Panels have been intelligently organized for optimal use of screen space."
+
+    def is_panel_visible(self, panel_type):
+        """Check if a panel is currently visible"""
+        if panel_type in self.panels and self.panels[panel_type]:
+            return self.panels[panel_type].isVisible()
+        return False
