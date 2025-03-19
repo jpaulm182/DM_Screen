@@ -249,10 +249,9 @@ class PanelManager(QObject):
             npc_generator = self.panels["npc_generator"].widget()
             llm_panel = self.panels["llm"].widget()
             
-            # If the NPC generator has appropriate signals, connect it
-            if npc_generator and combat_tracker and hasattr(npc_generator, "npc_generated"):
-                # In future, this could add NPCs directly to combat
-                pass
+            # Connect NPC Generator to Player Character Panel
+            if npc_generator and player_character_panel and hasattr(npc_generator, "npc_generated"):
+                npc_generator.npc_generated.connect(player_character_panel.add_npc_character)
             
             # Weather panel and time tracker panel (future integration)
             weather_panel = self.panels["weather"].widget()
@@ -292,6 +291,7 @@ class PanelManager(QObject):
             "weather": WeatherPanel,
             "time_tracker": TimeTrackerPanel,
             "llm": LLMPanel,  # Add LLM panel to the map
+            "npc_generator": NPCGeneratorPanel,  # Add NPC Generator panel to the map
         }
         
         if panel_type in self.panels and self.panels[panel_type]:

@@ -729,4 +729,138 @@ class PlayerCharacterPanel(BasePanel):
             return
             
         self.current_character_index = state.get("current_character_index", -1)
-        self._update_interface() 
+        self._update_interface()
+    
+    def add_npc_character(self, npc_data):
+        """Add an NPC from the NPC generator as a character
+        
+        Args:
+            npc_data (dict): Dictionary containing NPC data
+        """
+        try:
+            # Parse NPC content to extract information
+            content = npc_data.get("content", "")
+            
+            # Extract name from title or first line
+            name = npc_data.get("title", "Unnamed NPC")
+            
+            # If the name is too long, it's probably the full description - try to extract a proper name
+            if len(name) > 50:
+                # Try to find a more reasonable name from the first line or a line with "Name:" in it
+                lines = content.split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        if "name:" in line.lower():
+                            # Extract name after "Name:" prefix
+                            parts = line.split(':', 1)
+                            if len(parts) > 1:
+                                name = parts[1].strip()
+                                break
+                        else:
+                            # Just use the first non-empty, non-header line
+                            name = line
+                            break
+                
+                # If we still have a very long name, just use the first few words
+                if len(name) > 50:
+                    name_parts = name.split()
+                    if len(name_parts) > 3:
+                        name = " ".join(name_parts[:3])
+            
+            # Clean name from markdown formatting, asterisks, dashes, etc.
+            import re
+            # Remove markdown formatting like **bold**, *italic*, - bullet points, etc.
+            name = re.sub(r'[*\-_#>]', '', name).strip()
+            # Remove patterns like "Name:" if present
+            name = re.sub(r'(?i)name\s*:', '', name).strip()
+            
+            # Append (NPC) to the name
+            name = f"{name} (NPC)"
+            
+            # Create a new character
+            character = PlayerCharacter(name=name)
+            
+            # Try to extract basic information from content
+            lines = content.split('\n')
+            
+            # Look for race, class, level information
+            race = ""
+            char_class = "NPC"
+            level = 1
+            
+            # Simple extraction based on common patterns in NPC descriptions
+            for line in lines:
+                line = line.strip()
+                
+                # Look for race
+                if "race:" in line.lower() or "species:" in line.lower():
+                    parts = line.split(':', 1)
+                    if len(parts) > 1:
+                        race = parts[1].strip()
+                        
+                # Look for role/class
+                if "class:" in line.lower() or "role:" in line.lower() or "occupation:" in line.lower():
+                    parts = line.split(':', 1)
+                    if len(parts) > 1:
+                        char_class = parts[1].strip()
+                
+                # Look for level/CR
+                if "level:" in line.lower() or "cr:" in line.lower():
+                    parts = line.split(':', 1)
+                    if len(parts) > 1:
+                        try:
+                            # Extract the first number in the string
+                            import re
+                            number_match = re.search(r'\d+', parts[1])
+                            if number_match:
+                                level = int(number_match.group())
+                        except ValueError:
+                            level = 1
+            
+            # Update character with extracted info
+            character.race = race
+            character.character_class = char_class
+            character.level = level
+            
+            # Store the NPC description in notes
+            character.notes = content
+            
+            # Try to extract ability scores if available
+            for ability in ["STR", "DEX", "CON", "INT", "WIS", "CHA"]:
+                ability_lower = ability.lower()
+                for line in lines:
+                    if ability_lower in line.lower() and ":" in line:
+                        try:
+                            # Look for patterns like "STR: 14 (+2)" or "Strength: 14"
+                            parts = line.split(':', 1)
+                            if len(parts) > 1:
+                                # Extract the first number
+                                import re
+                                number_match = re.search(r'\d+', parts[1])
+                                if number_match:
+                                    score = int(number_match.group())
+                                    if 1 <= score <= 30:  # Valid ability score range
+                                        character.ability_scores[ability] = score
+                        except ValueError:
+                            pass
+            
+            # Add NPC as a character
+            self.characters.append(character)
+            self.current_character_index = len(self.characters) - 1
+            self._update_interface()
+            
+            # Show success message
+            QMessageBox.information(
+                self, "NPC Added",
+                f"NPC '{name}' has been added as a character."
+            )
+            
+            return True
+            
+        except Exception as e:
+            QMessageBox.warning(
+                self, "Error Adding NPC",
+                f"Failed to add NPC as character: {str(e)}"
+            )
+            return False 
