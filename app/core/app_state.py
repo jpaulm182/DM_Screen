@@ -45,6 +45,10 @@ class AppState:
         # Create default layouts if they don't exist
         self._create_default_layouts()
         
+        # Initialize database manager
+        from app.data.db_manager import DatabaseManager
+        self.db_manager = DatabaseManager(self)
+        
         # Initialize LLM services
         self.llm_data_manager = LLMDataManager(self)
         self.llm_service = LLMService(self)
@@ -271,6 +275,10 @@ class AppState:
         # Save current settings
         self.save_settings()
         
+        # Close database connection
+        if hasattr(self, 'db_manager'):
+            self.db_manager.close()
+            
         # Close LLM data manager
         if hasattr(self, 'llm_data_manager'):
             self.llm_data_manager.close()

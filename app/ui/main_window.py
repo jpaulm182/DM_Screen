@@ -793,31 +793,37 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """Handle application close event"""
         # Stop the update timer
-        self.update_timer.stop()
+        if hasattr(self, 'update_timer'):
+            self.update_timer.stop()
         
-        # Prompt to save session if auto-save is disabled
-        if not self.app_state.get_setting("auto_save", True):
-            reply = QMessageBox.question(
-                self, "Exit",
-                "Save current session before exiting?",
-                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
-                QMessageBox.Yes
-            )
+        try:
+            # Prompt to save session if auto-save is disabled
+            if not self.app_state.get_setting("auto_save", True):
+                reply = QMessageBox.question(
+                    self, "Exit",
+                    "Save current session before exiting?",
+                    QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                    QMessageBox.Yes
+                )
+                
+                if reply == QMessageBox.Cancel:
+                    event.ignore()
+                    return
+                
+                if reply == QMessageBox.Yes:
+                    self._save_session()
             
-            if reply == QMessageBox.Cancel:
-                event.ignore()
-                return
+            # Always save the current layout before exiting
+            self._save_layout()
             
-            if reply == QMessageBox.Yes:
-                self._save_session()
-        
-        # Always save the current layout before exiting
-        self._save_layout()
-        
-        # Clean up resources
-        self.app_state.close()
-        
-        event.accept()
+            # Clean up resources
+            self.app_state.close()
+            
+            event.accept()
+        except Exception as e:
+            print(f"Error during application close: {e}")
+            # Still accept the close event even if saving failed
+            event.accept()
 
     def _adjust_panel_positions(self):
         """Adjust panel positions to ensure they don't overlap toolbar or window edges"""

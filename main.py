@@ -32,6 +32,9 @@ def main():
     window = MainWindow(app_state)
     window.show()
     
+    # Set up cleanup on exit
+    app.aboutToQuit.connect(app_state.close)
+    
     # Start the event loop
     sys.exit(app.exec())
 

@@ -284,16 +284,30 @@ class SessionNotesPanel(BasePanel):
         main_layout.addWidget(splitter)
     
     def _load_notes(self):
-        """Load notes from database or use mock data if DB not available"""
-        # Use mock data for now since db isn't implemented
-        self.notes = self._get_mock_notes()
-        self.filtered_notes = self.notes.copy()
-        
-        # Update notes list
-        self._update_notes_list()
-        
-        # Collect all tags
-        self._update_tag_list()
+        """Load notes from database"""
+        try:
+            # Use database to load notes
+            query = "SELECT * FROM session_notes ORDER BY updated_at DESC"
+            self.notes = self.app_state.db_manager.execute_query(query)
+            
+            # If no notes found, create an empty list
+            if not self.notes:
+                self.notes = []
+                
+            self.filtered_notes = self.notes.copy()
+            
+            # Update notes list
+            self._update_notes_list()
+            
+            # Collect all tags
+            self._update_tag_list()
+        except Exception as e:
+            print(f"Error loading notes from database: {e}")
+            # Fall back to mock data for testing/development
+            self.notes = self._get_mock_notes()
+            self.filtered_notes = self.notes.copy()
+            self._update_notes_list()
+            self._update_tag_list()
     
     def _get_mock_notes(self):
         """Return mock note data for testing"""
@@ -440,25 +454,28 @@ class SessionNotesPanel(BasePanel):
                 note_data['created_at'] = current_time
                 note_data['updated_at'] = current_time
                 
-                # Generate a new ID (would normally be done by the database)
-                max_id = max([note['id'] for note in self.notes]) if self.notes else 0
-                note_data['id'] = max_id + 1
-                
-                # Add to our mock data
-                self.notes.insert(0, note_data)
-                
-                # Reload notes
-                self.filtered_notes = self.notes.copy()
-                self._update_notes_list()
-                self._update_tag_list()
-                
-                # Select the new note
-                for i in range(self.notes_list.count()):
-                    item = self.notes_list.item(i)
-                    if item.data(Qt.UserRole) == note_data['id']:
-                        self.notes_list.setCurrentItem(item)
-                        self._note_selected(item)
-                        break
+                try:
+                    # Insert into database
+                    note_id = self.app_state.db_manager.insert('session_notes', note_data)
+                    note_data['id'] = note_id
+                    
+                    # Add to our local data
+                    self.notes.insert(0, note_data)
+                    
+                    # Reload notes
+                    self.filtered_notes = self.notes.copy()
+                    self._update_notes_list()
+                    self._update_tag_list()
+                    
+                    # Select the new note
+                    for i in range(self.notes_list.count()):
+                        item = self.notes_list.item(i)
+                        if item.data(Qt.UserRole) == note_id:
+                            self.notes_list.setCurrentItem(item)
+                            self._note_selected(item)
+                            break
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Failed to save note: {e}")
     
     def _edit_note(self):
         """Edit the selected note"""
@@ -473,25 +490,36 @@ class SessionNotesPanel(BasePanel):
                 # Update timestamp
                 note_data['updated_at'] = QDateTime.currentDateTime().toString(Qt.ISODate)
                 
-                # Update in our mock data
-                note_id = note_data['id']
-                for i, note in enumerate(self.notes):
-                    if note['id'] == note_id:
-                        self.notes[i] = note_data
-                        break
-                
-                # Reload notes
-                self.filtered_notes = self.notes.copy()
-                self._update_notes_list()
-                self._update_tag_list()
-                
-                # Re-select the note
-                for i in range(self.notes_list.count()):
-                    item = self.notes_list.item(i)
-                    if item.data(Qt.UserRole) == note_id:
-                        self.notes_list.setCurrentItem(item)
-                        self._note_selected(item)
-                        break
+                try:
+                    # Update in database
+                    note_id = note_data['id']
+                    self.app_state.db_manager.update(
+                        'session_notes',
+                        {k: v for k, v in note_data.items() if k != 'id'},
+                        'id = ?',
+                        [note_id]
+                    )
+                    
+                    # Update in our local data
+                    for i, note in enumerate(self.notes):
+                        if note['id'] == note_id:
+                            self.notes[i] = note_data
+                            break
+                    
+                    # Reload notes
+                    self.filtered_notes = self.notes.copy()
+                    self._update_notes_list()
+                    self._update_tag_list()
+                    
+                    # Re-select the note
+                    for i in range(self.notes_list.count()):
+                        item = self.notes_list.item(i)
+                        if item.data(Qt.UserRole) == note_id:
+                            self.notes_list.setCurrentItem(item)
+                            self._note_selected(item)
+                            break
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Failed to update note: {e}")
     
     def _delete_note(self):
         """Delete the selected note"""
@@ -508,25 +536,31 @@ class SessionNotesPanel(BasePanel):
         )
         
         if confirm == QMessageBox.Yes:
-            # Delete from our mock data
-            note_id = self.current_note['id']
-            self.notes = [note for note in self.notes if note['id'] != note_id]
-            
-            # Clear current note
-            self.current_note = None
-            self.note_title.setText("")
-            self.note_metadata.setText("")
-            self.note_tags.setText("")
-            self.note_content.setText("")
-            
-            # Disable edit/delete buttons
-            self.edit_btn.setEnabled(False)
-            self.delete_btn.setEnabled(False)
-            
-            # Reload notes
-            self.filtered_notes = self.notes.copy()
-            self._update_notes_list()
-            self._update_tag_list()
+            try:
+                # Delete from database
+                note_id = self.current_note['id']
+                self.app_state.db_manager.delete('session_notes', 'id = ?', [note_id])
+                
+                # Delete from our local data
+                self.notes = [note for note in self.notes if note['id'] != note_id]
+                
+                # Clear current note
+                self.current_note = None
+                self.note_title.setText("")
+                self.note_metadata.setText("")
+                self.note_tags.setText("")
+                self.note_content.setText("")
+                
+                # Disable edit/delete buttons
+                self.edit_btn.setEnabled(False)
+                self.delete_btn.setEnabled(False)
+                
+                # Reload notes
+                self.filtered_notes = self.notes.copy()
+                self._update_notes_list()
+                self._update_tag_list()
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to delete note: {e}")
     
     def _show_context_menu(self, position):
         """Show context menu for notes list"""
@@ -547,3 +581,61 @@ class SessionNotesPanel(BasePanel):
         menu.addAction(delete_action)
         
         menu.exec(self.notes_list.mapToGlobal(position))
+
+    def _create_note_with_content(self, title, content, tags=None):
+        """Create a new note with pre-filled content
+        
+        Args:
+            title (str): Note title
+            content (str): Note content
+            tags (str, optional): Comma-separated tags
+            
+        Returns:
+            bool: True if note was created successfully
+        """
+        # Create a dictionary to simulate a note for the dialog
+        prefilled_note = {
+            'title': title,
+            'content': content,
+            'tags': tags or ""
+        }
+        
+        # Create and show the edit dialog with pre-filled data
+        dialog = NoteEditDialog(self, self.app_state, prefilled_note, self.all_tags)
+        
+        if dialog.exec():
+            note_data = dialog.get_note_data()
+            if note_data:
+                current_time = QDateTime.currentDateTime().toString(Qt.ISODate)
+                
+                # Add timestamps
+                note_data['created_at'] = current_time
+                note_data['updated_at'] = current_time
+                
+                try:
+                    # Insert into database
+                    note_id = self.app_state.db_manager.insert('session_notes', note_data)
+                    note_data['id'] = note_id
+                    
+                    # Add to our local data
+                    self.notes.insert(0, note_data)
+                    
+                    # Reload notes
+                    self.filtered_notes = self.notes.copy()
+                    self._update_notes_list()
+                    self._update_tag_list()
+                    
+                    # Select the new note
+                    for i in range(self.notes_list.count()):
+                        item = self.notes_list.item(i)
+                        if item.data(Qt.UserRole) == note_id:
+                            self.notes_list.setCurrentItem(item)
+                            self._note_selected(item)
+                            break
+                            
+                    return True
+                    
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Failed to save note: {e}")
+                    
+        return False

@@ -165,8 +165,8 @@ class LLMDataManager:
             self.connection.close()
             self.connection = None
         
-        # Close any thread-local connections
-        if hasattr(self.local, 'connection'):
+        # Close any thread-local connections - safely check if it exists first
+        if hasattr(self.local, 'connection') and self.local.connection is not None:
             self.local.connection.close()
             self.local.connection = None
     

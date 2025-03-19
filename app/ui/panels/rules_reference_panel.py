@@ -205,6 +205,11 @@ class RulesReferencePanel(BasePanel):
         self.bookmark_action.triggered.connect(self._toggle_bookmark)
         toolbar.addAction(self.bookmark_action)
         
+        # Add to Session Notes action
+        self.add_to_notes_action = QAction("Add to Session Notes", self)
+        self.add_to_notes_action.triggered.connect(self._add_to_session_notes)
+        toolbar.addAction(self.add_to_notes_action)
+        
         content_layout.addWidget(toolbar)
         
         # Rule title
@@ -248,151 +253,215 @@ class RulesReferencePanel(BasePanel):
         category_filter = self.category_filter.currentText()
         search_text = self.search_input.text().lower()
         
-        # Helper function to check if item should be shown
         def matches_filter(text):
+            """Check if text matches the search filter"""
+            if not search_text:
+                return True
             return search_text in text.lower()
         
-        # Add categories and rules
+        # Process each category
         for category in sorted(RULES.keys()):
-            # Skip if category doesn't match filter
-            if category_filter != "All Categories" and category != category_filter:
+            # Skip if category filter is active
+            if category_filter != "All Categories" and category_filter != category:
                 continue
+                
+            # Check if any rule in this category matches the search
+            category_matches = matches_filter(category)
+            rules_match = False
             
-            # Create category item
+            for rule in RULES[category]:
+                rule_text = RULES[category][rule]
+                if category_matches or matches_filter(rule) or matches_filter(rule_text):
+                    rules_match = True
+                    break
+                    
+            if not rules_match and not category_matches:
+                continue
+                
+            # Add category
             category_item = QTreeWidgetItem([category])
-            category_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            category_item.setExpanded(True)
+            self.rules_tree.addTopLevelItem(category_item)
             
-            # Add rules under category
-            has_visible_children = False
+            # Add rules
             for rule in sorted(RULES[category].keys()):
-                # Skip if rule doesn't match search
-                if search_text and not (matches_filter(rule) or matches_filter(RULES[category][rule])):
-                    continue
-                
-                # Create rule item
-                if self.bookmark_icon.isNull():
-                    rule_text = rule
-                    if f"{category}:{rule}" in self.bookmarks:
-                        rule_text = "★ " + rule
-                    rule_item = QTreeWidgetItem([rule_text])
-                else:
+                rule_text = RULES[category][rule]
+                if not search_text or matches_filter(rule) or matches_filter(rule_text) or category_matches:
                     rule_item = QTreeWidgetItem([rule])
-                    if f"{category}:{rule}" in self.bookmarks:
-                        rule_item.setIcon(0, self.bookmark_icon)
-                
-                rule_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-                category_item.addChild(rule_item)
-                has_visible_children = True
-            
-            # Only add category if it has visible children or matches search
-            if has_visible_children or (search_text and matches_filter(category)):
-                self.rules_tree.addTopLevelItem(category_item)
-                category_item.setExpanded(bool(search_text))
+                    
+                    # Mark bookmarked rules with bold font and a special icon
+                    if (category, rule) in self.bookmarks:
+                        font = rule_item.font(0)
+                        font.setBold(True)
+                        rule_item.setFont(0, font)
+                        
+                        # Add star icon or text indicator for bookmarks
+                        rule_item.setText(0, f"★ {rule}")
+                    
+                    category_item.addChild(rule_item)
     
     def _show_rule(self, current, previous):
-        """Display the selected rule's content"""
-        if not current:
+        """Display the selected rule content"""
+        if not current or not current.parent():
             return
             
-        # Get category and rule
-        if current.parent():  # Rule item
-            category = current.parent().text(0)
-            rule = current.text(0)
+        category = current.parent().text(0)
+        rule = current.text(0)
+        
+        if category in RULES and rule in RULES[category]:
             self.current_category = category
             self.current_rule = rule
             
-            # Update title and content
-            self.rule_title.setText(f"{category} - {rule}")
-            self.rule_text.setText(RULES[category][rule].strip())
+            # Set the title
+            self.rule_title.setText(f"{category}: {rule}")
+            
+            # Set the content
+            self.rule_text.setText(RULES[category][rule])
             
             # Update bookmark status
-            self.bookmark_action.setChecked(f"{category}:{rule}" in self.bookmarks)
-        else:  # Category item
-            self.current_category = current.text(0)
-            self.current_rule = None
-            
-            # Show category overview
-            self.rule_title.setText(self.current_category)
-            rules_list = "\n\n".join(f"• {rule}" for rule in sorted(RULES[self.current_category].keys()))
-            self.rule_text.setText(f"Available rules in this category:\n\n{rules_list}")
+            is_bookmarked = (category, rule) in self.bookmarks
+            self.bookmark_action.setChecked(is_bookmarked)
     
     def _filter_rules(self):
         """Filter the rules tree based on search text and category"""
         self._populate_rules_tree()
     
     def _toggle_bookmark(self, checked):
-        """Toggle bookmark for current rule"""
-        if self.current_category and self.current_rule:
-            bookmark_id = f"{self.current_category}:{self.current_rule}"
-            if checked:
-                self.bookmarks.add(bookmark_id)
-            else:
-                self.bookmarks.discard(bookmark_id)
-            self._populate_rules_tree()
+        """Toggle bookmark for the current rule"""
+        if not self.current_category or not self.current_rule:
+            return
+            
+        if checked:
+            self.bookmarks.add((self.current_category, self.current_rule))
+        else:
+            self.bookmarks.discard((self.current_category, self.current_rule))
+            
+        self._populate_rules_tree()
     
     def _show_context_menu(self, position):
-        """Show context menu for rules tree"""
+        """Show the context menu for a tree item"""
         item = self.rules_tree.itemAt(position)
         if not item:
             return
             
-        menu = QMenu()
+        # Only show for rule items (not categories)
+        if item.parent() is None:
+            return
+            
+        menu = QMenu(self)
         
-        if item.parent():  # Rule item
-            bookmark_action = menu.addAction("Bookmark")
-            bookmark_action.setCheckable(True)
-            bookmark_id = f"{item.parent().text(0)}:{item.text(0)}"
-            bookmark_action.setChecked(bookmark_id in self.bookmarks)
-            bookmark_action.triggered.connect(
-                lambda checked: self._toggle_bookmark(checked)
-            )
+        # Get the rule info
+        category = item.parent().text(0)
+        rule = item.text(0)
         
-        menu.exec_(self.rules_tree.mapToGlobal(position))
+        # Add bookmark action
+        is_bookmarked = (category, rule) in self.bookmarks
+        bookmark_action = menu.addAction(self.bookmark_action_text)
+        bookmark_action.setCheckable(True)
+        bookmark_action.setChecked(is_bookmarked)
+        
+        # Add to session notes action
+        add_to_notes_action = menu.addAction("Add to Session Notes")
+        
+        # Show menu and handle selected action
+        action = menu.exec(self.rules_tree.mapToGlobal(position))
+        
+        if action == bookmark_action:
+            # Toggle bookmark status
+            if is_bookmarked:
+                self.bookmarks.remove((category, rule))
+            else:
+                self.bookmarks.add((category, rule))
+            self._populate_rules_tree()
+        elif action == add_to_notes_action:
+            # Set the current item to ensure rule is loaded
+            self.rules_tree.setCurrentItem(item)
+            # Add to session notes
+            self._add_to_session_notes()
     
     def save_state(self):
         """Save panel state"""
-        return {
-            "bookmarks": list(self.bookmarks),
+        state = {
             "category_filter": self.category_filter.currentText(),
-            "search_text": self.search_input.text()
+            "search_text": self.search_input.text(),
+            "bookmarks": list(self.bookmarks)
         }
+        
+        # Save current selection
+        if self.current_category and self.current_rule:
+            state["current_category"] = self.current_category
+            state["current_rule"] = self.current_rule
+            
+        return state
     
     def restore_state(self, state):
         """Restore panel state"""
         if not state:
             return
             
-        self.bookmarks = set(state.get("bookmarks", []))
+        # Restore bookmarks
+        bookmarks = state.get("bookmarks", [])
+        self.bookmarks = set()
+        for bookmark in bookmarks:
+            if isinstance(bookmark, tuple) and len(bookmark) == 2:
+                self.bookmarks.add(bookmark)
+        
+        # Restore filters
         self.category_filter.setCurrentText(state.get("category_filter", "All Categories"))
         self.search_input.setText(state.get("search_text", ""))
+        
+        # Repopulate rules with restored filters and bookmarks
         self._populate_rules_tree()
-
-        # Check if any rule is bookmarked and update bookmark button
-        if self.rules_tree.topLevelItemCount() > 0:
-            for category_item in range(self.rules_tree.topLevelItemCount()):
-                rule_item = self.rules_tree.topLevelItem(category_item).child(0)
-                if rule_item.text(0) in self.bookmarks:
-                    self.bookmark_action.setChecked(True)
-                    break
-                else:
-                    self.bookmark_action.setChecked(False)
+        
+        # Restore selection
+        if "current_category" in state and "current_rule" in state:
+            self._select_rule(state["current_category"], state["current_rule"])
     
-    def _toggle_bookmark(self, checked):
-        """Toggle bookmark for current rule"""
-        if self.current_category and self.current_rule:
-            bookmark_id = f"{self.current_category}:{self.current_rule}"
-            if checked:
-                self.bookmarks.add(bookmark_id)
-            else:
-                self.bookmarks.discard(bookmark_id)
-            self._populate_rules_tree()
-
-            # Check if any rule is bookmarked and update bookmark button
-            if self.rules_tree.topLevelItemCount() > 0:
-                for category_item in range(self.rules_tree.topLevelItemCount()):
-                    rule_item = self.rules_tree.topLevelItem(category_item).child(0)
-                    if rule_item.text(0) in self.bookmarks:
-                        self.bookmark_action.setChecked(True)
-                        break
-                    else:
-                        self.bookmark_action.setChecked(False) 
+    def _select_rule(self, category, rule):
+        """Select a specific rule in the tree"""
+        for i in range(self.rules_tree.topLevelItemCount()):
+            category_item = self.rules_tree.topLevelItem(i)
+            if category_item.text(0) == category:
+                for j in range(category_item.childCount()):
+                    rule_item = category_item.child(j)
+                    if rule_item.text(0) == rule:
+                        self.rules_tree.setCurrentItem(rule_item)
+                        return
+    
+    def _add_to_session_notes(self):
+        """Add the current rule to session notes"""
+        if not self.current_category or not self.current_rule:
+            return
+            
+        # Get the current rule text
+        rule_title = f"{self.current_category} - {self.current_rule}"
+        rule_content = self.rule_text.toPlainText()
+        
+        # Format content for session notes
+        formatted_content = f"## {rule_title}\n\n{rule_content}\n\n### DM Clarification\n\n"
+        
+        # Get session notes panel
+        session_notes_panel = None
+        if "session_notes" in self.app_state.panels:
+            session_notes_panel = self.app_state.panels["session_notes"]
+        
+        if session_notes_panel:
+            # If session notes panel exists, create a new note with the rule
+            dialog = session_notes_panel._create_note_with_content(
+                f"Rule: {rule_title}", 
+                formatted_content,
+                tags="rules,clarification"
+            )
+            if dialog:
+                QMessageBox.information(
+                    self, 
+                    "Rule Added", 
+                    f"The rule '{rule_title}' has been added to your session notes."
+                )
+        else:
+            # Otherwise, show a message that the session notes panel is not available
+            QMessageBox.warning(
+                self, 
+                "Session Notes Not Available", 
+                "The Session Notes panel is not currently available. Please open it first."
+            ) 
