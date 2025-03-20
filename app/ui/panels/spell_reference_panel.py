@@ -14,6 +14,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 
 from app.ui.panels.base_panel import BasePanel
+from app.data.spells import get_all_spells, get_spell_schools
 
 
 class SpellReferencePanel(BasePanel):
@@ -94,9 +95,11 @@ class SpellReferencePanel(BasePanel):
         # School filter
         self.school_filter = QComboBox()
         self.school_filter.addItem("All Schools", "")
-        for school in ["Abjuration", "Conjuration", "Divination", "Enchantment", 
-                      "Evocation", "Illusion", "Necromancy", "Transmutation"]:
+        
+        # Get schools from the spells data module
+        for school in get_spell_schools():
             self.school_filter.addItem(school, school)
+            
         self.school_filter.currentIndexChanged.connect(self._filter_spells)
         filter_layout.addWidget(self.school_filter)
         
@@ -283,136 +286,19 @@ class SpellReferencePanel(BasePanel):
         layout.addWidget(prepared_group)
     
     def _load_spells(self):
-        """Load spells from the database or use mock data if DB not available"""
-        # Use mock data for now since db isn't implemented
-        self.spells = self._get_mock_spells()
-        self.filtered_spells = self.spells.copy()
-        self._update_spell_table()
-        
-    def _get_mock_spells(self):
-        """Return mock spell data for testing"""
-        return [
-            {
-                'id': 1,
-                'name': 'Fireball',
-                'level': 3,
-                'school': 'Evocation',
-                'casting_time': '1 action',
-                'range': '150 feet',
-                'components': 'V, S, M (a tiny ball of bat guano and sulfur)',
-                'duration': 'Instantaneous',
-                'description': 'A bright streak flashes from your pointing finger to a point you choose within range and then blossoms with a low roar into an explosion of flame. Each creature in a 20-foot-radius sphere centered on that point must make a Dexterity saving throw. A target takes 8d6 fire damage on a failed save, or half as much damage on a successful one. The fire spreads around corners. It ignites flammable objects in the area that aren\'t being worn or carried.',
-                'class': 'Sorcerer, Wizard'
-            },
-            {
-                'id': 2,
-                'name': 'Cure Wounds',
-                'level': 1,
-                'school': 'Evocation',
-                'casting_time': '1 action',
-                'range': 'Touch',
-                'components': 'V, S',
-                'duration': 'Instantaneous',
-                'description': 'A creature you touch regains a number of hit points equal to 1d8 + your spellcasting ability modifier. This spell has no effect on undead or constructs.',
-                'class': 'Bard, Cleric, Druid, Paladin, Ranger'
-            },
-            {
-                'id': 3,
-                'name': 'Mage Hand',
-                'level': 0,
-                'school': 'Conjuration',
-                'casting_time': '1 action',
-                'range': '30 feet',
-                'components': 'V, S',
-                'duration': '1 minute',
-                'description': 'A spectral, floating hand appears at a point you choose within range. The hand lasts for the duration or until you dismiss it as an action. The hand vanishes if it is ever more than 30 feet away from you or if you cast this spell again.\n\nYou can use your action to control the hand. You can use the hand to manipulate an object, open an unlocked door or container, stow or retrieve an item from an open container, or pour the contents out of a vial. You can move the hand up to 30 feet each time you use it.\n\nThe hand can\'t attack, activate magic items, or carry more than 10 pounds.',
-                'class': 'Bard, Sorcerer, Warlock, Wizard'
-            },
-            {
-                'id': 4,
-                'name': 'Healing Word',
-                'level': 1,
-                'school': 'Evocation',
-                'casting_time': '1 bonus action',
-                'range': '60 feet',
-                'components': 'V',
-                'duration': 'Instantaneous',
-                'description': 'A creature of your choice that you can see within range regains hit points equal to 1d4 + your spellcasting ability modifier. This spell has no effect on undead or constructs.',
-                'class': 'Bard, Cleric, Druid'
-            },
-            {
-                'id': 5,
-                'name': 'Shield',
-                'level': 1,
-                'school': 'Abjuration',
-                'casting_time': '1 reaction',
-                'range': 'Self',
-                'components': 'V, S',
-                'duration': '1 round',
-                'description': 'An invisible barrier of magical force appears and protects you. Until the start of your next turn, you have a +5 bonus to AC, including against the triggering attack, and you take no damage from magic missile.',
-                'class': 'Sorcerer, Wizard'
-            },
-            {
-                'id': 6,
-                'name': 'Detect Magic',
-                'level': 1,
-                'school': 'Divination',
-                'casting_time': '1 action',
-                'range': 'Self',
-                'components': 'V, S',
-                'duration': 'Concentration, up to 10 minutes',
-                'description': 'For the duration, you sense the presence of magic within 30 feet of you. If you sense magic in this way, you can use your action to see a faint aura around any visible creature or object in the area that bears magic, and you learn its school of magic, if any.\n\nThe spell can penetrate most barriers, but it is blocked by 1 foot of stone, 1 inch of common metal, a thin sheet of lead, or 3 feet of wood or dirt.',
-                'class': 'Bard, Cleric, Druid, Paladin, Ranger, Sorcerer, Wizard'
-            },
-            {
-                'id': 7,
-                'name': 'Magic Missile',
-                'level': 1,
-                'school': 'Evocation',
-                'casting_time': '1 action',
-                'range': '120 feet',
-                'components': 'V, S',
-                'duration': 'Instantaneous',
-                'description': 'You create three glowing darts of magical force. Each dart hits a creature of your choice that you can see within range. A dart deals 1d4 + 1 force damage to its target. The darts all strike simultaneously, and you can direct them to hit one creature or several.',
-                'class': 'Sorcerer, Wizard'
-            },
-            {
-                'id': 8,
-                'name': 'Counterspell',
-                'level': 3,
-                'school': 'Abjuration',
-                'casting_time': '1 reaction',
-                'range': '60 feet',
-                'components': 'S',
-                'duration': 'Instantaneous',
-                'description': 'You attempt to interrupt a creature in the process of casting a spell. If the creature is casting a spell of 3rd level or lower, its spell fails and has no effect. If it is casting a spell of 4th level or higher, make an ability check using your spellcasting ability. The DC equals 10 + the spell\'s level. On a success, the creature\'s spell fails and has no effect.',
-                'class': 'Sorcerer, Warlock, Wizard'
-            },
-            {
-                'id': 9,
-                'name': 'Darkness',
-                'level': 2,
-                'school': 'Evocation',
-                'casting_time': '1 action',
-                'range': '60 feet',
-                'components': 'V, M (bat fur and a drop of pitch or piece of coal)',
-                'duration': 'Concentration, up to 10 minutes',
-                'description': 'Magical darkness spreads from a point you choose within range to fill a 15-foot-radius sphere for the duration. The darkness spreads around corners. A creature with darkvision can\'t see through this darkness, and nonmagical light can\'t illuminate it.\n\nIf the point you choose is on an object you are holding or one that isn\'t being worn or carried, the darkness emanates from the object and moves with it. Completely covering the source of the darkness with an opaque object, such as a bowl or a helm, blocks the darkness.\n\nIf any of this spell\'s area overlaps with an area of light created by a spell of 2nd level or lower, the spell that created the light is dispelled.',
-                'class': 'Sorcerer, Warlock, Wizard'
-            },
-            {
-                'id': 10,
-                'name': 'Misty Step',
-                'level': 2,
-                'school': 'Conjuration',
-                'casting_time': '1 bonus action',
-                'range': 'Self',
-                'components': 'V',
-                'duration': 'Instantaneous',
-                'description': 'Briefly surrounded by silvery mist, you teleport up to 30 feet to an unoccupied space that you can see.',
-                'class': 'Sorcerer, Warlock, Wizard'
-            }
-        ]
+        """Load spells from the app's spells data module"""
+        try:
+            # Import here to avoid circular imports
+            from app.data.spells import get_all_spells
+            self.spells = get_all_spells()
+            self.filtered_spells = self.spells.copy()
+            self._update_spell_table()
+        except Exception as e:
+            print(f"Error loading spells: {e}")
+            # Fall back to empty spell list if there's an error
+            self.spells = []
+            self.filtered_spells = []
+            self._update_spell_table()
     
     def _update_spell_table(self):
         """Update the spell table with current filtered spells"""
