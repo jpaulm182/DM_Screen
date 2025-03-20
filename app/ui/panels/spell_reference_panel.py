@@ -162,6 +162,13 @@ class SpellReferencePanel(BasePanel):
         
         details_layout.addLayout(props_layout)
         
+        # Add class information label
+        self.spell_classes = QLabel()
+        font = QFont()
+        font.setItalic(True)
+        self.spell_classes.setFont(font)
+        details_layout.addWidget(self.spell_classes)
+        
         # Spell description
         self.spell_description = QTextEdit()
         self.spell_description.setReadOnly(True)
@@ -365,6 +372,13 @@ class SpellReferencePanel(BasePanel):
         self.spell_range.setText(f"Range: {spell['range']}")
         self.spell_components.setText(f"Components: {spell['components']}")
         self.spell_duration.setText(f"Duration: {spell['duration']}")
+        
+        # Display classes that can use this spell
+        if spell['class']:
+            self.spell_classes.setText(f"Classes: {spell['class']}")
+            self.spell_classes.setVisible(True)
+        else:
+            self.spell_classes.setVisible(False)
         
         self.spell_description.setText(spell['description'])
         
