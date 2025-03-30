@@ -754,18 +754,93 @@ class PlayerCharacterPanel(BasePanel):
             character.alignment = alignment
             
             # Update character stats
-            character.ability_scores = npc_json.get("stats", character.ability_scores)
+            stats = npc_json.get("stats", {})
+            character.ability_scores = stats if stats else character.ability_scores
+            
+            # Update HP and combat stats from NPC data
+            if stats:
+                # Set HP from stats
+                if "HP" in stats:
+                    character.max_hp = stats["HP"]
+                    character.current_hp = stats["HP"]
+                
+                # Set AC
+                if "AC" in stats:
+                    character.armor_class = stats["AC"]
+                
+                # Set speed
+                if "speed" in stats:
+                    character.speed = stats["speed"]
+                
+                # Calculate initiative bonus from DEX if available
+                if "DEX" in stats:
+                    dex_mod = (stats["DEX"] - 10) // 2
+                    character.initiative_bonus = dex_mod
+            
+            # Add skills as notes
+            skills_text = ""
+            if npc_json.get("skills"):
+                skills_text = "Skills:\n"
+                for skill, value in npc_json.get("skills", {}).items():
+                    skills_text += f"{skill}: +{value}\n"
+            
+            # Add languages as notes
+            languages_text = ""
+            if npc_json.get("languages"):
+                languages_text = "\nLanguages: " + ", ".join(npc_json.get("languages", []))
+            
+            # Handle spells
             character.spells = [spell["name"] for spell in npc_json.get("spells", [])]
-            character.notes = npc_json.get("description", "")
-            character.background = npc_json.get("background", "")
+            
+            # Handle features, include quirk if available
             character.features = [npc_json.get("quirk", "")] if npc_json.get("quirk") else []
             
-            # Handle equipment - convert from list to string if needed
+            # Process equipment with descriptions
             equipment = npc_json.get("equipment", [])
+            formatted_equipment = []
+            
             if isinstance(equipment, list):
-                character.equipment = equipment
+                for item in equipment:
+                    if isinstance(item, dict) and "name" in item and "description" in item:
+                        # Format equipment with description
+                        formatted_equipment.append(f"{item['name']} - {item['description']}")
+                    elif isinstance(item, dict) and "name" in item:
+                        # Just the name if no description
+                        formatted_equipment.append(item['name'])
+                    elif isinstance(item, str):
+                        # Legacy format - just strings
+                        formatted_equipment.append(item)
             else:
-                character.equipment = [str(equipment)] if equipment else []
+                # Handle non-list equipment (unlikely but for safety)
+                formatted_equipment = [str(equipment)] if equipment else []
+                
+            character.equipment = formatted_equipment
+            
+            # Combine all notes
+            notes_parts = []
+            
+            if npc_json.get("description"):
+                notes_parts.append("Description:\n" + npc_json.get("description"))
+            
+            if npc_json.get("personality"):
+                notes_parts.append("\nPersonality:\n" + npc_json.get("personality"))
+                
+            if npc_json.get("background"):
+                notes_parts.append("\nBackground:\n" + npc_json.get("background"))
+                
+            if npc_json.get("goals"):
+                notes_parts.append("\nGoals:\n" + npc_json.get("goals"))
+            
+            if skills_text:
+                notes_parts.append("\n" + skills_text)
+                
+            if languages_text:
+                notes_parts.append(languages_text)
+            
+            if npc_json.get("narrative_output"):
+                notes_parts.append("\n--- Narrative ---\n" + npc_json.get("narrative_output"))
+            
+            character.notes = "".join(notes_parts)
             
             # Add NPC as a character
             self.characters.append(character)

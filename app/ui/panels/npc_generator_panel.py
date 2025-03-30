@@ -377,6 +377,7 @@ class NPCGeneratorPanel(BasePanel):
         
         # New section for spells
         prompt += "8. A list of spells the NPC can cast, formatted as a JSON array with spell names and descriptions\n"
+        prompt += "9. A list of equipment including detailed descriptions for each item, especially magic items\n"
         
         # Prototype JSON example
         prompt += "\nExample JSON format:\n"
@@ -408,7 +409,11 @@ class NPCGeneratorPanel(BasePanel):
         prompt += "    \"Deception\": 8\n"
         prompt += "  },\n"
         prompt += "  \"languages\": [\"Common\", \"Infernal\", \"Draconic\", \"Elvish\"],\n"
-        prompt += "  \"equipment\": [\"Wand of the War Mage +2\", \"Spellbook\", \"Various Potions\", \"Robe of the Magi\"],\n"
+        prompt += "  \"equipment\": [\n"
+        prompt += "    {\"name\": \"Wand of the War Mage +2\", \"description\": \"A slender obsidian wand with runes of power etched along its length. Grants a +2 bonus to spell attack rolls.\"},\n"
+        prompt += "    {\"name\": \"Spellbook\", \"description\": \"A leather-bound tome with Zas's personal sigil embossed on the cover, containing all of his arcane knowledge.\"},\n"
+        prompt += "    {\"name\": \"Robe of the Magi\", \"description\": \"Deep crimson robes with silver embroidery that shimmer with protective enchantments.\"}\n"
+        prompt += "  ],\n"
         prompt += "  \"spells\": [\n"
         prompt += "    {\"name\": \"Fireball\", \"description\": \"A bright streak flashes from your pointing finger...\"},\n"
         prompt += "    {\"name\": \"Mage Armor\", \"description\": \"You touch a willing creature who isn't wearing armor...\"}\n"
