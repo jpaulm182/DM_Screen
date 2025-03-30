@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QFileDialog, QInputDialog,
     QScrollArea, QMessageBox, QApplication, QSpinBox
 )
-from PySide6.QtCore import Qt, Signal, Slot, QSize
+from PySide6.QtCore import Qt, Signal, Slot, QSize, QDateTime
 from PySide6.QtGui import QIcon, QAction, QTextCursor, QFont
 
 from app.ui.panels.base_panel import BasePanel
@@ -260,11 +260,18 @@ class LLMPanel(BasePanel):
         self.reset_button.clicked.connect(self.reset_conversation)
         self.reset_button.setEnabled(False)  # Disabled until conversation starts
         
+        # Save to notes button
+        self.save_to_notes_button = QPushButton("Save to Notes")
+        self.save_to_notes_button.setToolTip("Save the current conversation to session notes")
+        self.save_to_notes_button.clicked.connect(self._save_to_session_notes)
+        self.save_to_notes_button.setEnabled(False)  # Disabled until there's content to save
+        
         # Add to control layout
         control_layout.addLayout(model_layout)
         control_layout.addWidget(self.conversation_status)
         control_layout.addStretch()
         control_layout.addWidget(self.reset_button)
+        control_layout.addWidget(self.save_to_notes_button)
         control_layout.addWidget(self.api_key_button)
         
         # Generation settings
@@ -443,6 +450,9 @@ class LLMPanel(BasePanel):
         # Add response to chat
         self.chat_area.add_message("assistant", response)
         
+        # Enable save to notes button
+        self.save_to_notes_button.setEnabled(True)
+        
         # Save to database, but handle errors
         if self.current_conversation_id:
             try:
@@ -482,6 +492,9 @@ class LLMPanel(BasePanel):
             # Update conversation status
             self._update_conversation_status(False)
             
+            # Disable save to notes button
+            self.save_to_notes_button.setEnabled(False)
+            
             # Add system message
             self.chat_area.add_message("system", "Started a new conversation. The AI will not remember previous messages.")
     
@@ -502,4 +515,306 @@ class LLMPanel(BasePanel):
         else:
             self.conversation_status.setText("No active conversation")
             self.conversation_status.setStyleSheet("color: gray;")
-            self.reset_button.setEnabled(False) 
+            self.reset_button.setEnabled(False)
+
+    def _save_to_session_notes(self):
+        """Save the current conversation to session notes"""
+        # Get the session notes panel
+        notes_widget = None
+        
+        try:
+            # Try to get the session notes panel from app_state
+            notes_widget = self.app_state.get_panel_widget("session_notes")
+        except Exception as e:
+            print(f"Error getting session notes panel: {str(e)}")
+        
+        # If we couldn't find the notes widget, try other methods
+        if not notes_widget:
+            # Try to find it using panel_manager
+            try:
+                if hasattr(self.app_state, 'panel_manager') and hasattr(self.app_state.panel_manager, 'get_panel_widget'):
+                    notes_widget = self.app_state.panel_manager.get_panel_widget("session_notes")
+            except Exception as e:
+                print(f"Error getting session notes panel through panel_manager: {str(e)}")
+        
+        # Check if we have the widget
+        if not notes_widget:
+            QMessageBox.warning(self, "Session Notes Not Available", 
+                "Session Notes panel is not available. Please open it first.")
+            
+            # Try to show the Session Notes panel if possible
+            try:
+                if hasattr(self.app_state, 'panel_manager') and hasattr(self.app_state.panel_manager, 'show_panel'):
+                    self.app_state.panel_manager.show_panel("session_notes")
+                    QMessageBox.information(
+                        self, "Panel Opened", 
+                        "The Session Notes panel has been opened. Please try again."
+                    )
+            except Exception as e:
+                print(f"Failed to open Session Notes panel: {str(e)}")
+            return
+        
+        # Extract text from the chat display
+        conversation_text = self.chat_area.chat_display.toPlainText()
+        if not conversation_text.strip():
+            QMessageBox.warning(self, "Empty Conversation", 
+                "There is no conversation to save. Please have a conversation first.")
+            return
+        
+        # Set default title and model name
+        title = "AI Assistant Conversation"
+        model_name = self.model_combo.currentText() or "Unknown Model"
+        model_id = self.model_combo.currentData()
+        if not model_id:
+            # If no model is selected, use basic fallbacks and skip LLM-based enhancements
+            tag_string = "ai,assistant"
+            
+            # Format the content with basic information
+            content = (
+                f"# {title}\n\n"
+                f"## Model\n{model_name}\n\n"
+                f"## System Prompt\n{self.system_prompt_input.text()}\n\n"
+                f"## Conversation\n{conversation_text}\n\n"
+                f"*Generated on {QDateTime.currentDateTime().toString(Qt.ISODate)}*"
+            )
+            
+            # Ensure panel is visible
+            parent_dock = notes_widget.parent()
+            if parent_dock and hasattr(parent_dock, 'setVisible'):
+                parent_dock.setVisible(True)
+                parent_dock.raise_()
+            
+            # Verify the widget has the required method
+            if not hasattr(notes_widget, '_create_note_with_content'):
+                error_msg = "Session notes panel doesn't have the required method"
+                print(error_msg)
+                QMessageBox.warning(self, "Error", error_msg)
+                return
+            
+            # Try to create the note with basic information
+            try:
+                success = notes_widget._create_note_with_content(
+                    title=title,
+                    content=content,
+                    tags=tag_string
+                )
+                
+                if success:
+                    QMessageBox.information(
+                        self, "Note Created", 
+                        "The conversation has been added to your session notes"
+                    )
+                else:
+                    QMessageBox.warning(
+                        self, "Note Not Created", 
+                        "The note creation was cancelled or failed"
+                    )
+            except Exception as e:
+                error_msg = f"An error occurred while trying to create the note: {str(e)}"
+                print(f"Error creating note: {str(e)}")
+                QMessageBox.critical(self, "Error", error_msg)
+            
+            return
+        
+        # Parse conversation to find the first user message (as a fallback)
+        first_user_msg = ""
+        try:
+            lines = conversation_text.split('\n')
+            for i in range(len(lines)):
+                if lines[i].strip() == "You:":
+                    if i + 1 < len(lines):
+                        first_user_msg = lines[i + 1].strip()
+                        # Use first user message as title with length limit
+                        if first_user_msg:
+                            if len(first_user_msg) > 50:
+                                title = first_user_msg[:47] + "..."
+                            else:
+                                title = first_user_msg
+                        break
+        except Exception as e:
+            print(f"Error parsing conversation for first message: {str(e)}")
+        
+        # Default tags - we'll use these if LLM tag generation fails
+        tags = ["ai", "assistant"]
+        
+        # Try to enhance with keyword-based tags
+        try:
+            # Check for common D&D related content to add appropriate tags
+            lower_text = conversation_text.lower()
+            if any(term in lower_text for term in ["spell", "casting", "magic"]):
+                tags.append("spells")
+            if any(term in lower_text for term in ["monster", "creature", "enemy", "npc"]):
+                tags.append("monsters")
+            if any(term in lower_text for term in ["combat", "initiative", "attack", "damage"]):
+                tags.append("combat")
+            if any(term in lower_text for term in ["rule", "rules", "mechanics"]):
+                tags.append("rules")
+            if any(term in lower_text for term in ["item", "magic item", "weapon", "armor"]):
+                tags.append("items")
+            if any(term in lower_text for term in ["adventure", "quest", "mission", "plot"]):
+                tags.append("adventure")
+        except Exception as e:
+            print(f"Error generating keyword tags: {str(e)}")
+        
+        # Default tag string
+        tags_string = ",".join(tags)
+        
+        # Setup content without LLM enhancements
+        content = (
+            f"# {title}\n\n"
+            f"## Model\n{model_name}\n\n"
+            f"## System Prompt\n{self.system_prompt_input.text()}\n\n"
+            f"## Conversation\n{conversation_text}\n\n"
+            f"*Generated on {QDateTime.currentDateTime().toString(Qt.ISODate)}*"
+        )
+        
+        # Ensure panel is visible
+        parent_dock = notes_widget.parent()
+        if parent_dock and hasattr(parent_dock, 'setVisible'):
+            parent_dock.setVisible(True)
+            parent_dock.raise_()
+        
+        # Verify the widget has the required method
+        if not hasattr(notes_widget, '_create_note_with_content'):
+            error_msg = "Session notes panel doesn't have the required method"
+            print(error_msg)
+            QMessageBox.warning(self, "Error", error_msg)
+            return
+        
+        # Flag to track if any LLM enhancements were successfully applied
+        used_llm_for_title = False
+        used_llm_for_tags = False
+        
+        # Try to get LLM-generated title only if we have an API configured
+        try:
+            # Create a prompt for title generation
+            title_prompt = (
+                "Based on the following conversation, generate a concise but descriptive title (maximum 50 characters). "
+                "The title should accurately reflect the main topic or purpose of the conversation. "
+                "Return ONLY the title with no additional text, quotes, or explanations.\n\n"
+                f"System prompt: {self.system_prompt_input.text()}\n\n"
+                f"Conversation:\n{conversation_text}"
+            )
+            
+            # Create simple message list for the LLM
+            title_messages = [{"role": "user", "content": title_prompt}]
+            
+            # Generate title synchronously
+            title_response = self.llm_service.generate_completion(
+                model_id,
+                title_messages,
+                system_prompt="You are a helpful assistant that generates concise, descriptive titles. Respond with ONLY the title text.",
+                temperature=0.3,  # Lower temperature for more consistent results
+                max_tokens=20     # Short response needed for title
+            )
+            
+            if title_response and not title_response.startswith("Error:"):
+                # Clean up the response
+                generated_title = title_response.strip()
+                
+                # Remove any quotes that might be present
+                if generated_title.startswith('"') and generated_title.endswith('"'):
+                    generated_title = generated_title[1:-1]
+                
+                # Limit length
+                if len(generated_title) > 50:
+                    generated_title = generated_title[:47] + "..."
+                
+                # Use generated title if it's not empty and differs from default
+                if generated_title and generated_title != "AI Assistant Conversation":
+                    title = generated_title
+                    used_llm_for_title = True
+            
+        except Exception as e:
+            print(f"Error generating title with LLM: {str(e)}")
+            # Continue with current title
+        
+        # Try to generate tags with LLM
+        try:
+            # Create a prompt for tag generation
+            tag_prompt = (
+                "Based on the following conversation, generate appropriate tags for organizing this note. "
+                "Focus on D&D 5e related concepts, topics and themes. "
+                "Return only a comma-separated list of 3-8 tags, with no explanations or other text. "
+                "Always include 'ai' and 'assistant' as tags.\n\n"
+                f"System prompt: {self.system_prompt_input.text()}\n\n"
+                f"Conversation:\n{conversation_text}"
+            )
+            
+            # Create simple message list for the LLM
+            tag_messages = [{"role": "user", "content": tag_prompt}]
+            
+            # Generate tags synchronously (ok for a short response)
+            tags_response = self.llm_service.generate_completion(
+                model_id,
+                tag_messages,
+                system_prompt="You are a helpful assistant that generates concise, relevant tags for D&D 5e content.",
+                temperature=0.3,  # Lower temperature for more consistent results
+                max_tokens=50     # Short response needed
+            )
+            
+            if tags_response and not tags_response.startswith("Error:"):
+                # Clean up the response to ensure it's just tags
+                candidate_tags_string = tags_response.strip()
+                
+                # Remove any non-tag text (explanations, etc.)
+                if "," in candidate_tags_string:
+                    # Split by commas, trim whitespace, and rejoin
+                    candidate_tags = [tag.strip() for tag in candidate_tags_string.split(",")]
+                    
+                    # Ensure we have the default tags
+                    if "ai" not in candidate_tags:
+                        candidate_tags.insert(0, "ai")
+                    if "assistant" not in candidate_tags:
+                        candidate_tags.insert(1, "assistant")
+                    
+                    # Only use if we got more than just the default tags
+                    if len(candidate_tags) > 2:
+                        # Rejoin into a comma-separated string
+                        tags_string = ",".join(candidate_tags)
+                        used_llm_for_tags = True
+        except Exception as e:
+            print(f"Error generating tags with LLM: {str(e)}")
+            # Continue with current tags
+        
+        # Try to create the note
+        try:
+            # Add notes about AI-generated content
+            ai_notes = []
+            
+            # Add note about AI-generated title if we successfully used the LLM for title
+            if used_llm_for_title:
+                ai_notes.append("*Title was automatically generated using AI*")
+            
+            # Add note about AI-generated tags if we successfully used the LLM for tags
+            if used_llm_for_tags:
+                ai_notes.append("*Tags were automatically generated using AI analysis of the conversation content*")
+            
+            # Combine notes if any
+            ai_notes_text = ""
+            if ai_notes:
+                ai_notes_text = "\n\n" + "\n".join(ai_notes)
+            
+            content_with_notes = content + ai_notes_text
+            
+            # Save the note
+            success = notes_widget._create_note_with_content(
+                title=title,
+                content=content_with_notes,
+                tags=tags_string
+            )
+            
+            if success:
+                QMessageBox.information(
+                    self, "Note Created", 
+                    "The conversation has been added to your session notes"
+                )
+            else:
+                QMessageBox.warning(
+                    self, "Note Not Created", 
+                    "The note creation was cancelled or failed"
+                )
+        except Exception as e:
+            error_msg = f"An error occurred while trying to create the note: {str(e)}"
+            print(f"Error creating note: {str(e)}")
+            QMessageBox.critical(self, "Error", error_msg) 
