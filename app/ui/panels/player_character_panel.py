@@ -738,112 +738,34 @@ class PlayerCharacterPanel(BasePanel):
             npc_data (dict): Dictionary containing NPC data
         """
         try:
-            # Parse NPC content to extract information
+            # Parse NPC content as JSON
             content = npc_data.get("content", "")
+            npc_json = json.loads(content)
             
-            # Extract name from title or first line
-            name = npc_data.get("title", "Unnamed NPC")
-            
-            # If the name is too long, it's probably the full description - try to extract a proper name
-            if len(name) > 50:
-                # Try to find a more reasonable name from the first line or a line with "Name:" in it
-                lines = content.split('\n')
-                for line in lines:
-                    line = line.strip()
-                    if line and not line.startswith('#'):
-                        if "name:" in line.lower():
-                            # Extract name after "Name:" prefix
-                            parts = line.split(':', 1)
-                            if len(parts) > 1:
-                                name = parts[1].strip()
-                                break
-                        else:
-                            # Just use the first non-empty, non-header line
-                            name = line
-                            break
-                
-                # If we still have a very long name, just use the first few words
-                if len(name) > 50:
-                    name_parts = name.split()
-                    if len(name_parts) > 3:
-                        name = " ".join(name_parts[:3])
-            
-            # Clean name from markdown formatting, asterisks, dashes, etc.
-            import re
-            # Remove markdown formatting like **bold**, *italic*, - bullet points, etc.
-            name = re.sub(r'[*\-_#>]', '', name).strip()
-            # Remove patterns like "Name:" if present
-            name = re.sub(r'(?i)name\s*:', '', name).strip()
-            
-            # Append (NPC) to the name
-            name = f"{name} (NPC)"
+            # Extract basic information
+            name = npc_json.get("name", "Unnamed NPC") + " (NPC)"
+            race = npc_json.get("race", "")
+            char_class = npc_json.get("role", "NPC")
+            level = npc_json.get("level", 1)
+            alignment = npc_json.get("alignment", "True Neutral")
             
             # Create a new character
-            character = PlayerCharacter(name=name)
+            character = PlayerCharacter(name=name, race=race, character_class=char_class, level=level)
+            character.alignment = alignment
             
-            # Try to extract basic information from content
-            lines = content.split('\n')
+            # Update character stats
+            character.ability_scores = npc_json.get("stats", character.ability_scores)
+            character.spells = [spell["name"] for spell in npc_json.get("spells", [])]
+            character.notes = npc_json.get("description", "")
+            character.background = npc_json.get("background", "")
+            character.features = [npc_json.get("quirk", "")] if npc_json.get("quirk") else []
             
-            # Look for race, class, level information
-            race = ""
-            char_class = "NPC"
-            level = 1
-            
-            # Simple extraction based on common patterns in NPC descriptions
-            for line in lines:
-                line = line.strip()
-                
-                # Look for race
-                if "race:" in line.lower() or "species:" in line.lower():
-                    parts = line.split(':', 1)
-                    if len(parts) > 1:
-                        race = parts[1].strip()
-                        
-                # Look for role/class
-                if "class:" in line.lower() or "role:" in line.lower() or "occupation:" in line.lower():
-                    parts = line.split(':', 1)
-                    if len(parts) > 1:
-                        char_class = parts[1].strip()
-                
-                # Look for level/CR
-                if "level:" in line.lower() or "cr:" in line.lower():
-                    parts = line.split(':', 1)
-                    if len(parts) > 1:
-                        try:
-                            # Extract the first number in the string
-                            import re
-                            number_match = re.search(r'\d+', parts[1])
-                            if number_match:
-                                level = int(number_match.group())
-                        except ValueError:
-                            level = 1
-            
-            # Update character with extracted info
-            character.race = race
-            character.character_class = char_class
-            character.level = level
-            
-            # Store the NPC description in notes
-            character.notes = content
-            
-            # Try to extract ability scores if available
-            for ability in ["STR", "DEX", "CON", "INT", "WIS", "CHA"]:
-                ability_lower = ability.lower()
-                for line in lines:
-                    if ability_lower in line.lower() and ":" in line:
-                        try:
-                            # Look for patterns like "STR: 14 (+2)" or "Strength: 14"
-                            parts = line.split(':', 1)
-                            if len(parts) > 1:
-                                # Extract the first number
-                                import re
-                                number_match = re.search(r'\d+', parts[1])
-                                if number_match:
-                                    score = int(number_match.group())
-                                    if 1 <= score <= 30:  # Valid ability score range
-                                        character.ability_scores[ability] = score
-                        except ValueError:
-                            pass
+            # Handle equipment - convert from list to string if needed
+            equipment = npc_json.get("equipment", [])
+            if isinstance(equipment, list):
+                character.equipment = equipment
+            else:
+                character.equipment = [str(equipment)] if equipment else []
             
             # Add NPC as a character
             self.characters.append(character)
@@ -858,9 +780,14 @@ class PlayerCharacterPanel(BasePanel):
             
             return True
             
+        except json.JSONDecodeError:
+            QMessageBox.warning(
+                self, "Error Adding NPC",
+                "Failed to parse NPC data as JSON."
+            )
         except Exception as e:
             QMessageBox.warning(
                 self, "Error Adding NPC",
                 f"Failed to add NPC as character: {str(e)}"
             )
-            return False 
+        return False 

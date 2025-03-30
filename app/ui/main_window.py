@@ -269,111 +269,25 @@ class MainWindow(QMainWindow):
         toolbar.setIconSize(QSize(24, 24))
         self.addToolBar(toolbar)
         
-        # Add quick access actions
-        new_action = toolbar.addAction("New")
-        new_action.setToolTip("New Session (Ctrl+Shift+N)")
-        new_action.triggered.connect(self._new_session)
+        # Add quick access buttons for all panels
+        panel_keys = list(self.panel_actions.keys())  # Copy keys to avoid modifying during iteration
+        for panel_id in panel_keys:
+            action = self.panel_actions[panel_id]
+            panel_button = toolbar.addAction(panel_id.replace('_', ' ').title())
+            panel_button.setToolTip(f"Toggle {panel_id.replace('_', ' ').title()} Panel")
+            panel_button.triggered.connect(lambda checked=False, p=panel_id: self.panel_manager.toggle_panel(p))
+            self.panel_actions[f"{panel_id}_toolbar"] = panel_button
         
-        save_action = toolbar.addAction("Save")
-        save_action.setToolTip("Save Session (Ctrl+Shift+S)")
-        save_action.triggered.connect(self._save_session)
+        # Update panel action states to reflect current visibility
+        self._update_panel_action_states()
         
-        # Add Smart Organize button
-        organize_action = toolbar.addAction("Smart Organize")
-        organize_action.setToolTip("Smart Organize Panels (Ctrl+Alt+O)")
-        organize_action.triggered.connect(self._smart_organize_panels)
-        
-        # Add layout selector
-        toolbar.addSeparator()
-        layout_label = QLabel("Layout:")
-        toolbar.addWidget(layout_label)
-        
+        # Initialize layout selector as a QMenu
         self.layout_selector = QMenu("Layouts")
-        
         layout_button = toolbar.addAction("Select Layout")
         layout_button.setMenu(self.layout_selector)
-        
+
         # Populate layout selector
         self._update_layout_selector()
-        
-        toolbar.addSeparator()
-        
-        # Combat tools section
-        combat_label = QLabel("Combat:")
-        toolbar.addWidget(combat_label)
-        
-        dice_action = toolbar.addAction("Dice")
-        dice_action.setToolTip("Dice Roller (Ctrl+D)")
-        dice_action.triggered.connect(lambda: self.panel_manager.toggle_panel("dice_roller"))
-        self.panel_actions["dice_roller_toolbar"] = dice_action
-        
-        combat_action = toolbar.addAction("Combat")
-        combat_action.setToolTip("Combat Tracker (Ctrl+T)")
-        combat_action.triggered.connect(lambda: self.panel_manager.toggle_panel("combat_tracker"))
-        self.panel_actions["combat_tracker_toolbar"] = combat_action
-        
-        toolbar.addSeparator()
-        
-        # Reference section
-        ref_label = QLabel("Reference:")
-        toolbar.addWidget(ref_label)
-        
-        spell_action = toolbar.addAction("Spells")
-        spell_action.setToolTip("Spell Reference (Ctrl+S)")
-        spell_action.triggered.connect(lambda: self.panel_manager.toggle_panel("spell_reference"))
-        self.panel_actions["spell_reference_toolbar"] = spell_action
-        
-        conditions_action = toolbar.addAction("Conditions")
-        conditions_action.setToolTip("Conditions Reference")
-        conditions_action.triggered.connect(lambda: self.panel_manager.toggle_panel("conditions"))
-        self.panel_actions["conditions_toolbar"] = conditions_action
-        
-        rules_action = toolbar.addAction("Rules")
-        rules_action.setToolTip("Rules Reference")
-        rules_action.triggered.connect(lambda: self.panel_manager.toggle_panel("rules_reference"))
-        self.panel_actions["rules_reference_toolbar"] = rules_action
-        
-        monster_action = toolbar.addAction("Monsters")
-        monster_action.setToolTip("Monster Reference")
-        monster_action.triggered.connect(lambda: self.panel_manager.toggle_panel("monster"))
-        self.panel_actions["monster_toolbar"] = monster_action
-        
-        ai_action = toolbar.addAction("AI")
-        ai_action.setToolTip("AI Assistant")
-        ai_action.triggered.connect(lambda: self.panel_manager.toggle_panel("llm"))
-        self.panel_actions["llm_toolbar"] = ai_action
-        
-        toolbar.addSeparator()
-        
-        # Campaign section
-        campaign_label = QLabel("Campaign:")
-        toolbar.addWidget(campaign_label)
-        
-        notes_action = toolbar.addAction("Notes")
-        notes_action.setToolTip("Session Notes (Ctrl+N)")
-        notes_action.triggered.connect(lambda: self.panel_manager.toggle_panel("session_notes"))
-        self.panel_actions["session_notes_toolbar"] = notes_action
-        
-        char_action = toolbar.addAction("Characters")
-        char_action.setToolTip("Player Characters (Ctrl+P)")
-        char_action.triggered.connect(lambda: self.panel_manager.toggle_panel("player_character"))
-        self.panel_actions["player_character_toolbar"] = char_action
-        
-        toolbar.addSeparator()
-        
-        # Utility section
-        utility_label = QLabel("Utilities:")
-        toolbar.addWidget(utility_label)
-        
-        weather_action = toolbar.addAction("Weather")
-        weather_action.setToolTip("Weather Panel (Ctrl+W)")
-        weather_action.triggered.connect(lambda: self.panel_manager.toggle_panel("weather"))
-        self.panel_actions["weather_toolbar"] = weather_action
-        
-        time_action = toolbar.addAction("Time")
-        time_action.setToolTip("Time Tracker (Ctrl+I)")
-        time_action.triggered.connect(lambda: self.panel_manager.toggle_panel("time_tracker"))
-        self.panel_actions["time_tracker_toolbar"] = time_action
     
     def _update_layout_selector(self):
         """Update the layout selector menu with available layouts"""

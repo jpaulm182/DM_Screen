@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, Slot, QSize, QMetaObject, Q_ARG
 from PySide6.QtGui import QIcon, QAction, QTextCursor, QFont
+import json
 
 from app.ui.panels.base_panel import BasePanel
 
@@ -331,7 +332,7 @@ class NPCGeneratorPanel(BasePanel):
     
     def _create_npc_prompt(self, params):
         """Create an optimized prompt for NPC generation"""
-        prompt = "Generate a detailed D&D 5e NPC with the following specifications:\n\n"
+        prompt = "Generate a detailed D&D 5e NPC with the following specifications in JSON format only. Include all narrative in a 'narrative_output' field within the JSON structure. Do not generate anything outside of the JSON structure.\n\n"
         
         # Add specific parameters
         if params["name"]:
@@ -374,8 +375,47 @@ class NPCGeneratorPanel(BasePanel):
             prompt += "6. Basic D&D 5e statistics (ability scores, AC, HP, etc.)\n"
             prompt += "7. Notable skills, abilities, or equipment\n"
         
-        # Output format guidelines
-        prompt += "\nFormat the response in markdown with clear sections. Make the NPC interesting, three-dimensional, and ready to use in a D&D 5e game."
+        # New section for spells
+        prompt += "8. A list of spells the NPC can cast, formatted as a JSON array with spell names and descriptions\n"
+        
+        # Prototype JSON example
+        prompt += "\nExample JSON format:\n"
+        prompt += "{\n"
+        prompt += "  \"name\": \"Zas\",\n"
+        prompt += "  \"race\": \"Tiefling\",\n"
+        prompt += "  \"role\": \"Wizard\",\n"
+        prompt += "  \"level\": 11,\n"
+        prompt += "  \"alignment\": \"Chaotic Neutral\",\n"
+        prompt += "  \"description\": \"Zas is a striking figure, standing at 5'11\" with a lean, sinewy build...\",\n"
+        prompt += "  \"personality\": \"Zas is intensely curious and driven by a thirst for knowledge...\",\n"
+        prompt += "  \"background\": \"Born in the bustling city of Waterdeep, Zas faced prejudice...\",\n"
+        prompt += "  \"goals\": \"Zas's primary goal is to unlock the secrets of an ancient spell...\",\n"
+        prompt += "  \"quirk\": \"Zas has a peculiar habit of speaking to himself in Infernal...\",\n"
+        prompt += "  \"stats\": {\n"
+        prompt += "    \"STR\": 8,\n"
+        prompt += "    \"DEX\": 14,\n"
+        prompt += "    \"CON\": 12,\n"
+        prompt += "    \"INT\": 20,\n"
+        prompt += "    \"WIS\": 13,\n"
+        prompt += "    \"CHA\": 16,\n"
+        prompt += "    \"AC\": 15,\n"
+        prompt += "    \"HP\": 66,\n"
+        prompt += "    \"speed\": 30\n"
+        prompt += "  },\n"
+        prompt += "  \"skills\": {\n"
+        prompt += "    \"Arcana\": 11,\n"
+        prompt += "    \"Investigation\": 11,\n"
+        prompt += "    \"Deception\": 8\n"
+        prompt += "  },\n"
+        prompt += "  \"languages\": [\"Common\", \"Infernal\", \"Draconic\", \"Elvish\"],\n"
+        prompt += "  \"equipment\": [\"Wand of the War Mage +2\", \"Spellbook\", \"Various Potions\", \"Robe of the Magi\"],\n"
+        prompt += "  \"spells\": [\n"
+        prompt += "    {\"name\": \"Fireball\", \"description\": \"A bright streak flashes from your pointing finger...\"},\n"
+        prompt += "    {\"name\": \"Mage Armor\", \"description\": \"You touch a willing creature who isn't wearing armor...\"}\n"
+        prompt += "    // ... other spells\n"
+        prompt += "  ],\n"
+        prompt += "  \"narrative_output\": \"Include any narrative or descriptive text here.\"\n"
+        prompt += "}\n"
         
         return prompt
     
@@ -397,8 +437,17 @@ class NPCGeneratorPanel(BasePanel):
             self.status_label.setStyleSheet("color: red;")
             return
         
+        # Clean the response to ensure valid JSON
+        clean_response = response.strip()
+        
+        # Remove markdown formatting if present
+        if clean_response.startswith("```json") and clean_response.endswith("```"):
+            clean_response = clean_response[7:-3].strip()
+        elif clean_response.startswith("```") and clean_response.endswith("```"):
+            clean_response = clean_response[3:-3].strip()
+        
         # Update UI with generated NPC
-        self.npc_display.setMarkdown(response)
+        self.npc_display.setMarkdown(clean_response)
         self.status_label.setText("NPC generated successfully!")
         self.status_label.setStyleSheet("color: green;")
         
@@ -407,25 +456,68 @@ class NPCGeneratorPanel(BasePanel):
         
         # Store the response for saving
         self.current_generation = {
-            "content": response,
+            "content": clean_response,
             "type": "npc",
             "parameters": self._get_generation_params()
         }
+        
+        # Try to parse JSON for validation
+        try:
+            json.loads(clean_response)
+            print("JSON validation successful")
+        except json.JSONDecodeError as e:
+            print(f"JSON validation failed: {str(e)}")
+            self.status_label.setText(f"Warning: Generated content may not be valid JSON")
+            self.status_label.setStyleSheet("color: orange;")
     
     def _save_npc(self):
         """Save the generated NPC to the data manager"""
         if not hasattr(self, 'current_generation') or not self.current_generation:
             return
         
-        # Extract a title from the NPC content (usually first line)
-        content_lines = self.current_generation["content"].split('\n')
-        title = "Unnamed NPC"
+        # Check if the content is empty
+        content = self.current_generation["content"].strip()
+        if not content:
+            QMessageBox.warning(self, "Save Error", "Generated content is empty. Cannot save NPC.")
+            return
         
-        for line in content_lines:
-            line = line.strip()
-            if line and not line.startswith('#'):
-                title = line
-                break
+        # Remove markdown formatting (e.g., triple backticks)
+        if content.startswith("```json") and content.endswith("```"):
+            content = content[7:-3].strip()
+        elif content.startswith("```") and content.endswith("```"):
+            content = content[3:-3].strip()
+        
+        # Debugging: Log the content before parsing
+        print("Processed Content:", content[:100], "..." if len(content) > 100 else "")
+        
+        # Parse the JSON content
+        try:
+            npc_data = json.loads(content)
+            print("JSON parsing successful")
+        except json.JSONDecodeError as e:
+            print(f"JSON Error: {str(e)}")
+            
+            # Attempt to extract valid JSON if there's extra text
+            import re
+            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            if json_match:
+                try:
+                    json_str = json_match.group(0)
+                    print("Attempting to parse extracted JSON:", json_str[:100], "..." if len(json_str) > 100 else "")
+                    npc_data = json.loads(json_str)
+                    print("Extracted JSON parsing successful")
+                    # Update the content for future use
+                    content = json_str
+                except json.JSONDecodeError as e2:
+                    print(f"Extracted JSON Error: {str(e2)}")
+                    QMessageBox.warning(self, "Save Error", f"Invalid JSON format: {str(e)}")
+                    return
+            else:
+                QMessageBox.warning(self, "Save Error", f"Invalid JSON format: {str(e)}")
+                return
+        
+        # Extract a title from the NPC content
+        title = npc_data.get("name", "Unnamed NPC")
         
         # Get parameters
         params = self.current_generation["parameters"]
@@ -436,10 +528,10 @@ class NPCGeneratorPanel(BasePanel):
             content_id = self.llm_data_manager.add_generated_content(
                 title=title,
                 content_type="npc",
-                content=self.current_generation["content"],
+                content=content,  # Use the cleaned content
                 model_id=self.model_combo.currentData(),
                 prompt=self._create_npc_prompt(params),
-                tags=["npc", params.get("race", ""), params.get("role", "")]
+                tags=["npc", npc_data.get("race", ""), npc_data.get("role", "")]
             )
             
             # Show success message
@@ -450,7 +542,7 @@ class NPCGeneratorPanel(BasePanel):
             self.npc_generated.emit({
                 "id": content_id,
                 "title": title,
-                "content": self.current_generation["content"],
+                "content": content,  # Use the cleaned content
                 "type": "npc"
             })
             
