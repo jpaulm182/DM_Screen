@@ -288,9 +288,18 @@ class PlayerCharacterPanel(BasePanel):
         basic_layout.addRow(combat_group)
         
         # Background and alignment
-        self.background_edit = QLineEdit()
+        background_widget = QWidget()
+        background_layout = QVBoxLayout(background_widget)
+        background_layout.setContentsMargins(0, 0, 0, 0)
+        background_label = QLabel("Background:")
+        background_layout.addWidget(background_label)
+        
+        self.background_edit = QTextEdit()
+        self.background_edit.setMaximumHeight(80)
         self.background_edit.textChanged.connect(self._on_background_changed)
-        basic_layout.addRow("Background:", self.background_edit)
+        background_layout.addWidget(self.background_edit)
+        
+        basic_layout.addRow("Background:", background_widget)
         
         self.alignment_combo = QComboBox()
         self.alignment_combo.addItems([
@@ -474,7 +483,7 @@ class PlayerCharacterPanel(BasePanel):
         self.speed_spin.setValue(character.speed)
         
         # Background and alignment
-        self.background_edit.setText(character.background)
+        self.background_edit.setPlainText(character.background)
         index = self.alignment_combo.findText(character.alignment)
         if index >= 0:
             self.alignment_combo.setCurrentIndex(index)
@@ -671,7 +680,7 @@ class PlayerCharacterPanel(BasePanel):
         if self.current_character_index < 0:
             return
             
-        self.characters[self.current_character_index].background = self.background_edit.text()
+        self.characters[self.current_character_index].background = self.background_edit.toPlainText()
     
     def _on_alignment_changed(self, text):
         """Handle alignment change"""
@@ -792,8 +801,24 @@ class PlayerCharacterPanel(BasePanel):
             # Handle spells
             character.spells = [spell["name"] for spell in npc_json.get("spells", [])]
             
+            # Properly set the background field - use the full background text since we now support it
+            if npc_json.get("background"):
+                character.background = npc_json.get("background", "")
+            
             # Handle features, include quirk if available
-            character.features = [npc_json.get("quirk", "")] if npc_json.get("quirk") else []
+            features_list = []
+            if npc_json.get("quirk"):
+                features_list.append("Quirk: " + npc_json.get("quirk"))
+            
+            # Add personality as a feature
+            if npc_json.get("personality"):
+                features_list.append("Personality: " + npc_json.get("personality"))
+            
+            # Add goals as a feature
+            if npc_json.get("goals"):
+                features_list.append("Goals: " + npc_json.get("goals"))
+                
+            character.features = features_list
             
             # Process equipment with descriptions
             equipment = npc_json.get("equipment", [])
