@@ -26,6 +26,7 @@ from app.ui.panels.player_character_panel import PlayerCharacterPanel
 from app.ui.panels.llm_panel import LLMPanel  # Import the new LLM panel
 from app.ui.panels.npc_generator_panel import NPCGeneratorPanel  # Import the NPC Generator panel
 from app.ui.panels.rules_clarification_panel import RulesClarificationPanel  # Import the Rules Clarification panel
+from app.ui.panels.location_generator_panel import LocationGeneratorPanel  # Import the Location Generator panel
 
 
 class PanelManager(QObject):
@@ -64,6 +65,7 @@ class PanelManager(QObject):
         self.panels["llm"] = self._create_panel(LLMPanel, "llm")  # Add the LLM panel
         self.panels["npc_generator"] = self._create_panel(NPCGeneratorPanel, "npc_generator")  # Add the NPC Generator panel
         self.panels["rules_clarification"] = self._create_panel(RulesClarificationPanel, "rules_clarification")  # Add the Rules Clarification panel
+        self.panels["location_generator"] = self._create_panel(LocationGeneratorPanel, "location_generator")  # Add the Location Generator panel
         
         # Organize panels by category
         self._organize_panels_by_category()
@@ -292,6 +294,8 @@ class PanelManager(QObject):
             "time_tracker": TimeTrackerPanel,
             "llm": LLMPanel,  # Add LLM panel to the map
             "npc_generator": NPCGeneratorPanel,  # Add NPC Generator panel to the map
+            "rules_clarification": RulesClarificationPanel,  # Add Rules Clarification panel to the map
+            "location_generator": LocationGeneratorPanel,  # Add Location Generator panel to the map
         }
         
         if panel_type in self.panels and self.panels[panel_type]:

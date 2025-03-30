@@ -30,6 +30,7 @@ class PanelCategory:
         "session_notes": CAMPAIGN,
         "player_character": CAMPAIGN,
         "npc_generator": CAMPAIGN,
+        "location_generator": CAMPAIGN,
         "weather": UTILITY,
         "time_tracker": UTILITY
     }

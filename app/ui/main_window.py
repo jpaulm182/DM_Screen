@@ -200,6 +200,11 @@ class MainWindow(QMainWindow):
             lambda: self.panel_manager.toggle_panel("npc_generator"))
         self.panel_actions["npc_generator"] = npc_generator_action
         
+        location_generator_action = campaign_menu.addAction("Location Generator")
+        location_generator_action.triggered.connect(
+            lambda: self.panel_manager.toggle_panel("location_generator"))
+        self.panel_actions["location_generator"] = location_generator_action
+        
         # Utility panels
         utility_menu = panels_menu.addMenu("&Utilities")
         weather_action = utility_menu.addAction("Weather Generator")
