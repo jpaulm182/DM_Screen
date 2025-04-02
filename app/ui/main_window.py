@@ -217,6 +217,11 @@ class MainWindow(QMainWindow):
             lambda: self.panel_manager.toggle_panel("treasure_generator"))
         self.panel_actions["treasure_generator"] = treasure_generator_action
         
+        encounter_generator_action = campaign_menu.addAction("Encounter Generator")
+        encounter_generator_action.triggered.connect(
+            lambda: self.panel_manager.toggle_panel("encounter_generator"))
+        self.panel_actions["encounter_generator"] = encounter_generator_action
+        
         # Utility panels
         utility_menu = panels_menu.addMenu("&Utilities")
         weather_action = utility_menu.addAction("Weather Generator")

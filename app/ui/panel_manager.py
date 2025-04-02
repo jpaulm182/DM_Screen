@@ -28,6 +28,7 @@ from app.ui.panels.npc_generator_panel import NPCGeneratorPanel  # Import the NP
 from app.ui.panels.rules_clarification_panel import RulesClarificationPanel  # Import the Rules Clarification panel
 from app.ui.panels.location_generator_panel import LocationGeneratorPanel  # Import the Location Generator panel
 from app.ui.panels.treasure_generator_panel import TreasureGeneratorPanel # Import Treasure Generator
+from app.ui.panels.encounter_generator_panel import EncounterGeneratorPanel # Import Encounter Generator
 
 
 class PanelManager(QObject):
@@ -68,6 +69,7 @@ class PanelManager(QObject):
         self.panels["rules_clarification"] = self._create_panel(RulesClarificationPanel, "rules_clarification")  # Add the Rules Clarification panel
         self.panels["location_generator"] = self._create_panel(LocationGeneratorPanel, "location_generator")  # Add the Location Generator panel
         self.panels["treasure_generator"] = self._create_panel(TreasureGeneratorPanel, "treasure_generator") # Initialize Treasure Generator
+        self.panels["encounter_generator"] = self._create_panel(EncounterGeneratorPanel, "encounter_generator") # Initialize Encounter Generator
         
         # Organize panels by category
         self._organize_panels_by_category()
@@ -249,6 +251,30 @@ class PanelManager(QObject):
             if player_character_panel and hasattr(player_character_panel, "add_to_combat"):
                 player_character_panel.add_to_combat.connect(combat_tracker.add_character)
             
+            # Connect Encounter Generator to Combat Tracker
+            encounter_panel_dock = self.panels.get("encounter_generator")
+            if encounter_panel_dock and combat_tracker:
+                encounter_panel = encounter_panel_dock.widget()
+                if hasattr(encounter_panel, 'add_group_to_combat') and hasattr(combat_tracker, 'add_combatant_group'):
+                    encounter_panel.add_group_to_combat.connect(combat_tracker.add_combatant_group)
+                    print("Connected EncounterGeneratorPanel.add_group_to_combat to CombatTrackerPanel.add_combatant_group") # Debug log
+            
+            # Connect custom monster creation from Encounter Generator to Monster Panel
+            if encounter_panel_dock and monster_panel:
+                encounter_panel = encounter_panel_dock.widget()
+                if hasattr(encounter_panel, 'add_group_to_combat') and hasattr(monster_panel, '_load_initial_monsters'):
+                    # When monsters are added to combat from encounter generator, refresh the monster panel list
+                    encounter_panel.add_group_to_combat.connect(lambda _: monster_panel._load_initial_monsters())
+                    print("Connected EncounterGeneratorPanel.add_group_to_combat to MonsterPanel._load_initial_monsters")
+            
+            # Connect Monster Panel's custom monster created signal to Session Notes Panel
+            session_notes_dock = self.panels.get("session_notes")
+            if monster_panel and session_notes_dock:
+                session_notes = session_notes_dock.widget()
+                if hasattr(monster_panel, "custom_monster_created") and hasattr(session_notes, "add_monster_creation_note"):
+                    monster_panel.custom_monster_created.connect(session_notes.add_monster_creation_note)
+                    print("Connected MonsterPanel.custom_monster_created to SessionNotesPanel.add_monster_creation_note")
+            
             # Connect NPC Generator to LLM panel for context sharing (if implemented)
             npc_generator = self.panels["npc_generator"].widget()
             llm_panel = self.panels["llm"].widget()
@@ -265,6 +291,12 @@ class PanelManager(QObject):
             # if weather_panel and time_tracker:
             #     if hasattr(time_tracker, "update_weather") and hasattr(weather_panel, "generate_weather"):
             #         time_tracker.update_weather.connect(weather_panel.generate_weather)
+            
+            # TODO: Connect Encounter Generator panel signals
+            # encounter_panel = self.get_panel_widget("encounter_generator")
+            # combat_tracker = self.get_panel_widget("combat_tracker")
+            # if encounter_panel and combat_tracker and hasattr(encounter_panel, 'add_group_to_combat'):
+            #     encounter_panel.add_group_to_combat.connect(combat_tracker.add_combatant_group) # Assuming combat_tracker has this method
             
         except Exception as e:
             QMessageBox.warning(
@@ -298,7 +330,8 @@ class PanelManager(QObject):
             "npc_generator": NPCGeneratorPanel,  # Add NPC Generator panel to the map
             "rules_clarification": RulesClarificationPanel,  # Add Rules Clarification panel to the map
             "location_generator": LocationGeneratorPanel,  # Add Location Generator panel to the map
-            "treasure_generator": TreasureGeneratorPanel # Add Treasure Generator panel to the map
+            "treasure_generator": TreasureGeneratorPanel, # Add Treasure Generator panel to the map
+            "encounter_generator": EncounterGeneratorPanel # Add Encounter Generator panel to the map
         }
         
         if panel_type in self.panels and self.panels[panel_type]:

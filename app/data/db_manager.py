@@ -357,7 +357,7 @@ class DatabaseManager:
 
     # --- Monster Specific Methods ---
 
-    def save_custom_monster(self, monster: Monster) -> Optional[int]:
+    def save_custom_monster(self, monster: Monster) -> Optional[Monster]:
         """
         Saves a new custom monster or updates an existing one.
 
@@ -365,15 +365,26 @@ class DatabaseManager:
             monster: The Monster object to save. Assumes monster.is_custom is True.
 
         Returns:
-            The ID of the saved monster, or None on failure.
+            The updated Monster object with ID set, or None on failure.
         """
         if not monster.is_custom:
             print("Error: Attempted to save a non-custom monster using save_custom_monster.")
             return None
 
         now = datetime.now(timezone.utc).isoformat()
+        
+        # Debug logging to check monster before saving
+        print(f"DEBUG: Saving monster: name={monster.name}, is_custom={monster.is_custom}, has_actions={len(monster.actions) if monster.actions else 0}")
+        
         monster_data = monster.to_dict() # Get dict representation
+        
+        # Debug logging to check dict conversion
+        print(f"DEBUG: Monster to_dict() result has {len(monster_data)} keys")
+        
         monster_json = json.dumps(monster_data) # Serialize the data part
+        
+        # Debug logging to check serialization
+        print(f"DEBUG: Serialized JSON length: {len(monster_json)}")
 
         data_to_save = {
             "name": monster.name,
@@ -389,9 +400,11 @@ class DatabaseManager:
                 monster.created_at = now
                 monster.updated_at = now
                 print(f"Saved new custom monster '{monster.name}' with ID {monster.id}")
-                return monster.id
+                return monster # Return the updated monster object
             else:
                 print(f"Failed to insert new custom monster '{monster.name}'")
+                # Debug logging for insert failure
+                print(f"DEBUG: Insert failed. Data keys: {list(data_to_save.keys())}")
                 return None
         else: # Update existing monster
             affected_rows = self.update(
@@ -403,12 +416,13 @@ class DatabaseManager:
             if affected_rows is not None and affected_rows > 0:
                 monster.updated_at = now
                 print(f"Updated custom monster '{monster.name}' with ID {monster.id}")
-                return monster.id
+                return monster # Return the updated monster object
             elif affected_rows == 0:
                 print(f"Warning: Update for custom monster ID {monster.id} ('{monster.name}') affected 0 rows. Does it exist?")
-                return None # Or maybe return monster.id still? Depends on desired behavior.
+                return None
             else:
                 print(f"Failed to update custom monster '{monster.name}' with ID {monster.id}")
+                print(f"DEBUG: Update failed. Data keys: {list(data_to_save.keys())}")
                 return None
 
     def get_monster_by_id(self, monster_id: int, is_custom: bool) -> Optional[Monster]:
@@ -539,3 +553,47 @@ class DatabaseManager:
         else:
             print(f"Error occurred while trying to delete custom monster ID {monster_id}.")
             return False
+
+    def get_monster_by_name(self, name: str, include_custom: bool = True, include_standard: bool = True) -> Optional[Monster]:
+        """
+        Retrieves a monster by its exact name.
+
+        Args:
+            name: The exact name of the monster to find (case-sensitive).
+            include_custom: Whether to search in 'custom_monsters'.
+            include_standard: Whether to search in 'monsters'.
+
+        Returns:
+            A Monster object if found or None if not found or on error.
+        """
+        if not name:
+            return None
+            
+        monsters = []
+        try:
+            # Check standard monsters
+            if include_standard:
+                query_std = "SELECT * FROM monsters WHERE name = ? LIMIT 1"
+                results_std = self.execute_query(query_std, (name,))
+                if results_std:
+                    monsters.append(Monster.from_db_row(results_std[0], is_custom=False))
+
+            # Check custom monsters
+            if include_custom:
+                query_custom = "SELECT * FROM custom_monsters WHERE name = ? LIMIT 1"
+                results_custom = self.execute_query(query_custom, (name,))
+                if results_custom:
+                    monsters.append(Monster.from_db_row(results_custom[0], is_custom=True))
+
+            # Return the first matching monster found
+            # (Custom results will be preferred if they come second in the check order)
+            if monsters:
+                return monsters[0]
+            return None
+            
+        except sqlite3.Error as e:
+            print(f"Database error retrieving monster by name '{name}': {e}")
+            return None
+        except Exception as e:
+            print(f"Unexpected error retrieving monster by name '{name}': {e}")
+            return None

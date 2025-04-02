@@ -33,7 +33,7 @@ LLM Integration
         * 🔜 Location-appropriate random encounter generation
         * 🔄 Custom magic item creation with balanced mechanics
         * 🔜 Interactive tavern and shop scenes with dynamic NPCs
-        * 🔄 Session prep assistance with encounter and location planning
+        * 🔄 Session prep assistance with encounter and location planning (partially implemented via Encounter Gen)
         * 🔄 Fast combat resolution with detailed narrative results
     - 🔄 Context-aware generation utilizing:
         * ✅ Campaign history and notes
@@ -41,6 +41,7 @@ LLM Integration
         * ⚠️ Previous session outcomes
         * 🔄 World information and lore
         * ✅ Party composition and capabilities
+        * 🔄 Balanced rewards based on party level
 
 Core Features
 
@@ -61,7 +62,7 @@ Core Features
     - ✅ Combat tracker with initiative management
     - ✅ Condition reference with quick-apply functionality
     - ✅ Basic rules quick-reference
-    - ✅ NPC/Monster stat block viewer
+    - ✅ NPC/Monster stat block viewer (with XP calculation)
     - ✅ Spell reference and tracker
     - ✅ DC/Check difficulty guidelines (part of rules reference)
     - ✅ Cover and terrain effects (part of rules reference)
@@ -86,11 +87,11 @@ Core Features
         * 🔄 Magic items with backstories and mechanics
         * 🔄 Treasure hoards contextual to location and monsters
         * 🔄 Balanced rewards based on party level
-    - 🔜 Encounter Generation:
-        * 🔜 Balanced for party composition
-        * 🔜 Terrain-appropriate challenges
-        * 🔜 Dynamic elements (weather, terrain features)
-        * 🔜 Narrative context and tactical suggestions
+    - 🔄 Encounter Generation:
+        * 🔄 Balanced for party composition
+        * 🔄 Terrain-appropriate challenges
+        * 🔄 Dynamic elements (weather, terrain features)
+        * 🔄 Narrative context and tactical suggestions
     - 🔜 Game Element Creation:
         * ✅ Custom monsters with balanced abilities
         * 🔜 Plot hooks tied to campaign themes
@@ -178,7 +179,7 @@ Next Implementation Steps:
 11. 🔄 Develop Location Generator panel for dynamic location creation
 12. 🔄 Implement combat narration and fast resolution system
 13. 🔄 Create treasure generator with balanced rewards
-14. 🔜 Build encounter generator with party composition awareness
+14. 🔄 Build encounter generator with party composition awareness
 
 Player Character Quick Reference Specification:
 - ✅ Store basic character information (name, race, class, level)

@@ -18,7 +18,7 @@ from app.core.models.monster import (
 )
 # Assuming LLM service and generator are available. Adjust imports as necessary.
 from app.core.llm_service import LLMService
-from app.core.llm_integration import monster_generator
+from app.core.llm_integration import monster_generator  # Importing the correct module
 
 # Setup logger
 logger = logging.getLogger(__name__)
@@ -426,8 +426,9 @@ class MonsterEditDialog(QDialog):
 
     @Slot()
     def _generate_with_llm(self):
-        """Get prompt from user and trigger LLM generation."""
-        prompt, ok = QInputDialog.getText(self, "Generate Monster", "Enter monster concept (e.g., 'CR 5 Frost Salamander'):")
+        """Show a dialog to get a prompt for monster generation and start the LLM task."""
+        prompt, ok = QInputDialog.getText(self, "Generate Monster", 
+            "Enter a prompt describing the monster to generate:\n(e.g., 'A large insectoid creature with poisonous spines')")
         if ok and prompt:
             logger.info(f"Starting LLM generation for prompt: {prompt}")
             self._run_llm_task(monster_generator.generate_monster_from_prompt, prompt)
@@ -436,8 +437,9 @@ class MonsterEditDialog(QDialog):
 
     @Slot()
     def _extract_with_llm(self):
-        """Get text from user and trigger LLM extraction."""
-        text, ok = QInputDialog.getMultiLineText(self, "Extract Monster", "Paste monster stat block text:")
+        """Show a dialog to get text containing a monster stat block and start the LLM task."""
+        text, ok = QInputDialog.getMultiLineText(self, "Extract Monster", 
+             "Paste text containing the monster stat block to extract:")
         if ok and text:
             logger.info("Starting LLM extraction from text.")
             self._run_llm_task(monster_generator.extract_monster_from_text, text)

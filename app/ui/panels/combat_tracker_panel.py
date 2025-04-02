@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QLabel, QCheckBox, QMenu, QMessageBox, QDialog, QDialogButtonBox,
     QGroupBox, QWidget, QStyledItemDelegate, QStyle
 )
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QBrush, QPalette
 import random
 
@@ -1048,6 +1048,35 @@ class CombatTrackerPanel(BasePanel):
         
         # Highlight current turn
         self._update_highlight()
+
+    @Slot(list) # Explicitly mark as a slot receiving a list
+    def add_combatant_group(self, monster_dicts: list):
+        """Add a list of monsters (as dictionaries) to the combat tracker."""
+        if not isinstance(monster_dicts, list):
+            print(f"[CombatTracker] Error: add_combatant_group received non-list: {type(monster_dicts)}")
+            return
+            
+        print(f"[CombatTracker] Received group of {len(monster_dicts)} monsters to add.")
+        
+        added_count = 0
+        for monster_data in monster_dicts:
+            if not isinstance(monster_data, dict):
+                print(f"[CombatTracker] Warning: Skipping non-dict item in monster group: {monster_data}")
+                continue
+            
+            try:
+                # Use the existing add_monster logic (or adapt _add_combatant)
+                self.add_monster(monster_data)
+                added_count += 1
+            except Exception as e:
+                print(f"[CombatTracker] Error adding monster '{monster_data.get('name', 'Unknown')}' from group: {e}")
+                # Optionally show a message box?
+
+        if added_count > 0:
+             print(f"[CombatTracker] Added {added_count} monsters from group.")
+             self._sort_initiative() # Sort after adding group
+        else:
+             print("[CombatTracker] No monsters were added from the group.")
 
     def add_monster(self, monster_data):
         """Add a monster to the combat tracker from the monster panel"""

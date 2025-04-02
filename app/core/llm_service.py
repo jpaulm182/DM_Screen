@@ -85,18 +85,53 @@ class LLMWorker(QRunnable):
                 temperature=self.temperature,
                 max_tokens=self.max_tokens
             )
+            
+            # Log the successful response
+            logging.info(f"LLM generation completed. Response length: {len(response) if response else 0}")
+            
+            # Debug log the actual response content
+            logging.debug(f"Full response content: {response}")
+            
             # Use try/except to safely call the callback
             try:
-                self.callback(response, None)
+                # Verify the callback is still valid and callable
+                if self.callback is None:
+                    logging.error("Callback is None, can't call it")
+                    return
+                    
+                # Log what we're about to call back with
+                logging.debug(f"Calling callback with response (first 100 chars): '{response[:100]}...'")
+                
+                # Make sure we're not passing an empty object instead of the actual response
+                if response == "{}":
+                    logging.warning("Response is an empty JSON object. This might cause issues.")
+                
+                # Call the callback with the response - wrapped in try/except to catch deleted widget issues
+                try:
+                    self.callback(response, None)
+                    logging.info("Callback completed successfully")
+                except RuntimeError as rt_err:
+                    if "already deleted" in str(rt_err):
+                        logging.warning(f"Widget was deleted before callback could complete: {rt_err}")
+                    else:
+                        # Re-raise other runtime errors
+                        raise
             except Exception as callback_err:
-                logging.error(f"Error in callback handler: {str(callback_err)}")
+                logging.error(f"Error in callback handler: {str(callback_err)}", exc_info=True)
         except Exception as e:
-            logging.error(f"LLM API error: {str(e)}")
+            logging.error(f"LLM API error: {str(e)}", exc_info=True)
             # Safely call callback with error
             try:
-                self.callback(None, str(e))
+                if self.callback is not None:
+                    try:
+                        self.callback(None, str(e))
+                    except RuntimeError as rt_err:
+                        if "already deleted" in str(rt_err):
+                            logging.warning(f"Widget was deleted before error callback could complete: {rt_err}")
+                        else:
+                            raise
             except Exception as callback_err:
-                logging.error(f"Error in error callback handler: {str(callback_err)}")
+                logging.error(f"Error in error callback handler: {str(callback_err)}", exc_info=True)
 
 
 class LLMService(QObject):
@@ -218,14 +253,39 @@ class LLMService(QObject):
         for msg in messages:
             formatted_messages.append(msg)
         
-        response = self.openai_client.chat.completions.create(
-            model=model,
-            messages=formatted_messages,
-            temperature=temperature,
-            max_tokens=max_tokens
-        )
-        
-        return response.choices[0].message.content
+        try:
+            self.logger.info(f"Sending request to OpenAI API. Model: {model}, Messages count: {len(formatted_messages)}")
+            
+            response = self.openai_client.chat.completions.create(
+                model=model,
+                messages=formatted_messages,
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            
+            # Check if we have a valid response with choices
+            if not response or not hasattr(response, 'choices') or not response.choices:
+                self.logger.error(f"Invalid response format from OpenAI: {response}")
+                raise ValueError("Invalid response format from OpenAI")
+                
+            # Check if the first choice has a message with content
+            if not hasattr(response.choices[0], 'message') or not hasattr(response.choices[0].message, 'content'):
+                self.logger.error(f"Missing message content in OpenAI response: {response.choices}")
+                raise ValueError("Missing message content in OpenAI response")
+                
+            content = response.choices[0].message.content
+            
+            # Check if content is empty or None
+            if not content:
+                self.logger.warning("Received empty content from OpenAI API")
+                return ""  # Return empty string instead of None
+                
+            self.logger.info(f"Received valid response from OpenAI. Content length: {len(content)}")
+            return content
+            
+        except Exception as e:
+            self.logger.error(f"Error calling OpenAI API: {str(e)}", exc_info=True)
+            raise
     
     def _generate_anthropic_completion(self, model, messages, system_prompt, temperature, max_tokens):
         """Generate a completion using Anthropic"""

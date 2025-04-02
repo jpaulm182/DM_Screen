@@ -32,6 +32,7 @@ class PanelCategory:
         "npc_generator": CAMPAIGN,
         "location_generator": CAMPAIGN,
         "treasure_generator": CAMPAIGN,
+        "encounter_generator": CAMPAIGN,
         "weather": UTILITY,
         "time_tracker": UTILITY
     }

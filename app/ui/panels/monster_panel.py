@@ -453,8 +453,18 @@ class MonsterPanel(BasePanel):
             # Optional: Add intro text
             # self.legendary_actions_layout.addWidget(QLabel("The monster can take X legendary actions..."))
             for la in monster.legendary_actions:
-                cost_text = f" (Costs {la.cost} Actions)" if la.cost > 1 else ""
-                label = QLabel(f"<b><i>{la.name}{cost_text}.</i></b> {la.description}")
+                # Handle la being either a dict or a MonsterLegendaryAction object
+                if isinstance(la, dict):
+                    cost = la.get('cost', 1)
+                    name = la.get('name', 'Unknown')
+                    description = la.get('description', '')
+                else:
+                    cost = la.cost if hasattr(la, 'cost') else 1
+                    name = la.name if hasattr(la, 'name') else 'Unknown'
+                    description = la.description if hasattr(la, 'description') else ''
+                
+                cost_text = f" (Costs {cost} Actions)" if cost > 1 else ""
+                label = QLabel(f"<b><i>{name}{cost_text}.</i></b> {description}")
                 label.setWordWrap(True)
                 self.legendary_actions_layout.addWidget(label)
 
