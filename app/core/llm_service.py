@@ -355,4 +355,45 @@ class LLMService(QObject):
         if self.is_provider_available(ModelProvider.ANTHROPIC):
             result.extend(all_models[ModelProvider.ANTHROPIC])
         
-        return result 
+        return result
+
+    def generate_text(self, prompt, model=None, system_prompt=None, temperature=0.7, max_tokens=1000):
+        """
+        Generate text from a single prompt string
+        
+        Args:
+            prompt (str): The prompt text
+            model (str, optional): Model to use. If None, uses the default model.
+            system_prompt (str, optional): System prompt to use.
+            temperature (float, optional): Temperature for generation.
+            max_tokens (int, optional): Maximum tokens to generate.
+            
+        Returns:
+            str: Generated text
+        """
+        # Use the default model if none specified
+        if model is None:
+            available_models = self.get_available_models()
+            if not available_models:
+                raise ValueError("No LLM models available. Please set up API keys.")
+            
+            # Prefer OpenAI GPT-4o if available, otherwise use the first available model
+            default_model = None
+            for m in available_models:
+                if m["id"] == ModelInfo.OPENAI_GPT4O:
+                    default_model = m["id"]
+                    break
+                elif m["id"] == ModelInfo.ANTHROPIC_CLAUDE_3_SONNET:
+                    default_model = m["id"]
+                    break
+            
+            if default_model is None and available_models:
+                default_model = available_models[0]["id"]
+            
+            model = default_model
+        
+        # Create a simple message array with the prompt as user input
+        messages = [{"role": "user", "content": prompt}]
+        
+        # Generate the completion
+        return self.generate_completion(model, messages, system_prompt, temperature, max_tokens) 

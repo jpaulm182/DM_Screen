@@ -15,7 +15,7 @@ from datetime import datetime
 
 from app.ui.panel_manager import PanelManager
 from app.ui.panels.welcome_panel import WelcomePanel
-from app.ui.theme_manager import apply_theme
+from app.ui.theme_manager import apply_theme, set_font_size
 from app.ui.panels.panel_category import PanelCategory
 from app.ui.layout_name_dialog import LayoutNameDialog
 from app.ui.layout_select_dialog import LayoutSelectDialog
@@ -142,6 +142,21 @@ class MainWindow(QMainWindow):
         light_theme_action = theme_menu.addAction("&Light")
         light_theme_action.setShortcut("Ctrl+Alt+T")
         light_theme_action.triggered.connect(lambda: self._change_theme("light"))
+        
+        # Add Font Size menu
+        font_size_menu = view_menu.addMenu("Font &Size")
+        
+        small_font_action = font_size_menu.addAction("&Small")
+        small_font_action.triggered.connect(lambda: self._change_font_size("small"))
+        
+        medium_font_action = font_size_menu.addAction("&Medium")
+        medium_font_action.triggered.connect(lambda: self._change_font_size("medium"))
+        
+        large_font_action = font_size_menu.addAction("&Large")
+        large_font_action.triggered.connect(lambda: self._change_font_size("large"))
+        
+        xlarge_font_action = font_size_menu.addAction("&X-Large")
+        xlarge_font_action.triggered.connect(lambda: self._change_font_size("x-large"))
         
         # Panels menu
         panels_menu = self.menuBar().addMenu("&Panels")
@@ -864,20 +879,35 @@ class MainWindow(QMainWindow):
     
     def _change_theme(self, theme_name):
         """Change the application theme"""
-        # Apply theme to UI
-        apply_theme(self, theme_name)
+        # Get current font size
+        current_font_size = self.app_state.get_setting("font_size", "medium")
         
-        # Update panel_manager theme
-        self.panel_manager.update_theme(theme_name)
+        # Apply the theme with current font size
+        apply_theme(self, theme_name, current_font_size)
         
-        # Store theme in settings
-        self.app_state.set_setting("theme", theme_name)
+        # Store the theme selection
         self.current_theme = theme_name
+        self.app_state.set_setting("theme", theme_name)
         
-        self.statusBar().showMessage(f"Theme changed to {theme_name}")
+        # Update UI elements
+        self.statusBar().showMessage(f"Theme changed to {theme_name}", 3000)
         
-        # Update button styling
-        self._update_panel_action_states()
+        # Trigger update of toolbar icon styles
+        self._style_toolbar_buttons()
+    
+    def _change_font_size(self, size_name):
+        """Change the application font size"""
+        # Apply the font size
+        set_font_size(size_name)
+        
+        # Store the font size selection
+        self.app_state.set_setting("font_size", size_name)
+        
+        # Update UI elements
+        self.statusBar().showMessage(f"Font size changed to {size_name}", 3000)
+        
+        # Re-apply theme to ensure consistent appearance
+        apply_theme(self, self.current_theme, size_name)
     
     def _show_about(self):
         """Show about dialog"""

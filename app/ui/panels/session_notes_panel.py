@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
     QPushButton, QTextEdit, QListWidget, QListWidgetItem, 
     QSplitter, QMenu, QDialog, QFormLayout, QDialogButtonBox,
-    QMessageBox, QComboBox
+    QMessageBox, QComboBox, QProgressDialog, QApplication
 )
 from PySide6.QtCore import Qt, Signal, QDateTime, Slot
 from PySide6.QtGui import QFont, QAction, QIcon
@@ -176,6 +176,151 @@ class NoteEditDialog(QDialog):
         return note_data
 
 
+class RecapDialog(QDialog):
+    """Dialog for generating session recaps"""
+    
+    def __init__(self, parent=None, app_state=None, notes=None):
+        """Initialize the recap dialog"""
+        super().__init__(parent)
+        self.app_state = app_state
+        self.notes = notes or []
+        
+        self.setWindowTitle("Generate Session Recap")
+        self.resize(700, 500)
+        
+        # Create layout
+        layout = QVBoxLayout(self)
+        
+        # Explanation label
+        info_label = QLabel(
+            "This will generate a session recap for players based on the selected notes. "
+            "You can customize the style and level of detail for the recap."
+        )
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        # Form layout for options
+        form_layout = QFormLayout()
+        
+        # Style selector
+        self.style_combo = QComboBox()
+        self.style_combo.addItems([
+            "Narrative", 
+            "Bullet Points",
+            "In-character",
+            "Quest Log",
+            "Formal Report"
+        ])
+        form_layout.addRow("Recap Style:", self.style_combo)
+        
+        # Detail level
+        self.detail_combo = QComboBox()
+        self.detail_combo.addItems([
+            "Brief (key points only)",
+            "Standard (balanced detail)",
+            "Detailed (comprehensive)"
+        ])
+        form_layout.addRow("Detail Level:", self.detail_combo)
+        
+        layout.addLayout(form_layout)
+        
+        # Preview of notes to include
+        layout.addWidget(QLabel("Notes being included:"))
+        
+        self.notes_list = QListWidget()
+        for note in self.notes:
+            self.notes_list.addItem(note['title'])
+        layout.addWidget(self.notes_list)
+        
+        # Generated content
+        layout.addWidget(QLabel("Generated Recap:"))
+        self.result_text = QTextEdit()
+        self.result_text.setReadOnly(True)
+        layout.addWidget(self.result_text)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        self.generate_btn = QPushButton("Generate Recap")
+        self.generate_btn.clicked.connect(self._generate_recap)
+        button_layout.addWidget(self.generate_btn)
+        
+        self.save_btn = QPushButton("Save as Note")
+        self.save_btn.setEnabled(False)
+        self.save_btn.clicked.connect(self._save_as_note)
+        button_layout.addWidget(self.save_btn)
+        
+        self.close_btn = QPushButton("Close")
+        self.close_btn.clicked.connect(self.reject)
+        button_layout.addWidget(self.close_btn)
+        
+        layout.addLayout(button_layout)
+    
+    def _generate_recap(self):
+        """Generate the session recap using LLM"""
+        style = self.style_combo.currentText()
+        detail = self.detail_combo.currentText()
+        
+        # Create progress dialog
+        progress = QProgressDialog("Generating recap...", "Cancel", 0, 0, self)
+        progress.setWindowTitle("Please Wait")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.show()
+        QApplication.processEvents()
+        
+        try:
+            # Prepare the content from the notes
+            note_content = ""
+            for note in self.notes:
+                note_content += f"--- {note['title']} ---\n"
+                note_content += f"{note['content']}\n\n"
+            
+            # Create a prompt for the LLM
+            prompt = f"""
+Generate a {detail.split('(')[0].strip().lower()} session recap for D&D players in {style.lower()} style.
+This should summarize the key events, discoveries, and important NPCs from the following session notes.
+Use language appropriate for players (not the DM).
+
+SESSION NOTES:
+{note_content}
+"""
+            
+            # Call the LLM
+            llm_service = self.app_state.llm_service
+            result = llm_service.generate_text(prompt, max_tokens=1000)
+            
+            # Update the result text
+            self.result_text.setText(result)
+            self.save_btn.setEnabled(True)
+            
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to generate recap: {str(e)}")
+        finally:
+            progress.close()
+    
+    def _save_as_note(self):
+        """Save the generated recap as a new note"""
+        style = self.style_combo.currentText()
+        recap_text = self.result_text.toPlainText()
+        
+        if not recap_text:
+            return
+        
+        # Create a title with date
+        date_str = QDateTime.currentDateTime().toString("yyyy-MM-dd")
+        title = f"Session Recap ({style}) - {date_str}"
+        
+        # Create a new note with the recap content
+        parent = self.parent()
+        if parent:
+            parent._create_note_with_content(title, recap_text, tags="recap,summary")
+            QMessageBox.information(
+                self, "Success", 
+                "Session recap saved as a new note."
+            )
+            self.accept()
+
+
 class SessionNotesPanel(BasePanel):
     """
     Panel for session note management with tag filtering
@@ -198,7 +343,45 @@ class SessionNotesPanel(BasePanel):
     def _setup_ui(self):
         """Set up the panel UI components"""
         # Create a new layout directly on this widget
-        main_layout = QVBoxLayout(self)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(3, 3, 3, 3)
+        
+        # Create header controls
+        header_layout = QHBoxLayout()
+        
+        # Add new note button
+        self.add_btn = QPushButton("New Note")
+        self.add_btn.clicked.connect(self._create_note)
+        header_layout.addWidget(self.add_btn)
+        
+        # Add edit button
+        self.edit_btn = QPushButton("Edit")
+        self.edit_btn.clicked.connect(self._edit_note)
+        self.edit_btn.setEnabled(False)  # Disabled until a note is selected
+        header_layout.addWidget(self.edit_btn)
+        
+        # Add delete button
+        self.delete_btn = QPushButton("Delete")
+        self.delete_btn.clicked.connect(self._delete_note)
+        self.delete_btn.setEnabled(False)  # Disabled until a note is selected
+        header_layout.addWidget(self.delete_btn)
+        
+        # Add recap button
+        self.recap_btn = QPushButton("Generate Recap")
+        self.recap_btn.clicked.connect(self._generate_recap)
+        header_layout.addWidget(self.recap_btn)
+        
+        # Add spacer
+        header_layout.addStretch()
+        
+        # Add search field
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search notes...")
+        self.search_input.textChanged.connect(self._filter_notes)
+        header_layout.addWidget(self.search_input)
+        
+        # Add header to layout
+        layout.addLayout(header_layout)
         
         # Create splitter
         splitter = QSplitter(Qt.Horizontal)
@@ -281,7 +464,7 @@ class SessionNotesPanel(BasePanel):
         splitter.setSizes([200, 400])
         
         # Add the splitter to the main layout
-        main_layout.addWidget(splitter)
+        layout.addWidget(splitter)
     
     def _load_notes(self):
         """Load notes from database"""
@@ -672,3 +855,33 @@ class SessionNotesPanel(BasePanel):
         if self.parent():
             print(f"  Parent is visible: {self.parent().isVisible()}")
         return True
+
+    def _generate_recap(self):
+        """Open the dialog to generate a session recap"""
+        # Check if any notes are selected in list, otherwise include all filtered notes
+        selected_items = self.notes_list.selectedItems()
+        
+        if not selected_items:
+            # No notes selected, use all filtered notes
+            if not self.filtered_notes:
+                QMessageBox.warning(
+                    self, "No Notes Available", 
+                    "There are no notes available to generate a recap. "
+                    "Please create some session notes first."
+                )
+                return
+            notes_to_include = self.filtered_notes
+        else:
+            # Use selected notes
+            selected_notes = []
+            for item in selected_items:
+                note_id = item.data(Qt.UserRole)
+                for note in self.filtered_notes:
+                    if note['id'] == note_id:
+                        selected_notes.append(note)
+                        break
+            notes_to_include = selected_notes
+            
+        # Open the recap dialog
+        recap_dialog = RecapDialog(self, self.app_state, notes_to_include)
+        recap_dialog.exec()

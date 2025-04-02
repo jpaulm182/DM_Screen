@@ -5,17 +5,39 @@ Theme management for the DM Screen application
 Provides functions for applying and managing application themes.
 """
 
-from PySide6.QtGui import QPalette, QColor
+from PySide6.QtGui import QPalette, QColor, QFont
 from PySide6.QtWidgets import QApplication
 
-def apply_theme(widget, theme_name):
+# Default font sizes
+FONT_SIZES = {
+    "small": 8,
+    "medium": 10,
+    "large": 12,
+    "x-large": 14
+}
+
+def apply_theme(widget, theme_name, font_size="medium"):
     """Apply a theme to the application"""
     if theme_name == "dark":
-        _apply_dark_theme(widget)
+        _apply_dark_theme(widget, font_size)
     else:
-        _apply_light_theme(widget)
+        _apply_light_theme(widget, font_size)
 
-def _apply_dark_theme(widget):
+def set_font_size(font_size):
+    """Set font size for the application"""
+    if font_size in FONT_SIZES:
+        size = FONT_SIZES[font_size]
+    else:
+        size = FONT_SIZES["medium"]
+    
+    app = QApplication.instance()
+    font = app.font()
+    font.setPointSize(size)
+    app.setFont(font)
+    
+    return size
+
+def _apply_dark_theme(widget, font_size="medium"):
     """Apply the dark theme palette"""
     palette = QPalette()
     
@@ -55,10 +77,13 @@ def _apply_dark_theme(widget):
     if widget.isWindow():
         QApplication.instance().setPalette(palette)
         
+        # Apply font size
+        set_font_size(font_size)
+        
         # Apply additional styling
         _apply_additional_styling(widget, "dark")
 
-def _apply_light_theme(widget):
+def _apply_light_theme(widget, font_size="medium"):
     """Apply the light theme palette"""
     palette = QPalette()
     
@@ -97,6 +122,9 @@ def _apply_light_theme(widget):
     # Apply to application if this is the main window
     if widget.isWindow():
         QApplication.instance().setPalette(palette)
+        
+        # Apply font size
+        set_font_size(font_size)
         
         # Apply additional styling
         _apply_additional_styling(widget, "light")
