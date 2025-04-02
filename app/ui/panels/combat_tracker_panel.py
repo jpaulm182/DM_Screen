@@ -11,15 +11,16 @@ Features:
 - Combat timer
 - Round/turn tracking
 - Keyboard shortcuts
+- Quick HP updates
 """
 
 from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QPushButton,
     QLineEdit, QSpinBox, QHBoxLayout, QVBoxLayout, QComboBox,
     QLabel, QCheckBox, QMenu, QMessageBox, QDialog, QDialogButtonBox,
-    QGroupBox, QWidget, QStyledItemDelegate, QStyle
+    QGroupBox, QWidget, QStyledItemDelegate, QStyle, QToolButton
 )
-from PySide6.QtCore import Qt, QTimer, Signal, Slot
+from PySide6.QtCore import Qt, QTimer, Signal, Slot, QSize
 from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QBrush, QPalette
 import random
 
@@ -32,7 +33,7 @@ CONDITIONS = [
     "Poisoned", "Prone", "Restrained", "Stunned", "Unconscious"
 ]
 
-# --- Custom Delegate for Highlighting --- 
+# --- Custom Delegates for Table Cell Display ---
 
 class CurrentTurnDelegate(QStyledItemDelegate):
     '''Delegate to handle custom painting for the current turn row.'''
@@ -65,6 +66,41 @@ class CurrentTurnDelegate(QStyledItemDelegate):
         else:
             # Default painting for non-current turns
             super().paint(painter, option, index)
+
+class HPUpdateDelegate(QStyledItemDelegate):
+    """Delegate to handle HP updates with quick buttons"""
+    
+    # Signal to notify HP changes
+    hpChanged = Signal(int, int)  # row, new_hp
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.buttons = {}  # Store buttons for each cell
+    
+    def createEditor(self, parent, option, index):
+        """Create editor for HP cell (SpinBox)"""
+        editor = QSpinBox(parent)
+        editor.setMinimum(0)
+        editor.setMaximum(999)
+        
+        # Get max HP from UserRole
+        max_hp = index.data(Qt.UserRole) or 999
+        editor.setMaximum(max_hp)
+        
+        return editor
+    
+    def setEditorData(self, editor, index):
+        """Set editor data from the model"""
+        value = int(index.data(Qt.DisplayRole) or 0)
+        editor.setValue(value)
+    
+    def setModelData(self, editor, model, index):
+        """Set model data from the editor"""
+        value = editor.value()
+        model.setData(index, str(value), Qt.DisplayRole)
+        
+        # Emit signal for hp changed
+        self.hpChanged.emit(index.row(), value)
 
 # --- Dialog Classes --- 
 
@@ -205,13 +241,51 @@ class CombatTrackerPanel(BasePanel):
         self.timer_action.setShortcut(timer_shortcut)
         self.timer_action.triggered.connect(self._toggle_timer)
         self.addAction(self.timer_action)
+        
+        # HP adjustment shortcuts
+        damage_1_shortcut = QKeySequence(Qt.Key_1)
+        self.damage_1_action = QAction("Damage 1", self)
+        self.damage_1_action.setShortcut(damage_1_shortcut)
+        self.damage_1_action.triggered.connect(lambda: self._quick_damage(1))
+        self.addAction(self.damage_1_action)
+        
+        damage_5_shortcut = QKeySequence(Qt.Key_2)
+        self.damage_5_action = QAction("Damage 5", self)
+        self.damage_5_action.setShortcut(damage_5_shortcut)
+        self.damage_5_action.triggered.connect(lambda: self._quick_damage(5))
+        self.addAction(self.damage_5_action)
+        
+        damage_10_shortcut = QKeySequence(Qt.Key_3)
+        self.damage_10_action = QAction("Damage 10", self)
+        self.damage_10_action.setShortcut(damage_10_shortcut)
+        self.damage_10_action.triggered.connect(lambda: self._quick_damage(10))
+        self.addAction(self.damage_10_action)
+        
+        heal_1_shortcut = QKeySequence(Qt.SHIFT | Qt.Key_1)
+        self.heal_1_action = QAction("Heal 1", self)
+        self.heal_1_action.setShortcut(heal_1_shortcut)
+        self.heal_1_action.triggered.connect(lambda: self._quick_heal(1))
+        self.addAction(self.heal_1_action)
+        
+        heal_5_shortcut = QKeySequence(Qt.SHIFT | Qt.Key_2)
+        self.heal_5_action = QAction("Heal 5", self)
+        self.heal_5_action.setShortcut(heal_5_shortcut)
+        self.heal_5_action.triggered.connect(lambda: self._quick_heal(5))
+        self.addAction(self.heal_5_action)
+        
+        heal_10_shortcut = QKeySequence(Qt.SHIFT | Qt.Key_3)
+        self.heal_10_action = QAction("Heal 10", self)
+        self.heal_10_action.setShortcut(heal_10_shortcut)
+        self.heal_10_action.triggered.connect(lambda: self._quick_heal(10))
+        self.addAction(self.heal_10_action)
 
         # Create main layout
         main_layout = QVBoxLayout()
         
         # Add shortcuts info
         shortcuts_label = QLabel(
-            "Shortcuts: Next Combatant (Ctrl+Space) | Sort (Ctrl+S) | Timer (Ctrl+T)"
+            "Shortcuts: Next Combatant (Ctrl+Space) | Sort (Ctrl+S) | Timer (Ctrl+T) | "
+            "Damage (1,2,3) | Heal (Shift+1,2,3)"
         )
         shortcuts_label.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(shortcuts_label)
@@ -240,6 +314,14 @@ class CombatTrackerPanel(BasePanel):
         self.initiative_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.initiative_table.customContextMenuRequested.connect(self._show_context_menu)
         
+        # Enable item editing for HP column
+        self.initiative_table.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.SelectedClicked)
+        
+        # Set HP column delegate for direct editing
+        self.hp_delegate = HPUpdateDelegate(self)
+        self.hp_delegate.hpChanged.connect(self._hp_changed)
+        self.initiative_table.setItemDelegateForColumn(2, self.hp_delegate)
+        
         main_layout.addWidget(self.initiative_table)
         
         # Add combatant controls
@@ -258,7 +340,7 @@ class CombatTrackerPanel(BasePanel):
         self.initiative_table.horizontalHeader().setStretchLastSection(True)
         self.initiative_table.verticalHeader().setVisible(False)
         self.initiative_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.initiative_table.setSelectionMode(QTableWidget.SingleSelection)
+        self.initiative_table.setSelectionMode(QTableWidget.ExtendedSelection)
         
         # Apply custom stylesheet for basic appearance (delegate handles highlight)
         self.initiative_table.setStyleSheet('''
@@ -404,69 +486,199 @@ class CombatTrackerPanel(BasePanel):
         return add_layout
     
     def _add_combatant(self, name, initiative, hp, ac):
-        """Add a new combatant to the tracker"""
-        print(f"_add_combatant called with: {name}, {initiative}, {hp}, {ac}")  # Debug print
+        """Add a new combatant to initiative order"""
+        table = self.initiative_table
+        row = table.rowCount()
+        table.insertRow(row)
         
-        # Get current row count
-        row = self.initiative_table.rowCount()
-        self.initiative_table.insertRow(row)
-        
-        # Create items
+        # Name
         name_item = QTableWidgetItem(name)
-        initiative_item = QTableWidgetItem(str(initiative))
+        table.setItem(row, 0, name_item)
+        
+        # Initiative
+        init_item = QTableWidgetItem(str(initiative))
+        init_item.setTextAlignment(Qt.AlignCenter)
+        table.setItem(row, 1, init_item)
+        
+        # HP
         hp_item = QTableWidgetItem(str(hp))
+        hp_item.setTextAlignment(Qt.AlignCenter)
         hp_item.setData(Qt.UserRole, hp)  # Store max HP
+        table.setItem(row, 2, hp_item)
+        
+        # AC
         ac_item = QTableWidgetItem(str(ac))
-        status_item = QTableWidgetItem("")
-        concentration_item = QTableWidgetItem()
-        concentration_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-        concentration_item.setCheckState(Qt.Unchecked)
+        ac_item.setTextAlignment(Qt.AlignCenter)
+        table.setItem(row, 3, ac_item)
         
-        # Set items
-        self.initiative_table.setItem(row, 0, name_item)
-        self.initiative_table.setItem(row, 1, initiative_item)
-        self.initiative_table.setItem(row, 2, hp_item)
-        self.initiative_table.setItem(row, 3, ac_item)
-        self.initiative_table.setItem(row, 4, status_item)
-        self.initiative_table.setItem(row, 5, concentration_item)
+        # Status - empty initially
+        table.setItem(row, 4, QTableWidgetItem(""))
         
-        print(f"Added combatant at row {row}")  # Debug print
+        # Concentration checkbox
+        conc_item = QTableWidgetItem()
+        conc_item.setCheckState(Qt.Unchecked)
+        conc_item.setTextAlignment(Qt.AlignCenter)
+        table.setItem(row, 5, conc_item)
+        
+        # Empty notes
+        table.setItem(row, 6, QTableWidgetItem(""))
+        
+        # Sort after adding
+        self._sort_initiative()
+        
+        # Return the row where it was inserted after sorting
+        for row in range(table.rowCount()):
+            if table.item(row, 0).text() == name and table.item(row, 1).text() == str(initiative):
+                return row
+        
+        return -1  # Not found (shouldn't happen)
     
     def _sort_initiative(self):
-        """Sort combatants by initiative"""
+        """Sort the initiative tracker by initiative value (descending)"""
         if self.initiative_table.rowCount() <= 1:
             return
-            
-        # Get all rows data
+        
+        # Get current selection
+        selected_rows = [index.row() for index in self.initiative_table.selectionModel().selectedRows()]
+        selected_names = [self.initiative_table.item(row, 0).text() for row in selected_rows]
+        
+        # Remember current turn
+        current_name = ""
+        if 0 <= self.current_turn < self.initiative_table.rowCount():
+            current_name = self.initiative_table.item(self.current_turn, 0).text()
+        
+        # Create a list of rows with their initiative values
         rows = []
         for row in range(self.initiative_table.rowCount()):
-            row_data = []
+            init_item = self.initiative_table.item(row, 1)
+            if init_item:
+                init_value = float(init_item.text())
+                rows.append((row, init_value))
+        
+        # Sort by initiative (highest first)
+        rows.sort(key=lambda x: (x[1], random.random()), reverse=True)
+        
+        # Remember items to restore
+        items = []
+        for old_row, _ in rows:
+            row_items = []
             for col in range(self.initiative_table.columnCount()):
-                item = self.initiative_table.item(row, col)
-                if col == 5:  # Concentration column
-                    new_item = QTableWidgetItem()
-                    new_item.setFlags(new_item.flags() | Qt.ItemIsUserCheckable)
-                    new_item.setCheckState(item.checkState() if item else Qt.Unchecked)
-                    row_data.append(new_item)
-                else:
-                    new_item = QTableWidgetItem(item.text() if item else "")
-                    if col == 2 and item:  # HP column
-                        new_item.setData(Qt.UserRole, item.data(Qt.UserRole))
-                    row_data.append(new_item)
-            rows.append(row_data)
+                item = self.initiative_table.takeItem(old_row, col)
+                # Clone item to avoid issues
+                new_item = QTableWidgetItem()
+                new_item.setText(item.text())
+                if hasattr(item, 'checkState'):
+                    new_item.setCheckState(item.checkState())
+                for role in [Qt.UserRole, Qt.UserRole + 1]:
+                    if item.data(role) is not None:
+                        new_item.setData(role, item.data(role))
+                new_item.setTextAlignment(item.textAlignment())
+                row_items.append(new_item)
+            items.append(row_items)
         
-        # Sort by initiative (column 1)
-        rows.sort(key=lambda x: int(x[1].text() or "0"), reverse=True)
-        
-        # Update table
-        for row, items in enumerate(rows):
-            for col, item in enumerate(items):
+        # Clear the table and add items back in sorted order
+        self.initiative_table.setRowCount(0)
+        for row_items in items:
+            row = self.initiative_table.rowCount()
+            self.initiative_table.insertRow(row)
+            for col, item in enumerate(row_items):
                 self.initiative_table.setItem(row, col, item)
         
-        # Reset current turn if combat hasn't started
-        if self.current_round == 1 and self.current_turn == 0:
-            self.current_turn = 0
-            self._update_highlight()
+        # Restore selection
+        if selected_names:
+            self.initiative_table.clearSelection()
+            for row in range(self.initiative_table.rowCount()):
+                name = self.initiative_table.item(row, 0).text()
+                if name in selected_names:
+                    self.initiative_table.selectRow(row)
+        
+        # Update current turn index if combat has started
+        if current_name and self.combat_started:
+            for row in range(self.initiative_table.rowCount()):
+                if self.initiative_table.item(row, 0).text() == current_name:
+                    self.current_turn = row
+                    break
+        
+        # Update the highlighting
+        self._update_highlight()
+    
+    def _quick_damage(self, amount):
+        """Apply quick damage to selected combatants"""
+        if amount <= 0:
+            return
+            
+        # Get selected rows
+        selected_rows = [index.row() for index in 
+                        self.initiative_table.selectionModel().selectedRows()]
+        
+        if not selected_rows:
+            if 0 <= self.current_turn < self.initiative_table.rowCount():
+                # If no selection, apply to current turn
+                selected_rows = [self.current_turn]
+            else:
+                return
+                
+        for row in selected_rows:
+            hp_item = self.initiative_table.item(row, 2)
+            if hp_item:
+                current_hp = int(hp_item.text())
+                max_hp = hp_item.data(Qt.UserRole)
+                
+                new_hp = max(current_hp - amount, 0)
+                hp_item.setText(str(new_hp))
+                
+                # Check for concentration
+                if amount > 0:
+                    self._check_concentration(row, amount)
+                    
+                # Check for death saves if 0 HP
+                if new_hp == 0:
+                    name = self.initiative_table.item(row, 0).text()
+                    QMessageBox.information(
+                        self,
+                        "HP Reduced to 0",
+                        f"{name} is down! Remember to track death saves."
+                    )
+    
+    def _quick_heal(self, amount):
+        """Apply quick healing to selected combatants"""
+        if amount <= 0:
+            return
+            
+        # Get selected rows
+        selected_rows = [index.row() for index in 
+                        self.initiative_table.selectionModel().selectedRows()]
+        
+        if not selected_rows:
+            if 0 <= self.current_turn < self.initiative_table.rowCount():
+                # If no selection, apply to current turn
+                selected_rows = [self.current_turn]
+            else:
+                return
+                
+        for row in selected_rows:
+            hp_item = self.initiative_table.item(row, 2)
+            if hp_item:
+                current_hp = int(hp_item.text())
+                max_hp = hp_item.data(Qt.UserRole)
+                
+                new_hp = min(current_hp + amount, max_hp)
+                hp_item.setText(str(new_hp))
+    
+    def _hp_changed(self, row, new_hp):
+        """Handle HP changes from delegate editing"""
+        if 0 <= row < self.initiative_table.rowCount():
+            # Get current HP
+            hp_item = self.initiative_table.item(row, 2)
+            if hp_item:
+                # Already updated via setModelData, check for special cases
+                if new_hp == 0:
+                    name = self.initiative_table.item(row, 0).text()
+                    QMessageBox.information(
+                        self,
+                        "HP Reduced to 0",
+                        f"{name} is down! Remember to track death saves."
+                    )
     
     def _next_turn(self):
         """Advance to the next turn"""
@@ -539,56 +751,99 @@ class CombatTrackerPanel(BasePanel):
         self.previous_turn = self.current_turn
     
     def _show_context_menu(self, position):
-        """Show context menu for initiative table"""
-        menu = QMenu()
+        """Show custom context menu for the initiative table"""
+        # Get row under cursor
+        row = self.initiative_table.rowAt(position.y())
+        if row < 0:
+            return
         
-        # Only show if a row is selected
-        selected_rows = self.initiative_table.selectionModel().selectedRows()
-        if selected_rows:
-            row = selected_rows[0].row()
-            
-            # Add menu actions
-            remove_action = QAction("Remove", self)
-            remove_action.triggered.connect(self._remove_selected)
-            menu.addAction(remove_action)
-            
-            damage_action = QAction("Apply Damage...", self)
-            damage_action.triggered.connect(lambda: self._apply_damage(False))
-            menu.addAction(damage_action)
-            
-            heal_action = QAction("Heal...", self)
-            heal_action.triggered.connect(lambda: self._apply_damage(True))
-            menu.addAction(heal_action)
-            
+        # Create menu
+        menu = QMenu(self)
+        
+        # Add menu actions
+        remove_action = QAction("Remove", self)
+        remove_action.triggered.connect(self._remove_selected)
+        menu.addAction(remove_action)
+        
+        # HP adjustment submenu
+        hp_menu = menu.addMenu("Adjust HP")
+        
+        # Quick damage options
+        damage_menu = hp_menu.addMenu("Damage")
+        d1_action = damage_menu.addAction("1 HP")
+        d1_action.triggered.connect(lambda: self._quick_damage(1))
+        d5_action = damage_menu.addAction("5 HP")
+        d5_action.triggered.connect(lambda: self._quick_damage(5))
+        d10_action = damage_menu.addAction("10 HP")
+        d10_action.triggered.connect(lambda: self._quick_damage(10))
+        
+        damage_custom = damage_menu.addAction("Custom...")
+        damage_custom.triggered.connect(lambda: self._apply_damage(False))
+        
+        # Quick healing options
+        heal_menu = hp_menu.addMenu("Heal")
+        h1_action = heal_menu.addAction("1 HP")
+        h1_action.triggered.connect(lambda: self._quick_heal(1))
+        h5_action = heal_menu.addAction("5 HP")
+        h5_action.triggered.connect(lambda: self._quick_heal(5))
+        h10_action = heal_menu.addAction("10 HP")
+        h10_action.triggered.connect(lambda: self._quick_heal(10))
+        
+        heal_custom = heal_menu.addAction("Custom...")
+        heal_custom.triggered.connect(lambda: self._apply_damage(True))
+        
+        menu.addSeparator()
+        
+        # Death saves
+        hp_item = self.initiative_table.item(row, 2)
+        if hp_item and int(hp_item.text()) <= 0:
+            death_saves = QAction("Death Saves...", self)
+            death_saves.triggered.connect(lambda: self._manage_death_saves(row))
+            menu.addAction(death_saves)
             menu.addSeparator()
-            
-            # Death saves
-            hp_item = self.initiative_table.item(row, 2)
-            if hp_item and int(hp_item.text()) <= 0:
-                death_saves = QAction("Death Saves...", self)
-                death_saves.triggered.connect(lambda: self._manage_death_saves(row))
-                menu.addAction(death_saves)
-                menu.addSeparator()
-            
-            # Status submenu
-            status_menu = menu.addMenu("Set Status")
-            status_menu.addAction("None").triggered.connect(lambda: self._set_status(""))
-            
-            for condition in CONDITIONS:
-                action = status_menu.addAction(condition)
-                action.triggered.connect(lambda checked, c=condition: self._set_status(c))
-            
-            # Show the menu
-            menu.exec_(self.initiative_table.mapToGlobal(position))
+        
+        # Status submenu
+        status_menu = menu.addMenu("Set Status")
+        status_menu.addAction("None").triggered.connect(lambda: self._set_status(""))
+        
+        for condition in CONDITIONS:
+            action = status_menu.addAction(condition)
+            action.triggered.connect(lambda checked, c=condition: self._set_status(c))
+        
+        # Show the menu
+        menu.exec_(self.initiative_table.mapToGlobal(position))
     
     def _apply_damage(self, is_healing=False):
         """Apply damage or healing to selected combatants"""
+        # Get selected rows
+        selected_rows = [index.row() for index in 
+                      self.initiative_table.selectionModel().selectedRows()]
+        
+        # If no rows selected, use current turn
+        if not selected_rows and 0 <= self.current_turn < self.initiative_table.rowCount():
+            selected_rows = [self.current_turn]
+            # Visual feedback by selecting the row
+            self.initiative_table.selectRow(self.current_turn)
+        
+        if not selected_rows:
+            QMessageBox.information(self, "No Selection", 
+                "Please select a combatant first.")
+            return
+        
+        # Get name of first selected combatant for dialog
+        first_name = self.initiative_table.item(selected_rows[0], 0).text()
+        target_text = first_name
+        if len(selected_rows) > 1:
+            target_text = f"{first_name} and {len(selected_rows)-1} others"
+        
+        # Create and configure dialog
         dialog = DamageDialog(self, is_healing)
+        dialog.setWindowTitle(f"Apply {'Healing' if is_healing else 'Damage'} to {target_text}")
+        
         if dialog.exec_():
             amount = dialog.get_amount()
             if amount > 0:
-                for row in (index.row() for index in 
-                          self.initiative_table.selectionModel().selectedRows()):
+                for row in selected_rows:
                     hp_item = self.initiative_table.item(row, 2)
                     if hp_item:
                         current_hp = int(hp_item.text())
@@ -604,6 +859,15 @@ class CombatTrackerPanel(BasePanel):
                         # Check for concentration
                         if not is_healing and amount > 0:
                             self._check_concentration(row, amount)
+                            
+                        # Check for death saves if 0 HP
+                        if new_hp == 0 and current_hp > 0:
+                            name = self.initiative_table.item(row, 0).text()
+                            QMessageBox.information(
+                                self,
+                                "HP Reduced to 0",
+                                f"{name} is down! Remember to track death saves."
+                            )
     
     def _check_concentration(self, row, damage):
         """Check if concentration needs to be made"""
