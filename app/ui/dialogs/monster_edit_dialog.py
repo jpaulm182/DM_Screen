@@ -412,16 +412,19 @@ class MonsterEditDialog(QDialog):
     # --- LLM Methods ---
 
     def _run_llm_task(self, task_function, *args):
-        """Runs an async LLM function in a background thread."""
+        """Run an async LLM task in a separate thread."""
+        # Disable buttons while LLM task is running
         self.generate_btn.setEnabled(False)
         self.extract_btn.setEnabled(False)
-        self.status_label.setText("🧠 Asking the AI assistant...")
-        QApplication.processEvents() # Update UI
-
-        worker = AsyncWorker(task_function, self.llm_service, *args)
+        self.status_label.setText("🔄 AI Assistant is working...")
+        
+        # Create a worker to run the task asynchronously
+        worker = AsyncWorker(task_function, *args)
         worker.signals.result.connect(self._llm_task_finished)
         worker.signals.error.connect(self._llm_task_error)
         worker.signals.finished.connect(self._llm_task_cleanup)
+        
+        # Start the worker
         self.threadpool.start(worker)
 
     @Slot()
@@ -431,7 +434,8 @@ class MonsterEditDialog(QDialog):
             "Enter a prompt describing the monster to generate:\n(e.g., 'A large insectoid creature with poisonous spines')")
         if ok and prompt:
             logger.info(f"Starting LLM generation for prompt: {prompt}")
-            self._run_llm_task(monster_generator.generate_monster_from_prompt, prompt)
+            # Pass llm_service as the first argument since generate_monster_from_prompt expects it
+            self._run_llm_task(monster_generator.generate_monster_from_prompt, self.llm_service, prompt)
         elif ok:
              QMessageBox.warning(self, "Input Needed", "Please enter a prompt for the monster.")
 
@@ -442,7 +446,8 @@ class MonsterEditDialog(QDialog):
              "Paste text containing the monster stat block to extract:")
         if ok and text:
             logger.info("Starting LLM extraction from text.")
-            self._run_llm_task(monster_generator.extract_monster_from_text, text)
+            # Pass llm_service as the first argument since extract_monster_from_text expects it
+            self._run_llm_task(monster_generator.extract_monster_from_text, self.llm_service, text)
         elif ok:
             QMessageBox.warning(self, "Input Needed", "Please paste the text to extract from.")
 

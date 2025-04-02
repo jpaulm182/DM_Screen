@@ -92,19 +92,41 @@ class Monster:
 
     def to_dict(self) -> Dict[str, Any]:
         """Converts the Monster object to a dictionary suitable for JSON storage."""
-        # Use asdict for basic conversion, then handle nested objects and metadata keys
+        # Create a dictionary for storing the converted values
         data = {}
         for f in self.__dataclass_fields__.values():
             value = getattr(self, f.name)
             json_key = f.metadata.get("json_key", f.name) # Use json_key if defined
 
-            # Serialize nested dataclasses if they are lists or optional lists
+            # Skip fields that shouldn't be included in JSON
+            if f.name in ["id", "is_custom"]:
+                continue
+
+            # Handle different types of values
             if isinstance(value, list) and value and hasattr(value[0], '__dataclass_fields__'):
-                data[json_key] = [asdict(item) for item in value]
-            elif hasattr(value, '__dataclass_fields__') and value is not None: # Single optional dataclass (though none currently used)
-                 data[json_key] = asdict(value)
-            elif f.name not in ["id", "is_custom"]: # Exclude DB id and custom flag from JSON
+                # For lists of dataclasses, manually convert each item to a dict
+                data[json_key] = []
+                for item in value:
+                    item_dict = {}
+                    for item_field in item.__dataclass_fields__.values():
+                        item_value = getattr(item, item_field.name)
+                        # Skip complex nested structures that might cause recursion
+                        if not hasattr(item_value, '__dataclass_fields__'):
+                            item_dict[item_field.name] = item_value
+                    data[json_key].append(item_dict)
+            elif hasattr(value, '__dataclass_fields__') and value is not None:
+                # For single dataclass instances, manually convert to dict
+                item_dict = {}
+                for item_field in value.__dataclass_fields__.values():
+                    item_value = getattr(value, item_field.name)
+                    # Skip complex nested structures that might cause recursion
+                    if not hasattr(item_value, '__dataclass_fields__'):
+                        item_dict[item_field.name] = item_value
+                data[json_key] = item_dict
+            else:
+                # For simple values (int, str, bool, None, etc.)
                 data[json_key] = value
+                
         return data
 
     @classmethod

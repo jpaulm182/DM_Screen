@@ -6,7 +6,7 @@ import logging
 import asyncio
 
 from app.core.llm_service import LLMService # Assuming LLMService is importable
-from app.core.models.monster import Monster # Import the new Monster class
+from app.core.models.monster import Monster, MonsterAction, MonsterTrait, MonsterSense, MonsterSkill, MonsterLegendaryAction # Import all needed classes
 from app.core.llm_service import ModelInfo
 
 # Configure logging
@@ -162,121 +162,220 @@ def _parse_llm_json_output(llm_output: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-async def generate_monster_from_prompt(prompt: str, llm_service: LLMService = None) -> Optional[Monster]:
+async def generate_monster_from_prompt(llm_service: LLMService, prompt: str) -> Optional[Monster]:
     """
     Generate a monster stat block from a user prompt using LLM.
     
-    This is a placeholder implementation that returns a basic monster.
-    
     Args:
-        prompt: User description of the monster to generate.
         llm_service: The LLM service to use.
+        prompt: User description of the monster to generate.
         
     Returns:
         A Monster object, or None on failure.
     """
-    logger.warning(f"Placeholder 'generate_monster_from_prompt' called with prompt: {prompt}")
+    logger.info(f"Generating monster from prompt: {prompt}")
     
     try:
-        # In a real implementation:
-        # 1. Construct a detailed prompt for the LLM.
-        # 2. Call llm_service.generate_completion_async(...).
-        # 3. Parse the response into a Monster object.
+        # Check if LLM service is available
+        if not llm_service:
+            logger.error("LLM service not available")
+            return None
         
-        # Extract a name from the first few words of the prompt
-        words = prompt.split()
-        if len(words) >= 2:
-            name = " ".join(words[:2]).title()  # Use first two words as name
-        else:
-            name = f"{prompt.strip().title()} Creature"
+        # 1. Construct a detailed prompt for the LLM using the template
+        formatted_prompt = GENERATION_PROMPT_TEMPLATE.format(user_prompt=prompt)
+        
+        # 2. Get available models
+        try:
+            available_models = llm_service.get_available_models()
+            if not available_models:
+                logger.error("No LLM models available")
+                return None
             
-        # For testing, create a minimal valid Monster
-        test_monster = Monster(
-            name=name,
-            size="Medium",
-            type="humanoid",
-            alignment="neutral",
-            armor_class=12,
-            hit_points=20,
-            speed="30 ft.",
-            strength=10,
-            dexterity=10,
-            constitution=10,
-            intelligence=10,
-            wisdom=10,
-            charisma=10,
-            challenge_rating="1",
-            xp=200,
-            description=f"A placeholder monster created from prompt: {prompt}",
-            actions=[{
-                "name": "Basic Attack", 
-                "description": f"Melee Weapon Attack: +3 to hit, reach 5 ft., one target. Hit: 5 (1d6 + 2) slashing damage."
-            }],
-            is_custom=True,
-            source="AI Generated (Placeholder)"
+            model_id = available_models[0]["id"]
+            logger.debug(f"Using LLM model: {model_id}")
+        except Exception as e:
+            logger.error(f"Error getting available models: {e}")
+            return None
+        
+        # 3. Call LLM service
+        logger.debug("Sending monster generation prompt to LLM")
+        response = llm_service.generate_completion(
+            model=model_id,
+            messages=[{"role": "user", "content": formatted_prompt}],
+            temperature=0.7,
+            max_tokens=1500
         )
         
-        logger.info(f"Created placeholder monster '{name}' for testing")
-        return test_monster
+        if not response:
+            logger.error("Empty response from LLM")
+            return None
+        
+        # 4. Parse the JSON response
+        logger.debug(f"Parsing LLM response (first 100 chars): {response[:100]}...")
+        monster_data = _parse_llm_json_output(response)
+        
+        if not monster_data:
+            logger.error("Failed to parse valid JSON from LLM response")
+            return None
+        
+        # 5. Convert the parsed data to a Monster object
+        monster_obj = Monster.from_dict(monster_data)
+        
+        # 6. Set custom flags
+        monster_obj.is_custom = True
+        monster_obj.source = monster_data.get("source", "LLM Generated")
+        
+        logger.info(f"Successfully generated monster: {monster_obj.name} (CR {monster_obj.challenge_rating})")
+        return monster_obj
         
     except Exception as e:
-        logger.error(f"Error in placeholder monster generation from prompt: {e}")
-        return None
+        logger.error(f"Error in monster generation from prompt: {e}", exc_info=True)
+        
+        # If we encountered an error, try to extract a name from the prompt for the fallback monster
+        try:
+            words = prompt.split()
+            if len(words) >= 2:
+                name = " ".join(words[:2]).title()
+            else:
+                name = f"{prompt.strip().title()} Creature"
+                
+            # Return a fallback monster
+            logger.warning(f"Returning fallback monster '{name}' due to error")
+            return Monster(
+                name=name,
+                size="Medium",
+                type="humanoid",
+                alignment="neutral",
+                armor_class=12,
+                hit_points="20 (3d6 + 3)",
+                speed="30 ft.",
+                strength=10,
+                dexterity=10,
+                constitution=10,
+                intelligence=10,
+                wisdom=10,
+                charisma=10,
+                challenge_rating="1",
+                description=f"A placeholder monster created from prompt: {prompt}\n\nNote: An error occurred during generation.",
+                actions=[
+                    MonsterAction(
+                        name="Basic Attack", 
+                        description=f"Melee Weapon Attack: +3 to hit, reach 5 ft., one target. Hit: 5 (1d6 + 2) slashing damage."
+                    )
+                ],
+                is_custom=True,
+                source="AI Generated (Fallback)"
+            )
+        except Exception as fallback_err:
+            logger.error(f"Error creating fallback monster: {fallback_err}")
+            return None
 
 
-async def extract_monster_from_text(text: str, llm_service: LLMService = None) -> Optional[Monster]:
+async def extract_monster_from_text(llm_service: LLMService, text: str) -> Optional[Monster]:
     """
     Extract a monster stat block from pasted text using LLM.
     
-    This is a placeholder implementation that returns a basic monster.
-    
     Args:
-        text: Text containing the monster stat block to extract.
         llm_service: The LLM service to use.
+        text: Text containing the monster stat block to extract.
         
     Returns:
         A Monster object, or None on failure.
     """
-    logger.warning(f"Placeholder 'extract_monster_from_text' called with text length: {len(text)}")
+    logger.info(f"Extracting monster from text of length: {len(text)}")
     
     try:
-        # Try to extract a name from the first line of text
-        lines = text.split('\n')
-        first_line = lines[0] if lines else "Unknown Creature"
-        name = first_line.strip()
+        # Check if LLM service is available
+        if not llm_service:
+            logger.error("LLM service not available")
+            return None
         
-        if not name:
-            name = "Extracted Creature"
+        # 1. Construct a prompt for the LLM using the template
+        formatted_prompt = EXTRACTION_PROMPT_TEMPLATE.format(user_text_placeholder=text)
         
-        # For testing, create a minimal valid Monster
-        test_monster = Monster(
-            name=name,
-            size="Medium",
-            type="humanoid",
-            alignment="neutral",
-            armor_class=12,
-            hit_points=20,
-            speed="30 ft.",
-            strength=10,
-            dexterity=10,
-            constitution=10,
-            intelligence=10,
-            wisdom=10,
-            charisma=10,
-            challenge_rating="1",
-            xp=200,
-            description=f"A placeholder monster extracted from text.",
-            actions=[{
-                "name": "Basic Attack", 
-                "description": f"Melee Weapon Attack: +3 to hit, reach 5 ft., one target. Hit: 5 (1d6 + 2) slashing damage."
-            }],
-            is_custom=True,
-            source="AI Generated (Placeholder)"
+        # 2. Get available models
+        try:
+            available_models = llm_service.get_available_models()
+            if not available_models:
+                logger.error("No LLM models available")
+                return None
+            
+            model_id = available_models[0]["id"]
+            logger.debug(f"Using LLM model: {model_id}")
+        except Exception as e:
+            logger.error(f"Error getting available models: {e}")
+            return None
+        
+        # 3. Call LLM service
+        logger.debug("Sending text extraction prompt to LLM")
+        response = llm_service.generate_completion(
+            model=model_id,
+            messages=[{"role": "user", "content": formatted_prompt}],
+            temperature=0.3,  # Lower temperature for extraction (more deterministic)
+            max_tokens=1500
         )
         
-        logger.info(f"Created placeholder monster '{name}' from text extraction")
-        return test_monster
+        if not response:
+            logger.error("Empty response from LLM")
+            return None
+        
+        # 4. Parse the JSON response
+        logger.debug(f"Parsing LLM response (first 100 chars): {response[:100]}...")
+        monster_data = _parse_llm_json_output(response)
+        
+        if not monster_data:
+            logger.error("Failed to parse valid JSON from LLM response")
+            return None
+        
+        # 5. Convert the parsed data to a Monster object
+        monster_obj = Monster.from_dict(monster_data)
+        
+        # 6. Set custom flags
+        monster_obj.is_custom = True
+        monster_obj.source = monster_data.get("source", "LLM Extracted")
+        
+        logger.info(f"Successfully extracted monster: {monster_obj.name}")
+        return monster_obj
         
     except Exception as e:
-        logger.error(f"Error in placeholder monster extraction from text: {e}")
-        return None 
+        logger.error(f"Error in monster extraction from text: {e}", exc_info=True)
+        
+        # If we encountered an error, try to extract a name from the first line of text for the fallback monster
+        try:
+            lines = text.split('\n')
+            first_line = lines[0] if lines else "Unknown Creature"
+            name = first_line.strip()
+            
+            if not name:
+                name = "Extracted Creature"
+                
+            # Return a fallback monster
+            logger.warning(f"Returning fallback monster '{name}' due to error")
+            return Monster(
+                name=name,
+                size="Medium",
+                type="humanoid",
+                alignment="neutral",
+                armor_class=12,
+                hit_points="20 (3d6 + 3)",
+                speed="30 ft.",
+                strength=10,
+                dexterity=10,
+                constitution=10,
+                intelligence=10,
+                wisdom=10,
+                charisma=10,
+                challenge_rating="1",
+                description=f"A placeholder monster extracted from text.\n\nNote: An error occurred during extraction.",
+                actions=[
+                    MonsterAction(
+                        name="Basic Attack", 
+                        description=f"Melee Weapon Attack: +3 to hit, reach 5 ft., one target. Hit: 5 (1d6 + 2) slashing damage."
+                    )
+                ],
+                is_custom=True,
+                source="AI Extracted (Fallback)"
+            )
+        except Exception as fallback_err:
+            logger.error(f"Error creating fallback monster: {fallback_err}")
+            return None 
