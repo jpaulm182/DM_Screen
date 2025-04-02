@@ -17,10 +17,10 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QPushButton,
     QLineEdit, QSpinBox, QHBoxLayout, QVBoxLayout, QComboBox,
     QLabel, QCheckBox, QMenu, QMessageBox, QDialog, QDialogButtonBox,
-    QGroupBox, QWidget
+    QGroupBox, QWidget, QStyledItemDelegate, QStyle
 )
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence
+from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QBrush, QPalette
 import random
 
 from app.ui.panels.base_panel import BasePanel
@@ -31,6 +31,42 @@ CONDITIONS = [
     "Incapacitated", "Invisible", "Paralyzed", "Petrified",
     "Poisoned", "Prone", "Restrained", "Stunned", "Unconscious"
 ]
+
+# --- Custom Delegate for Highlighting --- 
+
+class CurrentTurnDelegate(QStyledItemDelegate):
+    '''Delegate to handle custom painting for the current turn row.'''
+    def paint(self, painter, option, index):
+        # Check if this item belongs to the current turn using UserRole + 1
+        is_current = index.data(Qt.UserRole + 1)
+        
+        if is_current == True: # Explicit check for True
+            # Save painter state
+            painter.save()
+            
+            # Define highlight colors
+            highlight_bg = QColor(0, 51, 102) # Dark blue background (#003366)
+            highlight_fg = QColor(Qt.white) # White text
+            
+            # Fill background
+            painter.fillRect(option.rect, highlight_bg)
+            
+            # Set text color
+            pen = painter.pen()
+            pen.setColor(highlight_fg)
+            painter.setPen(pen)
+            
+            # Draw text (adjusting rect slightly for padding)
+            text_rect = option.rect.adjusted(5, 0, -5, 0) # Add horizontal padding
+            painter.drawText(text_rect, option.displayAlignment, index.data(Qt.DisplayRole))
+            
+            # Restore painter state
+            painter.restore()
+        else:
+            # Default painting for non-current turns
+            super().paint(painter, option, index)
+
+# --- Dialog Classes --- 
 
 class DamageDialog(QDialog):
     """Dialog for applying damage or healing"""
@@ -125,6 +161,7 @@ class CombatTrackerPanel(BasePanel):
         # Initialize combat state before calling super().__init__
         self.current_round = 1
         self.current_turn = 0
+        self.previous_turn = -1 # Track the previous turn index for highlighting
         self.elapsed_time = 0  # Time in seconds
         self.combat_started = False  # Track if combat has started
         
@@ -145,7 +182,7 @@ class CombatTrackerPanel(BasePanel):
         """Set up the combat tracker UI"""
         # Add keyboard shortcuts
         next_turn_shortcut = QKeySequence(Qt.CTRL | Qt.Key_Space)
-        self.next_turn_action = QAction("Next Turn", self)
+        self.next_turn_action = QAction("Next Combatant", self)
         self.next_turn_action.setShortcut(next_turn_shortcut)
         self.next_turn_action.triggered.connect(self._next_turn)
         self.addAction(self.next_turn_action)
@@ -167,7 +204,7 @@ class CombatTrackerPanel(BasePanel):
         
         # Add shortcuts info
         shortcuts_label = QLabel(
-            "Shortcuts: Next Turn (Ctrl+Space) | Sort (Ctrl+S) | Timer (Ctrl+T)"
+            "Shortcuts: Next Combatant (Ctrl+Space) | Sort (Ctrl+S) | Timer (Ctrl+T)"
         )
         shortcuts_label.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(shortcuts_label)
@@ -215,7 +252,27 @@ class CombatTrackerPanel(BasePanel):
         self.initiative_table.verticalHeader().setVisible(False)
         self.initiative_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.initiative_table.setSelectionMode(QTableWidget.SingleSelection)
-        self.initiative_table.setAlternatingRowColors(True)
+        
+        # Apply custom stylesheet for basic appearance (delegate handles highlight)
+        self.initiative_table.setStyleSheet('''
+            QTableWidget {
+                alternate-background-color: #f8f8f8; /* Very light gray for alternates */
+                background-color: #ffffff; /* White base */
+                gridline-color: #e0e0e0; /* Lighter gray grid lines */
+                selection-background-color: #a0c4ff; /* Color for selected row (non-active turn) */
+                selection-color: black; /* Text color for selected row */
+            }
+            QTableWidget::item {
+                padding: 5px; /* Add some padding */
+                color: black; /* Default text color */
+                /* Alternating background handled by QTableWidget */
+            }
+            /* Highlight rule removed - handled by delegate */
+            /* QTableWidget::item[is_current_turn="true"] { ... } */
+        ''')
+        
+        # Set the custom delegate for painting
+        self.initiative_table.setItemDelegate(CurrentTurnDelegate(self.initiative_table))
         
         # Set minimum sizes
         self.setMinimumSize(800, 400)
@@ -268,10 +325,20 @@ class CombatTrackerPanel(BasePanel):
         
         control_layout.addStretch(1)
         
-        # Next turn button
-        self.next_turn_button = QPushButton("Next Turn")
+        # Next combatant button (previously Next Turn)
+        self.next_turn_button = QPushButton("Next Combatant")
         self.next_turn_button.clicked.connect(self._next_turn)
         control_layout.addWidget(self.next_turn_button)
+        
+        # Reset Combat button
+        self.reset_button = QPushButton("Reset Combat")
+        self.reset_button.clicked.connect(self._reset_combat)
+        control_layout.addWidget(self.reset_button)
+        
+        # Restart Combat button
+        self.restart_button = QPushButton("Restart Combat")
+        self.restart_button.clicked.connect(self._restart_combat)
+        control_layout.addWidget(self.restart_button)
         
         return control_layout
     
@@ -386,7 +453,7 @@ class CombatTrackerPanel(BasePanel):
         # Reset current turn if combat hasn't started
         if self.current_round == 1 and self.current_turn == 0:
             self.current_turn = 0
-            self._highlight_current_turn()
+            self._update_highlight()
     
     def _next_turn(self):
         """Advance to the next turn"""
@@ -397,35 +464,66 @@ class CombatTrackerPanel(BasePanel):
         if not self.combat_started:
             self.combat_started = True
         
-        # Clear current highlight
-        self._clear_highlight()
+        # Store the index of the last combatant
+        last_combatant_index = self.initiative_table.rowCount() - 1
         
-        # Advance turn
-        self.current_turn += 1
-        if self.current_turn >= self.initiative_table.rowCount():
+        # Check if the current turn is the last combatant
+        if self.current_turn == last_combatant_index:
+            # End of the round: Increment round, reset turn to 0
             self.current_turn = 0
             self.current_round += 1
             self.round_spin.setValue(self.current_round)
             self._update_game_time()
+            print(f"--- End of Round {self.current_round - 1}, Starting Round {self.current_round} ---") # Debug
+        else:
+            # Not the end of the round: Just advance to the next combatant
+            self.current_turn += 1
         
-        # Highlight new turn
-        self._highlight_current_turn()
+        # Highlight the new current combatant
+        self._update_highlight()
     
-    def _highlight_current_turn(self):
-        """Highlight the current turn's row"""
-        if self.initiative_table.rowCount() > 0:
+    def _update_highlight(self):
+        """Update the highlight state using item data and trigger repaint via dataChanged."""
+        rows = self.initiative_table.rowCount()
+        if rows == 0:
+            return
+
+        # Clear the data from the previous turn's row
+        if 0 <= self.previous_turn < rows:
+            for col in range(self.initiative_table.columnCount()):
+                item = self.initiative_table.item(self.previous_turn, col)
+                if item:
+                    item.setData(Qt.UserRole + 1, False) # Use setData with Boolean False
+            # Emit dataChanged for the previous row to trigger delegate repaint
+            start_index = self.initiative_table.model().index(self.previous_turn, 0)
+            end_index = self.initiative_table.model().index(self.previous_turn, self.initiative_table.columnCount() - 1)
+            self.initiative_table.model().dataChanged.emit(start_index, end_index, [Qt.UserRole + 1])
+
+        # Set the data on the current turn's row
+        if 0 <= self.current_turn < rows:
             for col in range(self.initiative_table.columnCount()):
                 item = self.initiative_table.item(self.current_turn, col)
                 if item:
-                    item.setBackground(QColor(200, 200, 255))
-    
-    def _clear_highlight(self):
-        """Clear the highlight from the current turn"""
-        if self.initiative_table.rowCount() > 0:
-            for col in range(self.initiative_table.columnCount()):
-                item = self.initiative_table.item(self.current_turn, col)
-                if item:
-                    item.setBackground(QColor(255, 255, 255))
+                    item.setData(Qt.UserRole + 1, True) # Use setData with Boolean True
+            # Emit dataChanged for the current row to trigger delegate repaint
+            start_index = self.initiative_table.model().index(self.current_turn, 0)
+            end_index = self.initiative_table.model().index(self.current_turn, self.initiative_table.columnCount() - 1)
+            self.initiative_table.model().dataChanged.emit(start_index, end_index, [Qt.UserRole + 1])
+            
+            # Ensure the current row is visible
+            self.initiative_table.scrollToItem(
+                self.initiative_table.item(self.current_turn, 0),
+                QTableWidget.ScrollHint.EnsureVisible
+            )
+
+        # Update the style to reflect property changes. 
+        # setProperty should handle this, but polish/unpolish is safer.
+        self.initiative_table.style().unpolish(self.initiative_table)
+        self.initiative_table.style().polish(self.initiative_table)
+        self.initiative_table.viewport().update() 
+
+        # Update previous_turn for the next call
+        self.previous_turn = self.current_turn
     
     def _show_context_menu(self, position):
         """Show context menu for initiative table"""
@@ -538,7 +636,7 @@ class CombatTrackerPanel(BasePanel):
             if row < self.current_turn:
                 self.current_turn -= 1
             elif row == self.current_turn:
-                self._clear_highlight()
+                self._update_highlight()
             
             # Clean up tracking
             self.death_saves.pop(row, None)
@@ -546,7 +644,7 @@ class CombatTrackerPanel(BasePanel):
                 self.concentrating.remove(row)
         
         # Highlight current turn again
-        self._highlight_current_turn()
+        self._update_highlight()
     
     def _set_status(self, status):
         """Set status for selected combatants"""
@@ -600,6 +698,100 @@ class CombatTrackerPanel(BasePanel):
             f"{self.current_round - 1} rounds ({minutes} minutes)"
         )
     
+    def _reset_combat(self):
+        """Reset the entire combat tracker to its initial state."""
+        reply = QMessageBox.question(
+            self,
+            'Reset Combat',
+            "Are you sure you want to reset the combat tracker? \nThis will clear all combatants and reset the round/timer.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Clear the table
+            self.initiative_table.setRowCount(0)
+            
+            # Reset combat state variables
+            self.current_round = 1
+            self.current_turn = 0
+            self.previous_turn = -1
+            self.elapsed_time = 0
+            self.combat_started = False
+            self.death_saves.clear()
+            self.concentrating.clear()
+            
+            # Reset UI elements
+            self.round_spin.setValue(self.current_round)
+            if self.timer.isActive():
+                self.timer.stop()
+            self.timer_label.setText("00:00:00")
+            self.timer_button.setText("Start")
+            self._update_game_time()
+            # No need to explicitly call _update_highlight as the table is empty
+            
+            print("Combat Reset") # Optional: Confirmation in console
+    
+    def _restart_combat(self):
+        """Restart the current combat, keeping combatants but resetting state."""
+        if self.initiative_table.rowCount() == 0:
+            QMessageBox.information(self, "Restart Combat", "No combatants to restart.")
+            return
+            
+        reply = QMessageBox.question(
+            self,
+            'Restart Combat',
+            "Are you sure you want to restart the combat? \nThis will reset HP, status, round, and timer, but keep all combatants.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Reset combat state variables
+            self.current_round = 1
+            self.current_turn = 0
+            self.previous_turn = -1
+            self.elapsed_time = 0
+            self.combat_started = False
+            self.death_saves.clear()
+            self.concentrating.clear()
+            
+            # Reset UI elements
+            self.round_spin.setValue(self.current_round)
+            if self.timer.isActive():
+                self.timer.stop()
+            self.timer_label.setText("00:00:00")
+            self.timer_button.setText("Start")
+            self._update_game_time()
+            
+            # Reset combatant state in the table
+            for row in range(self.initiative_table.rowCount()):
+                # Reset HP to max
+                hp_item = self.initiative_table.item(row, 2)
+                if hp_item:
+                    max_hp = hp_item.data(Qt.UserRole)
+                    if max_hp:
+                        hp_item.setText(str(max_hp))
+                    else: # Fallback if max_hp wasn't stored
+                        hp_item.setText("1") 
+                        
+                # Clear status
+                status_item = self.initiative_table.item(row, 4)
+                if status_item:
+                    status_item.setText("")
+                    
+                # Reset concentration
+                conc_item = self.initiative_table.item(row, 5)
+                if conc_item:
+                    conc_item.setCheckState(Qt.Unchecked)
+            
+            # Re-sort based on original initiative (just in case)
+            # And update highlight to the first combatant
+            self._sort_initiative() 
+            # Note: _sort_initiative calls _update_highlight if needed
+            
+            print("Combat Restarted") # Optional: Confirmation
+            
     def save_state(self):
         """Save the combat tracker state"""
         state = {
@@ -674,23 +866,51 @@ class CombatTrackerPanel(BasePanel):
                 self.initiative_table.setItem(row, col, item)
         
         # Highlight current turn
-        self._highlight_current_turn()
+        self._update_highlight()
 
     def add_monster(self, monster_data):
         """Add a monster to the combat tracker from the monster panel"""
         print("Combat Tracker received monster:", monster_data)  # Debug print
         try:
             # Extract relevant data
-            name = monster_data["name"]
-            hp_text = monster_data["hp"].split()[0]  # Get base HP value
-            hp = int(hp_text)
-            ac_text = monster_data["ac"].split()[0]  # Get base AC value
-            ac = int(ac_text)
-            
+            name = monster_data.get("name", "Unknown Monster") # Use .get for safety
+
+            # Handle HP (assuming it might be "76 (9d10 + 27)" or just "76")
+            hp_raw = monster_data.get("hp", "10") # Default to 10 if missing
+            try:
+                if isinstance(hp_raw, (int, float)):
+                    hp = int(hp_raw)
+                else: # Assume string
+                    hp_text = str(hp_raw).split()[0]
+                    hp = int(hp_text)
+            except (ValueError, IndexError):
+                hp = 10 # Fallback HP
+                print(f"Warning: Could not parse HP '{hp_raw}'. Defaulting to {hp}.")
+
+            # Handle AC (could be int like 13 or string like "15 (natural armor)")
+            ac_raw = monster_data.get("ac", 10) # Default to 10 if missing
+            try:
+                if isinstance(ac_raw, (int, float)):
+                    ac = int(ac_raw)
+                else: # Assume string
+                    ac_text = str(ac_raw).split()[0] # Get first part before space
+                    ac = int(ac_text) # Convert to integer
+            except (ValueError, IndexError):
+                ac = 10 # Fallback AC
+                print(f"Warning: Could not parse AC '{ac_raw}'. Defaulting to {ac}.")
+
             # Roll initiative using Dexterity modifier
-            dex_mod = (monster_data["stats"]["dex"] - 10) // 2
+            # Safely access nested stats dictionary
+            dex_score = 10 # Default DEX
+            stats_dict = monster_data.get("stats")
+            if isinstance(stats_dict, dict):
+                dex_score = stats_dict.get("dex", 10)
+            elif 'dexterity' in monster_data: # Check if using full name from our dataclass
+                 dex_score = monster_data.get("dexterity", 10)
+
+            dex_mod = (dex_score - 10) // 2
             initiative = random.randint(1, 20) + dex_mod
-            
+
             print(f"Adding combatant - Name: {name}, Initiative: {initiative}, HP: {hp}, AC: {ac}")  # Debug print
             
             # Create new row
@@ -726,6 +946,8 @@ class CombatTrackerPanel(BasePanel):
             
         except Exception as e:
             print(f"Error adding monster: {str(e)}")  # Debug print
+            import traceback
+            traceback.print_exc() # Print full traceback
             QMessageBox.warning(
                 self,
                 "Error",

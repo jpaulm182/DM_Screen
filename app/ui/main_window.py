@@ -20,6 +20,10 @@ from app.ui.panels.panel_category import PanelCategory
 from app.ui.layout_name_dialog import LayoutNameDialog
 from app.ui.layout_select_dialog import LayoutSelectDialog
 
+# Import the panels we need to connect
+from app.ui.panels.monster_panel import MonsterPanel
+from app.ui.panels.session_notes_panel import SessionNotesPanel
+
 
 class MainWindow(QMainWindow):
     """
@@ -51,6 +55,9 @@ class MainWindow(QMainWindow):
         self._create_menus()
         self._create_toolbar()
         self._create_status_bar()
+        
+        # Connect signals AFTER panels are likely instantiated by PanelManager
+        self._connect_panel_signals()
         
         # Load the default layout or show welcome screen
         self._load_initial_layout()
@@ -823,3 +830,42 @@ class MainWindow(QMainWindow):
             event.accept()
         else:
             super().keyPressEvent(event)
+
+    def _connect_panel_signals(self):
+        """Connect signals between different panels."""
+        print("Attempting to connect panel signals...") # Debug
+        try:
+            # Get panel instances via the dock widget's widget()
+            monster_dock = self.panel_manager.panels.get("monster")
+            notes_dock = self.panel_manager.panels.get("session_notes")
+
+            monster_panel = monster_dock.widget() if monster_dock else None
+            notes_panel = notes_dock.widget() if notes_dock else None
+
+            if isinstance(monster_panel, MonsterPanel) and isinstance(notes_panel, SessionNotesPanel):
+                # Connect MonsterPanel's custom_monster_created signal to SessionNotesPanel's slot
+                monster_panel.custom_monster_created.connect(notes_panel.add_monster_creation_note)
+                print("Connected MonsterPanel.custom_monster_created to SessionNotesPanel.add_monster_creation_note") # Debug
+            else:
+                if not monster_panel or not isinstance(monster_panel, MonsterPanel):
+                    print(f"Warning: Could not find or incorrect type for MonsterPanel (dock found: {monster_dock is not None}, type: {type(monster_panel)}). Signal not connected.")
+                if not notes_panel or not isinstance(notes_panel, SessionNotesPanel):
+                     print(f"Warning: Could not find or incorrect type for SessionNotesPanel (dock found: {notes_dock is not None}, type: {type(notes_panel)}). Signal not connected.")
+
+            # --- Connect other signals as needed --- 
+            # Example: Connect Add To Combat from Monster Panel to Combat Tracker
+            # combat_tracker_dock = self.panel_manager.panels.get("combat_tracker")
+            # combat_tracker_panel = combat_tracker_dock.widget() if combat_tracker_dock else None
+            # if isinstance(monster_panel, MonsterPanel) and combat_tracker_panel:
+            #    # Assuming CombatTrackerPanel has a slot like `add_combatant(dict)`
+            #    if hasattr(combat_tracker_panel, 'add_monster'): # Check correct slot name
+            #        monster_panel.add_to_combat.connect(combat_tracker_panel.add_monster)
+            #        print("Connected MonsterPanel.add_to_combat to CombatTrackerPanel.add_monster")
+            #    else:
+            #        print("Warning: CombatTrackerPanel does not have 'add_monster' slot.")
+
+        except Exception as e:
+            print(f"Error connecting panel signals: {e}")
+            import traceback
+            traceback.print_exc() # Print full traceback for debugging
+            # Consider logging this error more formally

@@ -11,10 +11,11 @@ from PySide6.QtWidgets import (
     QToolButton, QMenu, QDialog, QDialogButtonBox, QFormLayout,
     QListWidget, QListWidgetItem, QFileDialog, QInputDialog,
     QScrollArea, QMessageBox, QGroupBox, QCheckBox, QSpinBox,
-    QRadioButton, QButtonGroup, QSlider
+    QRadioButton, QButtonGroup, QSlider, QFrame, QSizePolicy,
+    QApplication
 )
-from PySide6.QtCore import Qt, Signal, Slot, QSize, QMetaObject, Q_ARG
-from PySide6.QtGui import QIcon, QAction, QTextCursor, QFont
+from PySide6.QtCore import Qt, Signal, Slot, QSize, QMetaObject, Q_ARG, QRect
+from PySide6.QtGui import QIcon, QAction, QTextCursor, QFont, QPalette, QScreen
 import json
 
 from app.ui.panels.base_panel import BasePanel
@@ -203,10 +204,14 @@ class LocationGeneratorPanel(BasePanel):
         self.save_button = QPushButton("Save Location")
         self.save_button.setEnabled(False)
         
+        self.save_to_notes_button = QPushButton("Save to Notes")
+        self.save_to_notes_button.setEnabled(False)
+        
         self.clear_button = QPushButton("Clear")
         
         buttons_layout.addWidget(self.generate_button)
         buttons_layout.addWidget(self.save_button)
+        buttons_layout.addWidget(self.save_to_notes_button)
         buttons_layout.addWidget(self.clear_button)
         
         config_layout.addLayout(buttons_layout)
@@ -216,16 +221,71 @@ class LocationGeneratorPanel(BasePanel):
         results_layout = QVBoxLayout(results_widget)
         results_layout.setContentsMargins(0, 0, 0, 0)
         
-        # Results display
+        # Results display with tabs
         results_group = QGroupBox("Generated Location")
         results_inner_layout = QVBoxLayout(results_group)
+        
+        # Create tabbed interface
+        self.results_tabs = QTabWidget()
+        
+        # HTML display tab
+        self.html_tab = QWidget()
+        html_layout = QVBoxLayout(self.html_tab)
+        html_layout.setContentsMargins(5, 5, 5, 5)
         
         self.location_display = QTextEdit()
         self.location_display.setReadOnly(True)
         self.location_display.setMinimumHeight(200)
         self.location_display.setPlaceholderText("Generated location will appear here...")
         
-        results_inner_layout.addWidget(self.location_display)
+        html_layout.addWidget(self.location_display)
+        
+        # Formatted view tab
+        self.formatted_tab = QWidget()
+        formatted_layout = QVBoxLayout(self.formatted_tab)
+        formatted_layout.setContentsMargins(5, 5, 5, 5)
+        
+        # Create a scroll area for the formatted view
+        formatted_scroll = QScrollArea()
+        formatted_scroll.setWidgetResizable(True)
+        formatted_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        formatted_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        # Create the content widget for the scroll area
+        self.formatted_content = QWidget()
+        self.formatted_layout = QVBoxLayout(self.formatted_content)
+        formatted_scroll.setWidget(self.formatted_content)
+        
+        formatted_layout.addWidget(formatted_scroll)
+        
+        # Raw JSON tab
+        self.json_tab = QWidget()
+        json_layout = QVBoxLayout(self.json_tab)
+        json_layout.setContentsMargins(5, 5, 5, 5)
+        
+        self.json_display = QTextEdit()
+        self.json_display.setReadOnly(True)
+        self.json_display.setMinimumHeight(200)
+        self.json_display.setPlaceholderText("Raw JSON data will appear here...")
+        
+        # Set a monospace font for the JSON view
+        json_font = QFont("Courier New", 10)
+        self.json_display.setFont(json_font)
+        
+        json_layout.addWidget(self.json_display)
+        
+        # Add tabs to tab widget
+        self.results_tabs.addTab(self.formatted_tab, "Formatted View")
+        self.results_tabs.addTab(self.html_tab, "HTML View")
+        self.results_tabs.addTab(self.json_tab, "JSON Data")
+        
+        # Add a "View Full Screen" button
+        self.fullscreen_button = QPushButton("View Full Screen")
+        self.fullscreen_button.setEnabled(False)
+        self.fullscreen_button.clicked.connect(self._show_fullscreen_view)
+        results_inner_layout.addWidget(self.fullscreen_button)
+        
+        results_inner_layout.addWidget(self.results_tabs)
         results_layout.addWidget(results_group)
         
         # Generation status
@@ -255,6 +315,7 @@ class LocationGeneratorPanel(BasePanel):
         # Button connections
         self.generate_button.clicked.connect(self._generate_location)
         self.save_button.clicked.connect(self._save_location)
+        self.save_to_notes_button.clicked.connect(self._save_to_notes)
         self.clear_button.clicked.connect(self._clear_form)
         
         # Model connections
@@ -410,8 +471,10 @@ class LocationGeneratorPanel(BasePanel):
             self.status_label.setStyleSheet("color: red;")
             return
         
-        # Clear the system message about generating
+        # Clear the displays
         self.location_display.clear()
+        self.json_display.clear()
+        self._clear_formatted_view()
         
         # Parse and display the result
         try:
@@ -431,12 +494,21 @@ class LocationGeneratorPanel(BasePanel):
                     "params": self._get_generation_params()
                 }
                 
-                # Enable save button
+                # Enable save buttons
                 self.save_button.setEnabled(True)
+                self.save_to_notes_button.setEnabled(True)
+                self.fullscreen_button.setEnabled(True)  # Enable fullscreen button
                 
-                # Display formatted location
+                # Display in HTML view
                 html_content = self._format_location_as_html(location_data)
                 self.location_display.setHtml(html_content)
+                
+                # Display in JSON view - use pretty print
+                formatted_json = json.dumps(location_data, indent=4)
+                self.json_display.setPlainText(formatted_json)
+                
+                # Update formatted view
+                self._update_formatted_view(location_data)
                 
                 # Update status
                 self.status_label.setText("Location generated successfully")
@@ -444,18 +516,22 @@ class LocationGeneratorPanel(BasePanel):
             else:
                 # Handle non-JSON response
                 self.location_display.setPlainText(response)
+                self.json_display.setPlainText(response)
                 self.current_generation = {
                     "raw_response": response,
                     "parsed_data": {"description": response},
                     "params": self._get_generation_params()
                 }
                 self.save_button.setEnabled(True)
+                self.save_to_notes_button.setEnabled(True)
+                self.fullscreen_button.setEnabled(False)
                 self.status_label.setText("Location generated (non-standard format)")
                 self.status_label.setStyleSheet("color: orange;")
                 
         except Exception as e:
             # Handle parsing errors
             self.location_display.setPlainText(response)
+            self.json_display.setPlainText(response)
             self.status_label.setText(f"Error parsing result: {str(e)}")
             self.status_label.setStyleSheet("color: red;")
             
@@ -466,6 +542,8 @@ class LocationGeneratorPanel(BasePanel):
                 "params": self._get_generation_params()
             }
             self.save_button.setEnabled(True)
+            self.save_to_notes_button.setEnabled(True)
+            self.fullscreen_button.setEnabled(False)
     
     def _format_location_as_html(self, location_data):
         """Format location data as HTML for display"""
@@ -598,6 +676,307 @@ class LocationGeneratorPanel(BasePanel):
         except Exception as e:
             QMessageBox.warning(self, "Save Error", f"Could not save location: {str(e)}")
     
+    def _save_to_notes(self):
+        """Save the generated location to session notes"""
+        if not self.current_generation:
+            return
+            
+        # Try to get session notes panel
+        session_notes_panel = self.get_panel("session_notes")
+        if not session_notes_panel:
+            QMessageBox.warning(self, "Session Notes Not Available", 
+                "Could not find the Session Notes panel. Make sure it's loaded.")
+            return
+        
+        # Extract location data
+        location_data = self.current_generation["parsed_data"]
+        params = self.current_generation["params"]
+        
+        # Determine title
+        if "name" in location_data:
+            title = location_data["name"]
+        else:
+            title = params["name"] if params["name"] else "Generated Location"
+            
+        # Get formatted content directly (no JSON)
+        formatted_content = self._format_location_for_notes(location_data)
+        
+        # Generate tags
+        tags = ["location"]
+        if params["type"] != "Random":
+            tags.append(params["type"])
+        if params["environment"] != "Random":
+            tags.append(params["environment"])
+        tags.append(params["size"])
+        
+        # Save to notes using session notes panel's method
+        try:
+            # Check if _create_note_with_content exists
+            if hasattr(session_notes_panel, '_create_note_with_content'):
+                success = session_notes_panel._create_note_with_content(
+                    title=f"Location: {title}",
+                    content=formatted_content,
+                    tags=",".join(tags)
+                )
+                
+                if success:
+                    self.status_label.setText(f"Location saved to session notes: {title}")
+                    self.status_label.setStyleSheet("color: green;")
+                else:
+                    self.status_label.setText("Failed to save location to session notes")
+                    self.status_label.setStyleSheet("color: red;")
+            # Alternative method if _create_note_with_content doesn't exist
+            elif hasattr(session_notes_panel, 'debug_info'):
+                # Debug to see what methods are available
+                session_notes_panel.debug_info()
+                QMessageBox.warning(self, "Alternative Method Used", 
+                    "Using debug method to diagnose session notes panel issue.")
+            else:
+                QMessageBox.warning(self, "Method Not Available", 
+                    "The session notes panel does not have the expected methods.")
+        except Exception as e:
+            QMessageBox.warning(self, "Save to Notes Error", f"Error saving to notes: {str(e)}")
+    
+    def _format_location_for_notes(self, location_data):
+        """Format location data as formatted text for session notes"""
+        content = []
+        
+        # Location name and type
+        name = location_data.get("name", "Unnamed Location")
+        location_type = location_data.get("type", "")
+        
+        # Add basic location information
+        if location_type:
+            content.append(f"*Type:* {location_type}")
+        
+        # Environment and size/scale
+        environment = location_data.get("environment", "")
+        if environment:
+            content.append(f"*Environment:* {environment}")
+            
+        size = location_data.get("size", "")
+        if size:
+            content.append(f"*Size:* {size}")
+            
+        # Population/activity level
+        population = location_data.get("population", "")
+        if population:
+            content.append(f"*Population:* {population}")
+            
+        # Add threat/danger level
+        danger = location_data.get("danger_level", location_data.get("threat_level", ""))
+        if danger:
+            content.append(f"*Danger Level:* {danger}")
+            
+        content.append("")  # Empty line
+        
+        # Main description
+        description = location_data.get("description", "")
+        if description:
+            content.append("## Description")
+            content.append(description)
+            content.append("")
+            
+        # Narrative output (if present)
+        narrative = location_data.get("narrative_output", "")
+        if narrative:
+            # If narrative is a complex object, format each part
+            if isinstance(narrative, dict):
+                # Physical description
+                phys_desc = narrative.get("physical_description", "")
+                if phys_desc:
+                    content.append("## Physical Description")
+                    content.append(phys_desc)
+                    content.append("")
+                
+                # Background/history
+                hist_bg = narrative.get("history_background", "")
+                if hist_bg:
+                    content.append("## History & Background") 
+                    content.append(hist_bg)
+                    content.append("")
+                
+                # Atmosphere/mood
+                atmos = narrative.get("atmosphere_mood", "")
+                if atmos:
+                    content.append("## Atmosphere & Mood")
+                    content.append(atmos)
+                    content.append("")
+                
+                # Threats/challenges
+                threats = narrative.get("notable_threats_challenges", "")
+                if threats:
+                    content.append("## Threats & Challenges")
+                    content.append(threats)
+                    content.append("")
+                
+                # Handle nested lists in narrative
+                narrative_points = narrative.get("points_of_interest", [])
+                if narrative_points and len(narrative_points) > 0:
+                    content.append("## Points of Interest")
+                    for point in narrative_points:
+                        if isinstance(point, dict):
+                            name = point.get("name", "")
+                            desc = point.get("description", "")
+                            if name:
+                                content.append(f"### {name}")
+                            if desc:
+                                content.append(desc)
+                            content.append("")
+                        elif isinstance(point, str):
+                            content.append(f"- {point}")
+                    content.append("")
+                
+                narrative_npcs = narrative.get("key_npcs", [])
+                if narrative_npcs and len(narrative_npcs) > 0:
+                    content.append("## Key NPCs")
+                    for npc in narrative_npcs:
+                        if isinstance(npc, dict):
+                            name = npc.get("name", "")
+                            desc = npc.get("description", "")
+                            if name:
+                                content.append(f"### {name}")
+                            if desc:
+                                content.append(desc)
+                            content.append("")
+                        elif isinstance(npc, str):
+                            content.append(f"- {npc}")
+                    content.append("")
+                
+                narrative_secrets = narrative.get("secrets_hidden_elements", [])
+                if narrative_secrets and len(narrative_secrets) > 0:
+                    content.append("## Secrets & Hidden Elements")
+                    for secret in narrative_secrets:
+                        if isinstance(secret, dict):
+                            # Some LLM responses use "secret" key, others use "name"/"description"
+                            secret_text = secret.get("secret", secret.get("description", ""))
+                            secret_name = secret.get("name", "")
+                            
+                            if secret_name:
+                                content.append(f"### {secret_name}")
+                            if secret_text:
+                                content.append(secret_text)
+                            content.append("")
+                        elif isinstance(secret, str):
+                            content.append(f"- {secret}")
+                    content.append("")
+            else:
+                # Simple string narrative
+                content.append(narrative)
+                content.append("")
+        
+        # If narrative didn't have these sections, look for them in the top level
+        
+        # History or background
+        if "history_background" not in str(narrative):
+            history = location_data.get("history", location_data.get("background", ""))
+            if history:
+                content.append("## History & Background")
+                content.append(history)
+                content.append("")
+            
+        # Points of interest - if not already included in narrative
+        if "points_of_interest" not in str(narrative):
+            points = location_data.get("points_of_interest", [])
+            if points:
+                content.append("## Points of Interest")
+                if isinstance(points, list):
+                    for point in points:
+                        if isinstance(point, str):
+                            content.append(f"- {point}")
+                        elif isinstance(point, dict):
+                            point_name = point.get("name", "")
+                            point_desc = point.get("description", "")
+                            if point_name and point_desc:
+                                content.append(f"### {point_name}")
+                                content.append(point_desc)
+                            elif point_name:
+                                content.append(f"- {point_name}")
+                            elif point_desc:
+                                content.append(f"- {point_desc}")
+                            content.append("")
+                elif isinstance(points, str):
+                    content.append(points)
+                content.append("")
+        
+        # NPCs - if not already included in narrative
+        if "key_npcs" not in str(narrative):
+            npcs = location_data.get("npcs", [])
+            if npcs:
+                content.append("## Notable NPCs")
+                if isinstance(npcs, list):
+                    for npc in npcs:
+                        if isinstance(npc, str):
+                            content.append(f"- {npc}")
+                        elif isinstance(npc, dict):
+                            npc_name = npc.get("name", "")
+                            npc_desc = npc.get("description", "")
+                            if npc_name and npc_desc:
+                                content.append(f"### {npc_name}")
+                                content.append(npc_desc)
+                            elif npc_name:
+                                content.append(f"- {npc_name}")
+                            elif npc_desc:
+                                content.append(f"- {npc_desc}")
+                            content.append("")
+                elif isinstance(npcs, str):
+                    content.append(npcs)
+                content.append("")
+        
+        # Secrets - if not already included in narrative
+        if "secrets_hidden_elements" not in str(narrative):
+            secrets = location_data.get("secrets", [])
+            if secrets:
+                content.append("## Secrets")
+                if isinstance(secrets, list):
+                    for secret in secrets:
+                        if isinstance(secret, str):
+                            content.append(f"- {secret}")
+                        elif isinstance(secret, dict):
+                            secret_name = secret.get("name", "")
+                            secret_desc = secret.get("description", "")
+                            if secret_name and secret_desc:
+                                content.append(f"### {secret_name}")
+                                content.append(secret_desc)
+                            elif secret_name:
+                                content.append(f"- {secret_name}")
+                            elif secret_desc:
+                                content.append(f"- {secret_desc}")
+                            content.append("")
+                elif isinstance(secrets, str):
+                    content.append(secrets)
+                content.append("")
+        
+        # Atmosphere/mood - if not already in narrative
+        if "atmosphere_mood" not in str(narrative):
+            atmosphere = location_data.get("atmosphere", location_data.get("mood", ""))
+            if atmosphere:
+                content.append("## Atmosphere & Mood")
+                content.append(atmosphere)
+                content.append("")
+        
+        # Threats/challenges - if not already in narrative
+        if "notable_threats_challenges" not in str(narrative):
+            threats = location_data.get("threats", location_data.get("challenges", ""))
+            if threats:
+                content.append("## Threats & Challenges")
+                content.append(threats)
+                content.append("")
+        
+        # Handle other potential location data
+        for key, value in location_data.items():
+            if key not in ["name", "type", "description", "narrative_output", 
+                          "points_of_interest", "npcs", "secrets", "history", 
+                          "background", "environment", "size", "population", 
+                          "danger_level", "threat_level", "atmosphere", "mood",
+                          "threats", "challenges"]:
+                if isinstance(value, str) and value:
+                    content.append(f"## {key.replace('_', ' ').title()}")
+                    content.append(value)
+                    content.append("")
+                    
+        return "\n".join(content)
+    
     def _clear_form(self):
         """Clear the form and reset to default state"""
         # Reset input fields
@@ -612,16 +991,661 @@ class LocationGeneratorPanel(BasePanel):
         self.threat_combo.setCurrentIndex(2)  # Moderate
         self.campaign_context.clear()
         
-        # Reset display
+        # Reset displays
         self.location_display.clear()
         self.location_display.setPlaceholderText("Generated location will appear here...")
+        self.json_display.clear()
+        self.json_display.setPlaceholderText("Raw JSON data will appear here...")
+        self._clear_formatted_view()
         
-        # Disable save button
+        # Disable buttons
         self.save_button.setEnabled(False)
+        self.save_to_notes_button.setEnabled(False)
+        self.fullscreen_button.setEnabled(False)
         
         # Reset status
         self.status_label.setText("Ready to generate")
         self.status_label.setStyleSheet("color: gray;")
         
         # Clear current generation
-        self.current_generation = None 
+        self.current_generation = None
+
+    def _clear_formatted_view(self):
+        """Clear the formatted view"""
+        # Remove all widgets from the layout
+        while self.formatted_layout.count():
+            item = self.formatted_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+    def _update_formatted_view(self, location_data):
+        """Update the formatted view with location data"""
+        self._clear_formatted_view()
+        
+        # Create a styled view of the location
+        # Location name as title
+        name = location_data.get("name", "Unnamed Location")
+        name_label = QLabel(name)
+        name_font = QFont()
+        name_font.setPointSize(16)
+        name_font.setBold(True)
+        name_label.setFont(name_font)
+        name_label.setAlignment(Qt.AlignCenter)
+        name_label.setStyleSheet("color: #1a237e; margin: 10px 0;")
+        self.formatted_layout.addWidget(name_label)
+        
+        # Location type and basic info
+        info_widget = QWidget()
+        info_layout = QHBoxLayout(info_widget)
+        
+        # Left column - Type, environment
+        left_info = QWidget()
+        left_layout = QVBoxLayout(left_info)
+        
+        # Type
+        location_type = location_data.get("type", "")
+        if location_type:
+            type_label = QLabel(f"<b>Type:</b> {location_type}")
+            left_layout.addWidget(type_label)
+        
+        # Environment
+        environment = location_data.get("environment", "")
+        if environment:
+            env_label = QLabel(f"<b>Environment:</b> {environment}")
+            left_layout.addWidget(env_label)
+            
+        info_layout.addWidget(left_info)
+        
+        # Right column - Size, population, danger
+        right_info = QWidget()
+        right_layout = QVBoxLayout(right_info)
+        
+        # Size
+        size = location_data.get("size", "")
+        if size:
+            size_label = QLabel(f"<b>Size:</b> {size}")
+            right_layout.addWidget(size_label)
+            
+        # Population
+        population = location_data.get("population", "")
+        if population:
+            pop_label = QLabel(f"<b>Population:</b> {population}")
+            right_layout.addWidget(pop_label)
+            
+        # Danger level
+        danger = location_data.get("danger_level", location_data.get("threat_level", ""))
+        if danger:
+            danger_label = QLabel(f"<b>Danger:</b> {danger}")
+            right_layout.addWidget(danger_label)
+            
+        info_layout.addWidget(right_info)
+        self.formatted_layout.addWidget(info_widget)
+        
+        # Add a separator line
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setFrameShadow(QFrame.Sunken)
+        self.formatted_layout.addWidget(line)
+        
+        # Description
+        description = location_data.get("description", "")
+        if description:
+            desc_title = QLabel("Description")
+            desc_title.setStyleSheet("font-weight: bold; font-size: 14px; color: #4a148c; margin-top: 10px;")
+            self.formatted_layout.addWidget(desc_title)
+            
+            desc_text = QLabel(description)
+            desc_text.setWordWrap(True)
+            desc_text.setTextFormat(Qt.RichText)
+            self.formatted_layout.addWidget(desc_text)
+            
+            # Add a small spacer
+            spacer = QWidget()
+            spacer.setFixedHeight(10)
+            self.formatted_layout.addWidget(spacer)
+        
+        # Narrative output (if present)
+        narrative = location_data.get("narrative_output", "")
+        if narrative:
+            narrative_label = QLabel(narrative)
+            narrative_label.setWordWrap(True)
+            narrative_label.setTextFormat(Qt.RichText)
+            self.formatted_layout.addWidget(narrative_label)
+            
+            # Add a small spacer
+            spacer = QWidget()
+            spacer.setFixedHeight(10)
+            self.formatted_layout.addWidget(spacer)
+        
+        # History
+        history = location_data.get("history", location_data.get("background", ""))
+        if history:
+            history_title = QLabel("History & Background")
+            history_title.setStyleSheet("font-weight: bold; font-size: 14px; color: #4a148c; margin-top: 10px;")
+            self.formatted_layout.addWidget(history_title)
+            
+            history_text = QLabel(history)
+            history_text.setWordWrap(True)
+            history_text.setTextFormat(Qt.RichText)
+            self.formatted_layout.addWidget(history_text)
+            
+            # Add a small spacer
+            spacer = QWidget()
+            spacer.setFixedHeight(10)
+            self.formatted_layout.addWidget(spacer)
+        
+        # Points of interest
+        points = location_data.get("points_of_interest", [])
+        if points:
+            points_title = QLabel("Points of Interest")
+            points_title.setStyleSheet("font-weight: bold; font-size: 14px; color: #4a148c; margin-top: 10px;")
+            self.formatted_layout.addWidget(points_title)
+            
+            if isinstance(points, list):
+                for point in points:
+                    point_widget = QWidget()
+                    point_layout = QVBoxLayout(point_widget)
+                    point_layout.setContentsMargins(10, 0, 0, 0)
+                    
+                    if isinstance(point, str):
+                        point_label = QLabel(f"• {point}")
+                        point_label.setWordWrap(True)
+                        point_layout.addWidget(point_label)
+                    elif isinstance(point, dict):
+                        point_name = point.get("name", "")
+                        point_desc = point.get("description", "")
+                        
+                        if point_name:
+                            name_label = QLabel(f"• <b>{point_name}</b>")
+                            name_label.setTextFormat(Qt.RichText)
+                            point_layout.addWidget(name_label)
+                        
+                        if point_desc:
+                            desc_label = QLabel(point_desc)
+                            desc_label.setWordWrap(True)
+                            desc_label.setIndent(15)
+                            point_layout.addWidget(desc_label)
+                            
+                    self.formatted_layout.addWidget(point_widget)
+            elif isinstance(points, str):
+                points_label = QLabel(points)
+                points_label.setWordWrap(True)
+                self.formatted_layout.addWidget(points_label)
+            
+            # Add a small spacer
+            spacer = QWidget()
+            spacer.setFixedHeight(10)
+            self.formatted_layout.addWidget(spacer)
+        
+        # NPCs
+        npcs = location_data.get("npcs", [])
+        if npcs:
+            npcs_title = QLabel("Notable NPCs")
+            npcs_title.setStyleSheet("font-weight: bold; font-size: 14px; color: #4a148c; margin-top: 10px;")
+            self.formatted_layout.addWidget(npcs_title)
+            
+            if isinstance(npcs, list):
+                for npc in npcs:
+                    npc_widget = QWidget()
+                    npc_layout = QVBoxLayout(npc_widget)
+                    npc_layout.setContentsMargins(10, 0, 0, 0)
+                    
+                    if isinstance(npc, str):
+                        npc_label = QLabel(f"• {npc}")
+                        npc_label.setWordWrap(True)
+                        npc_layout.addWidget(npc_label)
+                    elif isinstance(npc, dict):
+                        npc_name = npc.get("name", "")
+                        npc_desc = npc.get("description", "")
+                        
+                        if npc_name:
+                            name_label = QLabel(f"• <b>{npc_name}</b>")
+                            name_label.setTextFormat(Qt.RichText)
+                            npc_layout.addWidget(name_label)
+                        
+                        if npc_desc:
+                            desc_label = QLabel(npc_desc)
+                            desc_label.setWordWrap(True)
+                            desc_label.setIndent(15)
+                            npc_layout.addWidget(desc_label)
+                            
+                    self.formatted_layout.addWidget(npc_widget)
+            elif isinstance(npcs, str):
+                npcs_label = QLabel(npcs)
+                npcs_label.setWordWrap(True)
+                self.formatted_layout.addWidget(npcs_label)
+            
+            # Add a small spacer
+            spacer = QWidget()
+            spacer.setFixedHeight(10)
+            self.formatted_layout.addWidget(spacer)
+        
+        # Secrets
+        secrets = location_data.get("secrets", [])
+        if secrets:
+            secrets_title = QLabel("Secrets")
+            secrets_title.setStyleSheet("font-weight: bold; font-size: 14px; color: #4a148c; margin-top: 10px;")
+            self.formatted_layout.addWidget(secrets_title)
+            
+            if isinstance(secrets, list):
+                for secret in secrets:
+                    secret_widget = QWidget()
+                    secret_layout = QVBoxLayout(secret_widget)
+                    secret_layout.setContentsMargins(10, 0, 0, 0)
+                    
+                    if isinstance(secret, str):
+                        secret_label = QLabel(f"• {secret}")
+                        secret_label.setWordWrap(True)
+                        secret_layout.addWidget(secret_label)
+                    elif isinstance(secret, dict):
+                        secret_name = secret.get("name", "")
+                        secret_desc = secret.get("description", "")
+                        
+                        if secret_name:
+                            name_label = QLabel(f"• <b>{secret_name}</b>")
+                            name_label.setTextFormat(Qt.RichText)
+                            name_label.setStyleSheet("font-size: 16px;")
+                            secret_layout.addWidget(name_label)
+                        
+                        if secret_desc:
+                            desc_label = QLabel(secret_desc)
+                            desc_label.setWordWrap(True)
+                            desc_label.setIndent(15)
+                            desc_label.setStyleSheet("font-size: 14px;")
+                            secret_layout.addWidget(desc_label)
+                            
+                    self.formatted_layout.addWidget(secret_widget)
+            elif isinstance(secrets, str):
+                secrets_label = QLabel(secrets)
+                secrets_label.setWordWrap(True)
+                self.formatted_layout.addWidget(secrets_label)
+        
+        # Add a spacer at the end to push everything up
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.formatted_layout.addWidget(spacer)
+    
+    def _show_fullscreen_view(self):
+        """Show full-screen formatted view of the location"""
+        if not self.current_generation:
+            return
+            
+        location_data = self.current_generation["parsed_data"]
+        dialog = FullScreenLocationDialog(self, location_data)
+        dialog.exec()
+
+
+# Add a new FullScreenLocationDialog class for displaying locations in full screen
+class FullScreenLocationDialog(QDialog):
+    """Dialog for displaying a location in full screen format"""
+    
+    def __init__(self, parent=None, location_data=None):
+        super().__init__(parent)
+        self.location_data = location_data
+        
+        # Set up the dialog
+        self.setWindowTitle("Location Viewer")
+        self.resize(1024, 768)  # Start with a reasonable size
+        
+        # Create the layout
+        layout = QVBoxLayout(self)
+        
+        # Create scroll area
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        # Create content widget
+        content_widget = QWidget()
+        self.content_layout = QVBoxLayout(content_widget)
+        self.content_layout.setContentsMargins(20, 20, 20, 20)  # Add more padding for readability
+        
+        # Fill with formatted content
+        self._populate_content()
+        
+        # Set content widget to scroll area
+        scroll_area.setWidget(content_widget)
+        
+        # Add scroll area to main layout
+        layout.addWidget(scroll_area)
+        
+        # Add close button at bottom
+        button_box = QDialogButtonBox(QDialogButtonBox.Close)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+        
+        # Maximize the dialog on larger screens
+        screen = QApplication.primaryScreen().geometry()
+        if screen.width() >= 1280 and screen.height() >= 800:
+            self.showMaximized()
+    
+    def _populate_content(self):
+        """Populate the dialog with formatted location content"""
+        if not self.location_data:
+            self.content_layout.addWidget(QLabel("No location data available"))
+            return
+        
+        # Using an attractive styling with larger fonts for readability
+        # Location name as title
+        name = self.location_data.get("name", "Unnamed Location")
+        name_label = QLabel(name)
+        name_font = QFont()
+        name_font.setPointSize(24)  # Much larger font
+        name_font.setBold(True)
+        name_label.setFont(name_font)
+        name_label.setAlignment(Qt.AlignCenter)
+        name_label.setStyleSheet("color: #1a237e; margin: 20px 0;")
+        self.content_layout.addWidget(name_label)
+        
+        # Location type and basic info - presented in a nicer way
+        info_widget = QWidget()
+        info_layout = QHBoxLayout(info_widget)
+        
+        # Style the info box
+        info_widget.setStyleSheet("background-color: #f5f5f5; border-radius: 5px; padding: 10px;")
+        
+        # Left column - Type, environment
+        left_info = QWidget()
+        left_layout = QVBoxLayout(left_info)
+        
+        # Type with larger fonts
+        location_type = self.location_data.get("type", "")
+        if location_type:
+            type_label = QLabel(f"<b>Type:</b> {location_type}")
+            type_label.setStyleSheet("font-size: 14px;")
+            left_layout.addWidget(type_label)
+        
+        # Environment
+        environment = self.location_data.get("environment", "")
+        if environment:
+            env_label = QLabel(f"<b>Environment:</b> {environment}")
+            env_label.setStyleSheet("font-size: 14px;")
+            left_layout.addWidget(env_label)
+            
+        info_layout.addWidget(left_info)
+        
+        # Right column - Size, population, danger
+        right_info = QWidget()
+        right_layout = QVBoxLayout(right_info)
+        
+        # Size
+        size = self.location_data.get("size", "")
+        if size:
+            size_label = QLabel(f"<b>Size:</b> {size}")
+            size_label.setStyleSheet("font-size: 14px;")
+            right_layout.addWidget(size_label)
+            
+        # Population
+        population = self.location_data.get("population", "")
+        if population:
+            pop_label = QLabel(f"<b>Population:</b> {population}")
+            pop_label.setStyleSheet("font-size: 14px;")
+            right_layout.addWidget(pop_label)
+            
+        # Danger level
+        danger = self.location_data.get("danger_level", self.location_data.get("threat_level", ""))
+        if danger:
+            danger_label = QLabel(f"<b>Danger:</b> {danger}")
+            danger_label.setStyleSheet("font-size: 14px;")
+            right_layout.addWidget(danger_label)
+            
+        info_layout.addWidget(right_info)
+        self.content_layout.addWidget(info_widget)
+        
+        # Add a separator line
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setFrameShadow(QFrame.Sunken)
+        line.setLineWidth(2)  # Thicker line
+        self.content_layout.addWidget(line)
+        
+        # Description
+        description = self.location_data.get("description", "")
+        if description:
+            desc_title = QLabel("Description")
+            desc_title.setStyleSheet("font-weight: bold; font-size: 18px; color: #4a148c; margin-top: 20px;")
+            self.content_layout.addWidget(desc_title)
+            
+            desc_text = QLabel(description)
+            desc_text.setWordWrap(True)
+            desc_text.setTextFormat(Qt.RichText)
+            desc_text.setStyleSheet("font-size: 14px; line-height: 1.5;")
+            self.content_layout.addWidget(desc_text)
+            
+            # Add a small spacer
+            spacer = QWidget()
+            spacer.setFixedHeight(20)
+            self.content_layout.addWidget(spacer)
+        
+        # Narrative output (if present)
+        narrative = self.location_data.get("narrative_output", "")
+        if narrative:
+            narrative_label = QLabel(narrative)
+            narrative_label.setWordWrap(True)
+            narrative_label.setTextFormat(Qt.RichText)
+            narrative_label.setStyleSheet("font-size: 14px; line-height: 1.5;")
+            self.content_layout.addWidget(narrative_label)
+            
+            # Add a small spacer
+            spacer = QWidget()
+            spacer.setFixedHeight(20)
+            self.content_layout.addWidget(spacer)
+        
+        # History
+        history = self.location_data.get("history", self.location_data.get("background", ""))
+        if history:
+            history_title = QLabel("History & Background")
+            history_title.setStyleSheet("font-weight: bold; font-size: 18px; color: #4a148c; margin-top: 20px;")
+            self.content_layout.addWidget(history_title)
+            
+            history_text = QLabel(history)
+            history_text.setWordWrap(True)
+            history_text.setTextFormat(Qt.RichText)
+            history_text.setStyleSheet("font-size: 14px; line-height: 1.5;")
+            self.content_layout.addWidget(history_text)
+            
+            # Add a small spacer
+            spacer = QWidget()
+            spacer.setFixedHeight(20)
+            self.content_layout.addWidget(spacer)
+        
+        # Points of interest
+        points = self.location_data.get("points_of_interest", [])
+        if points:
+            points_title = QLabel("Points of Interest")
+            points_title.setStyleSheet("font-weight: bold; font-size: 18px; color: #4a148c; margin-top: 20px;")
+            self.content_layout.addWidget(points_title)
+            
+            # Create a container with alternating background colors for points
+            points_container = QWidget()
+            points_container.setStyleSheet("background-color: #f9f9f9; border-radius: 5px; padding: 10px;")
+            points_layout = QVBoxLayout(points_container)
+            
+            if isinstance(points, list):
+                for i, point in enumerate(points):
+                    point_widget = QWidget()
+                    # Alternate background colors for better readability
+                    if i % 2 == 0:
+                        point_widget.setStyleSheet("background-color: #f5f5f5; padding: 5px; border-radius: 3px;")
+                    else:
+                        point_widget.setStyleSheet("background-color: #ffffff; padding: 5px; border-radius: 3px;")
+                        
+                    point_layout = QVBoxLayout(point_widget)
+                    point_layout.setContentsMargins(10, 5, 10, 5)
+                    
+                    if isinstance(point, str):
+                        point_label = QLabel(f"• {point}")
+                        point_label.setWordWrap(True)
+                        point_label.setStyleSheet("font-size: 14px;")
+                        point_layout.addWidget(point_label)
+                    elif isinstance(point, dict):
+                        point_name = point.get("name", "")
+                        point_desc = point.get("description", "")
+                        
+                        if point_name:
+                            name_label = QLabel(f"• <b>{point_name}</b>")
+                            name_label.setTextFormat(Qt.RichText)
+                            name_label.setStyleSheet("font-size: 16px;")
+                            point_layout.addWidget(name_label)
+                        
+                        if point_desc:
+                            desc_label = QLabel(point_desc)
+                            desc_label.setWordWrap(True)
+                            desc_label.setIndent(15)
+                            desc_label.setStyleSheet("font-size: 14px;")
+                            point_layout.addWidget(desc_label)
+                            
+                    points_layout.addWidget(point_widget)
+            elif isinstance(points, str):
+                points_label = QLabel(points)
+                points_label.setWordWrap(True)
+                points_label.setStyleSheet("font-size: 14px;")
+                points_layout.addWidget(points_label)
+            
+            self.content_layout.addWidget(points_container)
+            
+            # Add a small spacer
+            spacer = QWidget()
+            spacer.setFixedHeight(20)
+            self.content_layout.addWidget(spacer)
+        
+        # NPCs
+        npcs = self.location_data.get("npcs", [])
+        if npcs:
+            npcs_title = QLabel("Notable NPCs")
+            npcs_title.setStyleSheet("font-weight: bold; font-size: 18px; color: #4a148c; margin-top: 20px;")
+            self.content_layout.addWidget(npcs_title)
+            
+            # Create a container with alternating background colors for NPCs
+            npcs_container = QWidget()
+            npcs_container.setStyleSheet("background-color: #f9f9f9; border-radius: 5px; padding: 10px;")
+            npcs_layout = QVBoxLayout(npcs_container)
+            
+            if isinstance(npcs, list):
+                for i, npc in enumerate(npcs):
+                    npc_widget = QWidget()
+                    # Alternate background colors for better readability
+                    if i % 2 == 0:
+                        npc_widget.setStyleSheet("background-color: #f5f5f5; padding: 5px; border-radius: 3px;")
+                    else:
+                        npc_widget.setStyleSheet("background-color: #ffffff; padding: 5px; border-radius: 3px;")
+                        
+                    npc_layout = QVBoxLayout(npc_widget)
+                    npc_layout.setContentsMargins(10, 5, 10, 5)
+                    
+                    if isinstance(npc, str):
+                        npc_label = QLabel(f"• {npc}")
+                        npc_label.setWordWrap(True)
+                        npc_label.setStyleSheet("font-size: 14px;")
+                        npc_layout.addWidget(npc_label)
+                    elif isinstance(npc, dict):
+                        npc_name = npc.get("name", "")
+                        npc_desc = npc.get("description", "")
+                        
+                        if npc_name:
+                            name_label = QLabel(f"• <b>{npc_name}</b>")
+                            name_label.setTextFormat(Qt.RichText)
+                            name_label.setStyleSheet("font-size: 16px;")
+                            npc_layout.addWidget(name_label)
+                        
+                        if npc_desc:
+                            desc_label = QLabel(npc_desc)
+                            desc_label.setWordWrap(True)
+                            desc_label.setIndent(15)
+                            desc_label.setStyleSheet("font-size: 14px;")
+                            npc_layout.addWidget(desc_label)
+                            
+                    npcs_layout.addWidget(npc_widget)
+            elif isinstance(npcs, str):
+                npcs_label = QLabel(npcs)
+                npcs_label.setWordWrap(True)
+                npcs_label.setStyleSheet("font-size: 14px;")
+                npcs_layout.addWidget(npcs_label)
+            
+            self.content_layout.addWidget(npcs_container)
+            
+            # Add a small spacer
+            spacer = QWidget()
+            spacer.setFixedHeight(20)
+            self.content_layout.addWidget(spacer)
+        
+        # Secrets
+        secrets = self.location_data.get("secrets", [])
+        if secrets:
+            secrets_title = QLabel("Secrets")
+            secrets_title.setStyleSheet("font-weight: bold; font-size: 18px; color: #4a148c; margin-top: 20px;")
+            self.content_layout.addWidget(secrets_title)
+            
+            # Create a container with styling for secrets
+            secrets_container = QWidget()
+            secrets_container.setStyleSheet("background-color: #f0f4f8; border-radius: 5px; padding: 10px; border: 1px dashed #7986cb;")
+            secrets_layout = QVBoxLayout(secrets_container)
+            
+            if isinstance(secrets, list):
+                for secret in secrets:
+                    secret_widget = QWidget()
+                    secret_layout = QVBoxLayout(secret_widget)
+                    secret_layout.setContentsMargins(10, 5, 10, 5)
+                    
+                    if isinstance(secret, str):
+                        secret_label = QLabel(f"• {secret}")
+                        secret_label.setWordWrap(True)
+                        secret_label.setStyleSheet("font-size: 14px;")
+                        secret_layout.addWidget(secret_label)
+                    elif isinstance(secret, dict):
+                        secret_name = secret.get("name", "")
+                        secret_desc = secret.get("description", "")
+                        
+                        if secret_name:
+                            name_label = QLabel(f"• <b>{secret_name}</b>")
+                            name_label.setTextFormat(Qt.RichText)
+                            name_label.setStyleSheet("font-size: 16px;")
+                            secret_layout.addWidget(name_label)
+                        
+                        if secret_desc:
+                            desc_label = QLabel(secret_desc)
+                            desc_label.setWordWrap(True)
+                            desc_label.setIndent(15)
+                            desc_label.setStyleSheet("font-size: 14px;")
+                            secret_layout.addWidget(desc_label)
+                            
+                    secrets_layout.addWidget(secret_widget)
+            elif isinstance(secrets, str):
+                secrets_label = QLabel(secrets)
+                secrets_label.setWordWrap(True)
+                secrets_label.setStyleSheet("font-size: 14px;")
+                secrets_layout.addWidget(secrets_label)
+            
+            self.content_layout.addWidget(secrets_container)
+        
+        # Add additional sections for any other data
+        for key, value in self.location_data.items():
+            if key not in ["name", "type", "description", "narrative_output", 
+                          "points_of_interest", "npcs", "secrets", "history", 
+                          "background", "environment", "size", "population", 
+                          "danger_level", "threat_level", "atmosphere", "mood",
+                          "threats", "challenges"]:
+                if isinstance(value, str) and value:
+                    # Add a section title
+                    section_title = QLabel(key.replace('_', ' ').title())
+                    section_title.setStyleSheet("font-weight: bold; font-size: 18px; color: #4a148c; margin-top: 20px;")
+                    self.content_layout.addWidget(section_title)
+                    
+                    # Add section content
+                    section_text = QLabel(value)
+                    section_text.setWordWrap(True)
+                    section_text.setTextFormat(Qt.RichText)
+                    section_text.setStyleSheet("font-size: 14px; line-height: 1.5;")
+                    self.content_layout.addWidget(section_text)
+                    
+                    # Add a small spacer
+                    spacer = QWidget()
+                    spacer.setFixedHeight(20)
+                    self.content_layout.addWidget(spacer)
+        
+        # Add a spacer at the end to push everything up
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.content_layout.addWidget(spacer) 

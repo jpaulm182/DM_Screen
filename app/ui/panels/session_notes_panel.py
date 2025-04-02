@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QSplitter, QMenu, QDialog, QFormLayout, QDialogButtonBox,
     QMessageBox, QComboBox
 )
-from PySide6.QtCore import Qt, Signal, QDateTime
+from PySide6.QtCore import Qt, Signal, QDateTime, Slot
 from PySide6.QtGui import QFont, QAction, QIcon
 
 from app.ui.panels.base_panel import BasePanel
@@ -583,101 +583,62 @@ class SessionNotesPanel(BasePanel):
         menu.exec(self.notes_list.mapToGlobal(position))
 
     def _create_note_with_content(self, title, content, tags=None):
-        """
-        Create a new note with the given content
-        
-        Args:
-            title (str): Note title
-            content (str): Note content
-            tags (str, optional): Comma-separated tags
-            
-        Returns:
-            bool: True if note was created successfully
-        """
+        """Creates a new note programmatically and saves it."""
+        print(f"Creating note programmatically: Title='{title}'") # Debug
+        tags_str = ",".join(tags) if tags else ""
+        now = QDateTime.currentDateTime().toString(Qt.ISODate)
+
+        new_note_data = {
+            'title': title,
+            'content': content,
+            'tags': tags_str,
+            'created_at': now,
+            'updated_at': now
+        }
+
+        # Save to database (using app_state.db_manager)
         try:
-            print(f"Creating note with title: {title}")
-            
-            # Create a dictionary to simulate a note for the dialog
-            prefilled_note = {
-                'title': title,
-                'content': content,
-                'tags': tags or ""
-            }
-            
-            # Create and show the edit dialog with pre-filled data
-            dialog = NoteEditDialog(self, self.app_state, prefilled_note, self.all_tags)
-            
-            if dialog.exec():
-                try:
-                    note_data = dialog.get_note_data()
-                    print(f"Note data after dialog: {note_data}")
-                    
-                    if note_data:
-                        current_time = QDateTime.currentDateTime().toString(Qt.ISODate)
-                        
-                        # Add timestamps
-                        note_data['created_at'] = current_time
-                        note_data['updated_at'] = current_time
-                        
-                        try:
-                            # Insert into database
-                            print("Inserting note into database...")
-                            note_id = self.app_state.db_manager.insert('session_notes', note_data)
-                            print(f"Inserted note with ID: {note_id}")
-                            
-                            # If note_id is None or not returned, create a temporary ID
-                            if note_id is None:
-                                # Generate a temporary ID if database doesn't return one
-                                max_id = max([note.get('id', 0) for note in self.notes]) if self.notes else 0
-                                note_id = max_id + 1
-                                print(f"Using generated ID: {note_id} as database did not return an ID")
-                            
-                            # Add ID to the note data
-                            note_data['id'] = note_id
-                            
-                            # Add to our local data
-                            self.notes.insert(0, note_data)
-                            print(f"Added note {note_id} to notes list")
-                            
-                            # Reload notes
-                            self.filtered_notes = self.notes.copy()
-                            self._update_notes_list()
-                            self._update_tag_list()
-                            
-                            # Select the new note
-                            for i in range(self.notes_list.count()):
-                                item = self.notes_list.item(i)
-                                if item.data(Qt.UserRole) == note_id:
-                                    self.notes_list.setCurrentItem(item)
-                                    self._note_selected(item)
-                                    break
-                            
-                            return True
-                        except Exception as e:
-                            import traceback
-                            print(f"Error in database insert: {str(e)}")
-                            print(traceback.format_exc())
-                            QMessageBox.critical(self, "Database Error", 
-                                f"Error inserting note into database: {str(e)}")
-                            return False
-                    else:
-                        print("No note data returned from dialog")
-                        return False
-                except Exception as e:
-                    import traceback
-                    print(f"Error in _create_note_with_content: {str(e)}")
-                    print(traceback.format_exc())
-                    QMessageBox.critical(self, "Error", 
-                        f"Error creating note: {str(e)}")
-                    return False
-            return False
+            inserted_id = self.app_state.db_manager.insert('session_notes', new_note_data)
+            if inserted_id is not None:
+                new_note_data['id'] = inserted_id
+                print(f"Note '{title}' saved with ID: {inserted_id}") # Debug
+
+                # Add to internal list and update UI
+                self.notes.append(new_note_data)
+                self._update_tag_list()
+                self._filter_notes() # This will update the list widget
+
+                # Optionally, select the new note
+                # Find the item in the list widget based on ID and select it
+                for i in range(self.notes_list.count()):
+                    item = self.notes_list.item(i)
+                    if item.data(Qt.UserRole) == inserted_id:
+                        self.notes_list.setCurrentItem(item)
+                        self._note_selected(item) # Update display
+                        break
+                return True
+            else:
+                print(f"Error: Failed to insert note '{title}' into database.") # Debug
+                QMessageBox.critical(self, "Error", f"Could not save the note '{title}' to the database.")
+                return False
         except Exception as e:
-            import traceback
-            print(f"Error in _create_note_with_content: {str(e)}")
-            print(traceback.format_exc())
-            QMessageBox.critical(self, "Error", 
-                f"Error creating note: {str(e)}")
+            print(f"Exception saving note '{title}': {e}") # Debug
+            QMessageBox.critical(self, "Error", f"An error occurred while saving the note '{title}': {e}")
             return False
+
+    # --- Public Slots --- 
+
+    @Slot(str)
+    def add_monster_creation_note(self, monster_name: str):
+        """Slot to add a note when a new custom monster is created."""
+        print(f"Slot add_monster_creation_note called with: {monster_name}") # Debug
+        title = f"New Monster Created: {monster_name}"
+        content = (f"A new custom monster named '{monster_name}' was added to the database on {QDateTime.currentDateTime().toString()}. "
+                   f"You can view or edit it in the Monster Reference panel.")
+        tags = ["Monster", "Custom Content", "Creation Log"] # Example tags
+
+        # Use the internal method to create and save the note
+        self._create_note_with_content(title, content, tags)
 
     def __repr__(self):
         """String representation of the panel for debugging"""

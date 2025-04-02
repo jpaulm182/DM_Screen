@@ -7,12 +7,14 @@ Handles database connections, schema management, and common queries.
 
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import random
 from pathlib import Path
+from typing import List, Optional, Dict, Any
 
 from app.core.config import get_database_path
+from app.core.models.monster import Monster
 
 
 class DatabaseManager:
@@ -213,8 +215,12 @@ class DatabaseManager:
             data: Dictionary of column:value pairs
             
         Returns:
-            ID of the inserted row
+            ID of the inserted row, or None on failure
         """
+        # Ensure connection is available
+        if not self.connection:
+            print("Error: Database connection is not available.")
+            return None
         try:
             columns = ", ".join(data.keys())
             placeholders = ", ".join(["?"] * len(data))
@@ -229,58 +235,38 @@ class DatabaseManager:
             # Get the last row ID
             row_id = cursor.lastrowid
             
-            # If no ID was returned but we need one, get the ID through a select query
+            # Handle cases where lastrowid might be None (less common with SQLite autoinc PK)
             if row_id is None:
-                print(f"Warning: lastrowid is None after insertion into {table}")
-                
-                # Try to get the ID of the row we just inserted
-                # For tables with auto-increment primary key
-                select_query = f"SELECT last_insert_rowid()"
-                cursor.execute(select_query)
-                result = cursor.fetchone()
-                
-                if result and result[0]:
-                    row_id = result[0]
-                    print(f"Retrieved ID using last_insert_rowid(): {row_id}")
+                print(f"Warning: lastrowid is None after insertion into {table}. Attempting retrieval.")
+                # For tables with an explicit integer primary key often named 'id'
+                # This assumes the primary key is 'id' and is auto-incrementing
+                # A more robust approach might be needed if PK names vary or aren't integers
+                if 'id' in data: # If we provided an ID (less likely for autoinc)
+                    # Try to select based on what we inserted (best guess)
+                    conditions = " AND ".join([f"{col} = ?" for col in data.keys()])
+                    select_query = f"SELECT id FROM {table} WHERE {conditions} ORDER BY id DESC LIMIT 1" # Get the latest match
+                    cursor.execute(select_query, values)
                 else:
-                    # As a last resort, try to query for the exact record we just inserted
-                    # This is not perfect but may work in many cases
-                    conditions = []
-                    condition_values = []
-                    
-                    # Use string columns that are likely to be unique for identification
-                    string_cols = [k for k, v in data.items() if isinstance(v, str) and k not in ('created_at', 'updated_at')]
-                    
-                    if string_cols:
-                        for col in string_cols[:2]:  # Use up to 2 string columns for identification
-                            conditions.append(f"{col} = ?")
-                            condition_values.append(data[col])
-                            
-                        where_clause = " AND ".join(conditions)
-                        
-                        # Order by ID descending to get the most recently added record
-                        select_query = f"SELECT id FROM {table} WHERE {where_clause} ORDER BY id DESC LIMIT 1"
-                        cursor.execute(select_query, condition_values)
-                        result = cursor.fetchone()
-                        
-                        if result and result[0]:
-                            row_id = result[0]
-                            print(f"Retrieved ID using query: {row_id}")
-                        else:
-                            # Generate a random high ID to avoid conflicts
-                            row_id = random.randint(10000, 99999)
-                            print(f"Generated random ID: {row_id}")
-                    else:
-                        # Generate a random high ID to avoid conflicts
-                        row_id = random.randint(10000, 99999)
-                        print(f"Generated random ID: {row_id}")
+                    # If no ID provided, rely on SQLite's special function
+                    select_query = "SELECT last_insert_rowid()"
+                    cursor.execute(select_query)
+
+                result = cursor.fetchone()
+                if result and result[0] is not None:
+                    row_id = result[0]
+                    print(f"Retrieved ID: {row_id}")
+                else:
+                    print(f"Error: Could not retrieve last inserted ID for table {table}.")
+                    return None # Indicate failure
             
             return row_id
-            
+        except sqlite3.Error as e:
+            print(f"Database error during insert into {table}: {e}")
+            # Consider rolling back if applicable, though commit is inside try
+            return None
         except Exception as e:
-            print(f"Error in DatabaseManager.insert: {str(e)}")
-            self.connection.rollback()
-            raise
+            print(f"An unexpected error occurred during insert: {e}")
+            return None
     
     def update(self, table, data, where_clause, where_params=None):
         """
@@ -288,26 +274,32 @@ class DatabaseManager:
         
         Args:
             table: Table name
-            data: Dictionary of column:value pairs to update
-            where_clause: WHERE clause for the update
-            where_params: Parameters for the WHERE clause
+            data: Dictionary of column:value pairs for the SET clause
+            where_clause: SQL WHERE clause (e.g., "id = ?")
+            where_params: Optional parameters for the WHERE clause
             
         Returns:
-            Number of affected rows
+            Number of affected rows, or None on failure
         """
-        set_clause = ", ".join([f"{key} = ?" for key in data.keys()])
-        values = list(data.values())
-        
-        query = f"UPDATE {table} SET {set_clause} WHERE {where_clause}"
-        
-        if where_params:
-            values.extend(where_params)
-        
-        cursor = self.connection.cursor()
-        cursor.execute(query, values)
-        self.connection.commit()
-        
-        return cursor.rowcount
+        # Ensure connection is available
+        if not self.connection:
+            print("Error: Database connection is not available.")
+            return None
+        try:
+            set_clause = ", ".join([f"{col} = ?" for col in data.keys()])
+            values = list(data.values())
+            
+            query = f"UPDATE {table} SET {set_clause} WHERE {where_clause}"
+            
+            all_params = values + list(where_params if where_params is not None else [])
+            
+            return self.execute_update(query, tuple(all_params))
+        except sqlite3.Error as e:
+            print(f"Database error during update on {table}: {e}")
+            return None
+        except Exception as e:
+            print(f"An unexpected error occurred during update: {e}")
+            return None
     
     def delete(self, table, where_clause, where_params=None):
         """
@@ -315,23 +307,25 @@ class DatabaseManager:
         
         Args:
             table: Table name
-            where_clause: WHERE clause for the deletion
-            where_params: Parameters for the WHERE clause
+            where_clause: SQL WHERE clause (e.g., "id = ?")
+            where_params: Optional parameters for the WHERE clause
             
         Returns:
-            Number of affected rows
+            Number of affected rows, or None on failure
         """
-        query = f"DELETE FROM {table} WHERE {where_clause}"
-        
-        cursor = self.connection.cursor()
-        
-        if where_params:
-            cursor.execute(query, where_params)
-        else:
-            cursor.execute(query)
-        
-        self.connection.commit()
-        return cursor.rowcount
+        # Ensure connection is available
+        if not self.connection:
+            print("Error: Database connection is not available.")
+            return None
+        try:
+            query = f"DELETE FROM {table} WHERE {where_clause}"
+            return self.execute_update(query, where_params)
+        except sqlite3.Error as e:
+            print(f"Database error during delete from {table}: {e}")
+            return None
+        except Exception as e:
+            print(f"An unexpected error occurred during delete: {e}")
+            return None
     
     def import_json_data(self, table, json_file):
         """
@@ -360,3 +354,188 @@ class DatabaseManager:
         except Exception as e:
             print(f"Error importing data: {e}")
             return 0
+
+    # --- Monster Specific Methods ---
+
+    def save_custom_monster(self, monster: Monster) -> Optional[int]:
+        """
+        Saves a new custom monster or updates an existing one.
+
+        Args:
+            monster: The Monster object to save. Assumes monster.is_custom is True.
+
+        Returns:
+            The ID of the saved monster, or None on failure.
+        """
+        if not monster.is_custom:
+            print("Error: Attempted to save a non-custom monster using save_custom_monster.")
+            return None
+
+        now = datetime.now(timezone.utc).isoformat()
+        monster_data = monster.to_dict() # Get dict representation
+        monster_json = json.dumps(monster_data) # Serialize the data part
+
+        data_to_save = {
+            "name": monster.name,
+            "data": monster_json,
+            "updated_at": now
+        }
+
+        if monster.id is None: # New monster
+            data_to_save["created_at"] = now
+            inserted_id = self.insert("custom_monsters", data_to_save)
+            if inserted_id is not None:
+                monster.id = inserted_id # Update the object with the new ID
+                monster.created_at = now
+                monster.updated_at = now
+                print(f"Saved new custom monster '{monster.name}' with ID {monster.id}")
+                return monster.id
+            else:
+                print(f"Failed to insert new custom monster '{monster.name}'")
+                return None
+        else: # Update existing monster
+            affected_rows = self.update(
+                "custom_monsters",
+                data_to_save,
+                "id = ?",
+                (monster.id,)
+            )
+            if affected_rows is not None and affected_rows > 0:
+                monster.updated_at = now
+                print(f"Updated custom monster '{monster.name}' with ID {monster.id}")
+                return monster.id
+            elif affected_rows == 0:
+                print(f"Warning: Update for custom monster ID {monster.id} ('{monster.name}') affected 0 rows. Does it exist?")
+                return None # Or maybe return monster.id still? Depends on desired behavior.
+            else:
+                print(f"Failed to update custom monster '{monster.name}' with ID {monster.id}")
+                return None
+
+    def get_monster_by_id(self, monster_id: int, is_custom: bool) -> Optional[Monster]:
+        """
+        Retrieves a single monster by its database ID.
+
+        Args:
+            monster_id: The ID of the monster.
+            is_custom: True if fetching from 'custom_monsters', False for 'monsters'.
+
+        Returns:
+            A Monster object or None if not found or on error.
+        """
+        table = "custom_monsters" if is_custom else "monsters"
+        query = f"SELECT * FROM {table} WHERE id = ?"
+        try:
+            results = self.execute_query(query, (monster_id,))
+            if results:
+                return Monster.from_db_row(results[0], is_custom=is_custom)
+            else:
+                return None
+        except sqlite3.Error as e:
+            print(f"Database error fetching monster ID {monster_id} from {table}: {e}")
+            return None
+        except Exception as e:
+            print(f"Unexpected error fetching monster ID {monster_id}: {e}")
+            return None
+
+    def search_monsters(self, search_term: str, include_custom: bool = True, include_standard: bool = True) -> List[Monster]:
+        """
+        Searches for monsters by name in standard and/or custom tables.
+
+        Args:
+            search_term: The term to search for in monster names (case-insensitive).
+            include_custom: Whether to include results from 'custom_monsters'.
+            include_standard: Whether to include results from 'monsters'.
+
+        Returns:
+            A list of matching Monster objects.
+        """
+        monsters = []
+        search_pattern = f"%{search_term}%"
+
+        try:
+            # Search standard monsters
+            if include_standard:
+                query_std = "SELECT * FROM monsters WHERE name LIKE ?"
+                results_std = self.execute_query(query_std, (search_pattern,))
+                for row in results_std:
+                    try:
+                        monsters.append(Monster.from_db_row(row, is_custom=False))
+                    except Exception as e:
+                        print(f"Error parsing standard monster row ID {row.get('id', 'N/A')}: {e}")
+
+            # Search custom monsters
+            if include_custom:
+                query_custom = "SELECT * FROM custom_monsters WHERE name LIKE ?"
+                results_custom = self.execute_query(query_custom, (search_pattern,))
+                for row in results_custom:
+                    try:
+                        monsters.append(Monster.from_db_row(row, is_custom=True))
+                    except Exception as e:
+                        print(f"Error parsing custom monster row ID {row.get('id', 'N/A')}: {e}")
+
+        except sqlite3.Error as e:
+            print(f"Database error during monster search for '{search_term}': {e}")
+            # Return potentially partial results collected so far
+        except Exception as e:
+            print(f"Unexpected error during monster search: {e}")
+
+        # Optional: Sort results, e.g., alphabetically by name
+        monsters.sort(key=lambda m: m.name)
+
+        return monsters
+
+    def get_all_monster_names(self, include_custom: bool = True, include_standard: bool = True) -> List[Dict[str, Any]]:
+        """
+        Retrieves a list of all monster names and their IDs/type.
+
+        Args:
+            include_custom: Whether to include names from 'custom_monsters'.
+            include_standard: Whether to include names from 'monsters'.
+
+        Returns:
+            A list of dictionaries, each containing {'id': int, 'name': str, 'is_custom': bool}.
+        """
+        names = []
+        try:
+            if include_standard:
+                query_std = "SELECT id, name FROM monsters ORDER BY name ASC"
+                results_std = self.execute_query(query_std)
+                names.extend([{'id': row['id'], 'name': row['name'], 'is_custom': False} for row in results_std])
+
+            if include_custom:
+                query_custom = "SELECT id, name FROM custom_monsters ORDER BY name ASC"
+                results_custom = self.execute_query(query_custom)
+                names.extend([{'id': row['id'], 'name': row['name'], 'is_custom': True} for row in results_custom])
+
+        except sqlite3.Error as e:
+            print(f"Database error fetching all monster names: {e}")
+        except Exception as e:
+            print(f"Unexpected error fetching all monster names: {e}")
+
+        # Ensure consistent sorting if combined
+        names.sort(key=lambda x: x['name'])
+        return names
+
+    def delete_custom_monster(self, monster_id: int) -> bool:
+        """
+        Deletes a custom monster by its ID.
+
+        Args:
+            monster_id: The ID of the custom monster to delete.
+
+        Returns:
+            True if deletion was successful (or monster didn't exist), False on error.
+        """
+        print(f"Attempting to delete custom monster with ID: {monster_id}")
+        affected_rows = self.delete("custom_monsters", "id = ?", (monster_id,))
+
+        if affected_rows is not None:
+            if affected_rows > 0:
+                print(f"Successfully deleted custom monster ID {monster_id}.")
+                return True
+            else:
+                print(f"Custom monster ID {monster_id} not found for deletion.")
+                return True # Still considered successful as the monster is gone
+        else:
+            print(f"Error occurred while trying to delete custom monster ID {monster_id}.")
+            return False
