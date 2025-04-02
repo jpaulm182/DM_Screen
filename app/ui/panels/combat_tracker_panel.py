@@ -156,6 +156,10 @@ class DeathSavesDialog(QDialog):
 class CombatTrackerPanel(BasePanel):
     """Panel for tracking combat initiative, HP, and conditions"""
     
+    # Signal to emit when combat resolution is complete (or failed)
+    # Carries the result dict and error string (one will be None)
+    resolution_complete = Signal(dict, str)
+    
     def __init__(self, app_state):
         """Initialize the combat tracker panel"""
         # Initialize combat state before calling super().__init__
@@ -177,6 +181,9 @@ class CombatTrackerPanel(BasePanel):
         
         # Connect timer after UI is set up
         self.timer.timeout.connect(self._update_timer)
+        
+        # Connect the resolution complete signal to the UI processing slot
+        self.resolution_complete.connect(self._process_resolution_ui)
         
     def _setup_ui(self):
         """Set up the combat tracker UI"""
@@ -799,15 +806,173 @@ class CombatTrackerPanel(BasePanel):
             print("Combat Restarted") # Optional: Confirmation
             
     def _fast_resolve_combat(self):
-        """(Placeholder) Use LLM to resolve the current combat encounter."""
-        # TODO: Implement logic to gather combat state, call LLM service,
-        # and update the combat tracker based on the result.
-        QMessageBox.information(
-            self, 
-            "Fast Resolve (Experimental)", 
-            "This feature is not yet implemented. It will use AI to resolve the combat."
+        """Use LLM to resolve the current combat encounter."""
+        # Check if combat resolver is available
+        if not hasattr(self.app_state, 'combat_resolver'):
+            QMessageBox.warning(self, "Error", "Combat Resolver service not available.")
+            return
+
+        # Gather current combat state
+        combat_state = self._gather_combat_state()
+        if not combat_state or not combat_state.get("combatants"):
+            QMessageBox.information(self, "Fast Resolve", "No combatants in the tracker to resolve.")
+            return
+            
+        # Disable button while processing
+        self.fast_resolve_button.setEnabled(False)
+        self.fast_resolve_button.setText("Resolving...")
+
+        # Call the resolver asynchronously
+        self.app_state.combat_resolver.resolve_combat_async(
+            combat_state,
+            self._handle_resolution_result
         )
-    
+        
+    def _gather_combat_state(self):
+        """Gather the current state of the combat from the table."""
+        combatants = []
+        for row in range(self.initiative_table.rowCount()):
+            combatant = {
+                "name": self.initiative_table.item(row, 0).text() if self.initiative_table.item(row, 0) else "Unknown",
+                "initiative": int(self.initiative_table.item(row, 1).text() or "0") if self.initiative_table.item(row, 1) else 0,
+                "hp": int(self.initiative_table.item(row, 2).text() or "0") if self.initiative_table.item(row, 2) else 0,
+                "max_hp": self.initiative_table.item(row, 2).data(Qt.UserRole) if self.initiative_table.item(row, 2) else 0,
+                "ac": int(self.initiative_table.item(row, 3).text() or "10") if self.initiative_table.item(row, 3) else 10,
+                "status": self.initiative_table.item(row, 4).text() if self.initiative_table.item(row, 4) else "",
+                "concentration": self.initiative_table.item(row, 5).checkState() == Qt.Checked if self.initiative_table.item(row, 5) else False,
+                "notes": self.initiative_table.item(row, 6).text() if self.initiative_table.item(row, 6) else ""
+            }
+            combatants.append(combatant)
+            
+        return {
+            "round": self.current_round,
+            "current_turn_index": self.current_turn,
+            "combatants": combatants,
+            # TODO: Add environment details if available/relevant
+        }
+
+    def _handle_resolution_result(self, result, error):
+        """Handle the result from the combat resolver (runs in background thread!)."""
+        # *** CRITICAL: DO NOT update UI directly here! ***
+        # Emit signal to pass data safely to the main GUI thread.
+        self.resolution_complete.emit(result, error)
+
+    def _process_resolution_ui(self, result, error):
+        """Process the combat resolution result in the main GUI thread."""
+        # Re-enable button
+        print("[_process_resolution_ui] Processing result...") # Debug log
+        self.fast_resolve_button.setEnabled(True)
+        self.fast_resolve_button.setText("Fast Resolve")
+        
+        if error:
+            print(f"[_process_resolution_ui] Error received: {error}") # Debug log
+            QMessageBox.critical(self, "Fast Resolve Error", f"Error resolving combat: {error}")
+            return
+            
+        if result:
+            # TODO: Implement proper result handling:
+            # 1. Display narrative in a dialog or dedicated area.
+            # 2. Update the initiative_table based on result["updates"].
+            #    - Find combatants by name.
+            #    - Update HP, Status.
+            #    - Remove dead/fled combatants?
+            # 3. Potentially end combat or advance round/turn.
+            
+            print("Combat Resolution Result:", result) # Debug print
+            
+            narrative = result.get("narrative", "No narrative provided.")
+            updates = result.get("updates", [])
+            
+            # Apply updates first
+            print(f"[_process_resolution_ui] Applying {len(updates)} updates from LLM...") # Debug log
+            num_removed, update_summary = self._apply_combat_updates(updates)
+            print(f"[_process_resolution_ui] Updates applied. Removed: {num_removed}, Summary: {update_summary}") # Debug log
+            
+            # Display results in a more informative message box
+            summary_text = f"Combat Resolved:\n\n{narrative}\n\nApplied {len(updates)} updates:"
+            if update_summary:
+                summary_text += "\n" + "\n".join(update_summary)
+            if num_removed > 0:
+                summary_text += f"\nRemoved {num_removed} combatants."
+                
+            QMessageBox.information(
+                self,
+                "Fast Resolve Result",
+                summary_text
+            )
+            
+    def _apply_combat_updates(self, updates):
+        """Apply updates from the combat resolution to the table.
+        
+        Returns:
+            tuple: (number_of_rows_removed, list_of_summary_strings)
+        """
+        rows_to_remove = []
+        update_summaries = []
+        print(f"[_apply_combat_updates] Received updates list: {updates}") # Debug log
+        
+        for update_index, update in enumerate(updates):
+            name_to_find = update.get("name")
+            print(f"[_apply_combat_updates] Processing update #{update_index} for: '{name_to_find}'") # Debug log
+            if not name_to_find:
+                continue
+                
+            # Find the row for the combatant
+            found_row = -1
+            for row in range(self.initiative_table.rowCount()):
+                name_item = self.initiative_table.item(row, 0)
+                if name_item and name_item.text() == name_to_find:
+                    found_row = row
+                    break
+            
+            if found_row != -1:
+                # Apply HP update
+                if "hp" in update:
+                    hp_item = self.initiative_table.item(found_row, 2)
+                    if hp_item:
+                        old_hp = hp_item.text()
+                        new_hp = str(update["hp"])
+                        hp_item.setText(new_hp)
+                        print(f"[_apply_combat_updates]   Set HP for '{name_to_find}' to {new_hp}") # Debug log
+                        update_summaries.append(f"- {name_to_find}: HP changed from {old_hp} to {new_hp}")
+                        # Handle death/unconscious status if HP reaches 0
+                        if update["hp"] <= 0 and "status" not in update:
+                            update["status"] = "Unconscious" # Or "Dead"
+                        
+                # Apply Status update
+                if "status" in update:
+                    status_item = self.initiative_table.item(found_row, 4)
+                    if status_item:
+                        old_status = status_item.text()
+                        new_status = update["status"]
+                        status_item.setText(new_status)
+                        print(f"[_apply_combat_updates]   Set Status for '{name_to_find}' to '{new_status}'") # Debug log
+                        if old_status != new_status:
+                             update_summaries.append(f"- {name_to_find}: Status changed from '{old_status}' to '{new_status}'")
+                        # If status is Dead or Fled, mark for removal? (optional)
+                        if update["status"] in ["Dead", "Fled"]:
+                            rows_to_remove.append(found_row)
+                
+                # TODO: Handle other updates like concentration, position, etc.
+        
+        # Remove combatants marked for removal (in reverse order)
+        if rows_to_remove:
+            for row in sorted(list(set(rows_to_remove)), reverse=True):
+                self.initiative_table.removeRow(row)
+                # Adjust current turn if needed
+                if row < self.current_turn:
+                    self.current_turn -= 1
+                # Clean up tracking data if needed (death_saves, concentration)
+                self.death_saves.pop(row, None)
+                if row in self.concentrating:
+                    self.concentrating.remove(row)
+            
+            # Reset highlight if current turn was removed or index shifted
+            self._update_highlight()
+        
+        print(f"[_apply_combat_updates] Finished applying updates. Rows to remove: {rows_to_remove}") # Debug log
+        return len(rows_to_remove), update_summaries
+            
     def save_state(self):
         """Save the combat tracker state"""
         state = {
