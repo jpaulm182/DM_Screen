@@ -36,7 +36,47 @@ from app.ui.dialogs.monster_edit_dialog import MonsterEditDialog
 # Setup logger for this module
 logger = logging.getLogger(__name__)
 
-# Removed SAMPLE_MONSTER
+# CR to XP mapping (from D&D 5e DMG or Basic Rules)
+CR_TO_XP = {
+    "0": 10,
+    "1/8": 25,
+    "1/4": 50,
+    "1/2": 100,
+    "1": 200,
+    "2": 450,
+    "3": 700,
+    "4": 1100,
+    "5": 1800,
+    "6": 2300,
+    "7": 2900,
+    "8": 3900,
+    "9": 5000,
+    "10": 5900,
+    "11": 7200,
+    "12": 8400,
+    "13": 10000,
+    "14": 11500,
+    "15": 13000,
+    "16": 15000,
+    "17": 18000,
+    "18": 20000,
+    "19": 22000,
+    "20": 25000,
+    "21": 33000,
+    "22": 41000,
+    "23": 50000,
+    "24": 62000,
+    "25": 75000,
+    "26": 90000,
+    "27": 105000,
+    "28": 120000,
+    "29": 135000,
+    "30": 155000
+}
+
+def get_xp_for_cr(cr_string: str) -> int:
+    """Convert a CR string (like '1/2' or '5') to its XP value."""
+    return CR_TO_XP.get(str(cr_string), 0) # Return 0 if CR not found
 
 class MonsterPanel(BasePanel):
     """Panel for viewing and managing monster/NPC stat blocks"""
@@ -131,10 +171,79 @@ class MonsterPanel(BasePanel):
         content_layout.addLayout(list_layout, stretch=1) # List takes 1/3 space
 
         # --- Stat block display ---
-        # QTextEdit is already scrollable
-        self.stat_block_display = QTextEdit()
-        self.stat_block_display.setReadOnly(True)
-        content_layout.addWidget(self.stat_block_display, stretch=2) # Stat block takes 2/3 space
+        # Use a QScrollArea for potentially long stat blocks
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.NoFrame) # Optional: remove border
+
+        # Widget to contain the actual stat block labels
+        self.stat_block_widget = QWidget()
+        self.stat_block_layout = QVBoxLayout(self.stat_block_widget)
+        self.stat_block_layout.setAlignment(Qt.AlignTop)
+        scroll_area.setWidget(self.stat_block_widget)
+        
+        # Initialize labels for details (will be populated later)
+        self.name_label = QLabel("")
+        self.name_label.setFont(QFont("Arial", 16, QFont.Bold))
+        self.stat_block_layout.addWidget(self.name_label)
+
+        self.meta_label = QLabel("") # For size, type, alignment
+        self.meta_label.setStyleSheet("font-style: italic;")
+        self.stat_block_layout.addWidget(self.meta_label)
+        
+        self.stat_block_layout.addWidget(QFrame(frameShape=QFrame.HLine))
+        
+        self.ac_label = QLabel("")
+        self.stat_block_layout.addWidget(self.ac_label)
+        self.hp_label = QLabel("")
+        self.stat_block_layout.addWidget(self.hp_label)
+        self.speed_label = QLabel("")
+        self.stat_block_layout.addWidget(self.speed_label)
+        
+        self.stat_block_layout.addWidget(QFrame(frameShape=QFrame.HLine))
+
+        # Table for ability scores (or use horizontal layout)
+        # For simplicity, using labels for now
+        self.stats_grid = QHBoxLayout()
+        self.str_label = QLabel("")
+        self.dex_label = QLabel("")
+        self.con_label = QLabel("")
+        self.int_label = QLabel("")
+        self.wis_label = QLabel("")
+        self.cha_label = QLabel("")
+        for label in [self.str_label, self.dex_label, self.con_label, self.int_label, self.wis_label, self.cha_label]:
+             self.stats_grid.addWidget(label)
+        self.stat_block_layout.addLayout(self.stats_grid)
+
+        self.stat_block_layout.addWidget(QFrame(frameShape=QFrame.HLine))
+        
+        self.skills_label = QLabel("")
+        self.senses_label = QLabel("")
+        self.languages_label = QLabel("")
+        self.cr_label = QLabel("")
+        self.xp_label = QLabel("") # <-- ADDED XP LABEL
+        for label in [self.skills_label, self.senses_label, self.languages_label, self.cr_label, self.xp_label]:
+             self.stat_block_layout.addWidget(label)
+
+        self.stat_block_layout.addWidget(QFrame(frameShape=QFrame.HLine))
+        
+        self.traits_layout = QVBoxLayout()
+        self.stat_block_layout.addLayout(self.traits_layout)
+        
+        self.actions_layout = QVBoxLayout()
+        self.stat_block_layout.addLayout(self.actions_layout)
+        
+        self.legendary_actions_layout = QVBoxLayout()
+        self.stat_block_layout.addLayout(self.legendary_actions_layout)
+        
+        self.description_label = QLabel("")
+        self.description_label.setWordWrap(True)
+        self.stat_block_layout.addWidget(self.description_label)
+
+        self.stat_block_layout.addStretch() # Push content to top
+
+        scroll_area.setWidget(self.stat_block_widget)
+        content_layout.addWidget(scroll_area, stretch=2) # Stat block area takes 2/3 space
 
         main_layout.addLayout(content_layout)
 
@@ -209,7 +318,7 @@ class MonsterPanel(BasePanel):
         """Display the selected monster's stat block and update button states."""
         if not current:
             self.current_monster = None
-            self.stat_block_display.clear()
+            self._clear_monster_details()
             self._update_button_states()
             return
 
@@ -233,131 +342,166 @@ class MonsterPanel(BasePanel):
                 self.current_monster = self.db_manager.get_monster_by_id(monster_id, is_custom)
                 if not self.current_monster:
                      logger.error(f"Failed to fetch monster ID {monster_id} from DB.")
-                     self.stat_block_display.setHtml("<p style='color: red;'>Error: Could not load monster details.</p>")
+                     self._clear_monster_details()
                      self.current_monster = None # Ensure it's None if fetch failed
                      self._update_button_states()
                      return
 
-            # Format stat block using the Monster object
-            html = self._format_monster_html(self.current_monster)
-            self.stat_block_display.setHtml(html)
+            # Format stat block using the new display method
+            self._display_monster_details(self.current_monster)
 
         except Exception as e:
             logger.error(f"Error displaying monster details: {e}", exc_info=True)
-            self.stat_block_display.setHtml(f"<p style='color: red;'>Error displaying monster: {e}</p>")
+            self._clear_monster_details() # Clear display on error
+            QMessageBox.critical(self, "Display Error", f"Error displaying monster: {e}")
             self.current_monster = None # Clear current monster on error
 
         finally:
             self._update_button_states()
 
-    def _format_monster_html(self, monster: Monster) -> str:
-        """Generates an HTML representation of the monster stat block."""
+    def _display_monster_details(self, monster: Optional[Monster]):
+        """Populate the UI labels with the details of the given monster."""
         if not monster:
-            return ""
-
-        # Helper to get modifier as integer
-        def get_mod_int(score):
-            return (score - 10) // 2
+            self._clear_monster_details()
+            return
 
         # Helper to get modifier as string (with sign)
         def get_mod_str(score):
-            mod = get_mod_int(score)
+            mod = (score - 10) // 2
             return f"+{mod}" if mod >= 0 else str(mod)
 
-        # Start HTML
-        html = f"""
-        <div style='font-family: sans-serif; padding: 5px;'>
-            <h2 style='margin-bottom: 2px;'>{monster.name}</h2>
-            <p style='margin-top: 0px; font-style: italic;'>{monster.size} {monster.type}, {monster.alignment}</p>
-            <hr>
-            <p><b>Armor Class</b> {monster.armor_class}</p>
-            <p><b>Hit Points</b> {monster.hit_points}</p>
-            <p><b>Speed</b> {monster.speed}</p>
-            <hr>
-            <table width='100%' style='text-align: center;'>
-                <tr><th>STR</th><th>DEX</th><th>CON</th><th>INT</th><th>WIS</th><th>CHA</th></tr>
-                <tr>
-                    <td>{monster.strength} ({get_mod_str(monster.strength)})</td>
-                    <td>{monster.dexterity} ({get_mod_str(monster.dexterity)})</td>
-                    <td>{monster.constitution} ({get_mod_str(monster.constitution)})</td>
-                    <td>{monster.intelligence} ({get_mod_str(monster.intelligence)})</td>
-                    <td>{monster.wisdom} ({get_mod_str(monster.wisdom)})</td>
-                    <td>{monster.charisma} ({get_mod_str(monster.charisma)})</td>
-                </tr>
-            </table>
-            <hr>
-        """
+        self.name_label.setText(monster.name)
+        self.meta_label.setText(f"{monster.size} {monster.type}, {monster.alignment}")
+        self.ac_label.setText(f"<b>Armor Class</b> {monster.armor_class}")
+        self.hp_label.setText(f"<b>Hit Points</b> {monster.hit_points}")
+        self.speed_label.setText(f"<b>Speed</b> {monster.speed}")
+
+        # Stats
+        self.str_label.setText(f"<b>STR</b><br>{monster.strength} ({get_mod_str(monster.strength)})")
+        self.dex_label.setText(f"<b>DEX</b><br>{monster.dexterity} ({get_mod_str(monster.dexterity)})")
+        self.con_label.setText(f"<b>CON</b><br>{monster.constitution} ({get_mod_str(monster.constitution)})")
+        self.int_label.setText(f"<b>INT</b><br>{monster.intelligence} ({get_mod_str(monster.intelligence)})")
+        self.wis_label.setText(f"<b>WIS</b><br>{monster.wisdom} ({get_mod_str(monster.wisdom)})")
+        self.cha_label.setText(f"<b>CHA</b><br>{monster.charisma} ({get_mod_str(monster.charisma)})")
 
         # Skills
         if monster.skills:
-            skills_str = ", ".join([f"{s.name} {s.modifier:+}" for s in monster.skills]) # Use sign for modifier
-            html += f"<p><b>Skills</b> {skills_str}</p>"
+            skills_str = ", ".join([f"{s.name} {s.modifier:+}" for s in monster.skills])
+            self.skills_label.setText(f"<b>Skills</b> {skills_str}")
+            self.skills_label.setVisible(True)
+        else:
+            self.skills_label.setVisible(False)
 
-        # Senses
+        # Senses (including passive perception calculation)
         senses_list = [f"{s.name} {s.range}" for s in monster.senses]
-        # Calculate passive perception using integer modifier
-        wis_mod_int = get_mod_int(monster.wisdom)
+        wis_mod_int = (monster.wisdom - 10) // 2
         passive_perception = 10 + wis_mod_int
         perception_skill = next((s for s in monster.skills if s.name.lower() == 'perception'), None)
         if perception_skill:
-             # If perception skill exists, passive perception uses the skill's full modifier value
-             # (which includes proficiency bonus if proficient)
-             # Assuming modifier is stored correctly as int
              passive_perception = 10 + perception_skill.modifier
-
-        # Add passive perception if not already in senses list
-        # Check based on name to avoid duplicates if LLM provided it
         if not any("passive perception" in s.name.lower() for s in monster.senses):
              senses_list.append(f"passive Perception {passive_perception}")
-
+             
         if senses_list:
-             html += f"<p><b>Senses</b> {', '.join(senses_list)}</p>"
+            self.senses_label.setText(f"<b>Senses</b> {', '.join(senses_list)}")
+            self.senses_label.setVisible(True)
+        else:
+            self.senses_label.setVisible(False)
 
+        # Languages
         if monster.languages:
-            html += f"<p><b>Languages</b> {monster.languages}</p>"
+            self.languages_label.setText(f"<b>Languages</b> {monster.languages}")
+            self.languages_label.setVisible(True)
+        else:
+            self.languages_label.setVisible(False)
 
+        # Challenge Rating and XP
         if monster.challenge_rating:
-             # TODO: Add XP calculation based on CR?
-             html += f"<p><b>Challenge</b> {monster.challenge_rating}</p>" # Add XP later if needed
+            xp = get_xp_for_cr(monster.challenge_rating)
+            self.cr_label.setText(f"<b>Challenge</b> {monster.challenge_rating}")
+            self.xp_label.setText(f"<b>XP</b> {xp:,}") # Add comma formatting
+            self.cr_label.setVisible(True)
+            self.xp_label.setVisible(True)
+        else:
+            self.cr_label.setVisible(False)
+            self.xp_label.setVisible(False)
 
-        html += "<hr>"
+        # Clear previous dynamic content (Traits, Actions, etc.)
+        self._clear_layout(self.traits_layout)
+        self._clear_layout(self.actions_layout)
+        self._clear_layout(self.legendary_actions_layout)
 
         # Traits
         if monster.traits:
+            self.traits_layout.addWidget(QLabel("<b>Traits</b>")) # Add header
             for trait in monster.traits:
-                html += f"<p><b><i>{trait.name}.</i></b> {trait.description}</p>"
+                label = QLabel(f"<b><i>{trait.name}.</i></b> {trait.description}")
+                label.setWordWrap(True)
+                self.traits_layout.addWidget(label)
 
         # Actions
         if monster.actions:
-            html += "<h3 style='margin-bottom: 2px;'>Actions</h3>"
+            self.actions_layout.addWidget(QLabel("<h3>Actions</h3>")) # Use h3 style
             for action in monster.actions:
-                html += f"<p><b><i>{action.name}.</i></b> {action.description}</p>"
+                label = QLabel(f"<b><i>{action.name}.</i></b> {action.description}")
+                label.setWordWrap(True)
+                self.actions_layout.addWidget(label)
 
         # Legendary Actions
         if monster.legendary_actions:
-            html += "<h3 style='margin-bottom: 2px;'>Legendary Actions</h3>"
-            # Optional: Add intro text about number of actions
-            # html += "<p>The monster can take X legendary actions...</p>"
+            self.legendary_actions_layout.addWidget(QLabel("<h3>Legendary Actions</h3>"))
+            # Optional: Add intro text
+            # self.legendary_actions_layout.addWidget(QLabel("The monster can take X legendary actions..."))
             for la in monster.legendary_actions:
-                 cost_text = f"(Costs {la.cost} Actions)" if la.cost > 1 else ""
-                 html += f"<p><b><i>{la.name} {cost_text}.</i></b> {la.description}</p>"
+                cost_text = f" (Costs {la.cost} Actions)" if la.cost > 1 else ""
+                label = QLabel(f"<b><i>{la.name}{cost_text}.</i></b> {la.description}")
+                label.setWordWrap(True)
+                self.legendary_actions_layout.addWidget(label)
 
         # Description / Lore
         if monster.description:
-             html += "<hr><h3>Description</h3>"
-             html += f"<p>{monster.description}</p>"
+            self.description_label.setText(f"<hr><h3>Description</h3>{monster.description}")
+            self.description_label.setVisible(True)
+        else:
+            self.description_label.setVisible(False)
 
-        # Source and Type
-        html += "<hr>"
-        source_text = f"Source: {monster.source}"
-        if monster.is_custom:
-            source_text += " (Custom)"
-            if monster.updated_at:
-                source_text += f" | Updated: {monster.updated_at[:16]}" # Shorten timestamp
-        html += f"<p style='font-size: small; color: grey;'>{source_text}</p>"
+    def _clear_monster_details(self):
+        """Clear all the labels in the stat block display."""
+        self.name_label.clear()
+        self.meta_label.clear()
+        self.ac_label.clear()
+        self.hp_label.clear()
+        self.speed_label.clear()
+        self.str_label.clear()
+        self.dex_label.clear()
+        self.con_label.clear()
+        self.int_label.clear()
+        self.wis_label.clear()
+        self.cha_label.clear()
+        self.skills_label.clear()
+        self.senses_label.clear()
+        self.languages_label.clear()
+        self.cr_label.clear()
+        self.xp_label.clear() # Clear XP label
+        self.description_label.clear()
+        # Clear dynamic layouts
+        self._clear_layout(self.traits_layout)
+        self._clear_layout(self.actions_layout)
+        self._clear_layout(self.legendary_actions_layout)
 
-        html += "</div>"
-        return html
+    def _clear_layout(self, layout):
+        """Remove all widgets from a layout."""
+        if layout is not None:
+            while layout.count():
+                item = layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+                else:
+                    # If item is another layout, clear it recursively
+                    sub_layout = item.layout()
+                    if sub_layout is not None:
+                         self._clear_layout(sub_layout)
 
     def _filter_monsters(self):
         """Filter the monster list based on search text and combo boxes."""
@@ -367,7 +511,7 @@ class MonsterPanel(BasePanel):
         if self.current_monster:
              items = self.monster_list.findItems(self.current_monster.name, Qt.MatchExactly)
              if not items:
-                  self.stat_block_display.clear()
+                  self._clear_monster_details()
                   self.current_monster = None
                   self._update_button_states()
 
@@ -471,7 +615,7 @@ class MonsterPanel(BasePanel):
                         self.monsters = [m for m in self.monsters if not (m.id == monster_id and m.is_custom)]
                         # Clear selection and repopulate list
                         self.current_monster = None
-                        self.stat_block_display.clear()
+                        self._clear_monster_details()
                         self._populate_monster_list()
                         self._update_button_states()
                         QMessageBox.information(self, "Deleted", f"Monster '{monster_name}' deleted.")
