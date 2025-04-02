@@ -353,6 +353,24 @@ class SessionNotesPanel(BasePanel):
         for note in self.filtered_notes:
             item = QListWidgetItem(note['title'])
             item.setData(Qt.UserRole, note['id'])
+            
+            # Add timestamp tooltip
+            created_date = QDateTime.fromString(note['created_at'], Qt.ISODate)
+            updated_date = QDateTime.fromString(note['updated_at'], Qt.ISODate)
+            
+            created_str = created_date.toString("yyyy-MM-dd hh:mm:ss")
+            updated_str = updated_date.toString("yyyy-MM-dd hh:mm:ss")
+            
+            # Format the tooltip with both timestamps
+            tooltip = f"Created: {created_str}\nUpdated: {updated_str}"
+            
+            # Add tags to tooltip if available
+            if note.get('tags'):
+                tags = note['tags'].split(',')
+                tooltip += f"\nTags: {', '.join(tags)}"
+                
+            item.setToolTip(tooltip)
+            
             self.notes_list.addItem(item)
     
     def _update_tag_list(self):

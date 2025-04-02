@@ -161,7 +161,20 @@ class EncounterGeneratorPanel(BasePanel):
         }
 
     def _create_encounter_prompt(self, params: dict) -> str:
-        # Basic prompt structure - needs refinement
+        # Get a list of available monsters from the database to hint to the LLM
+        monster_names = []
+        try:
+            # Get common monster names from the database (first 20 only to keep prompt size manageable)
+            monster_results = self.db_manager.get_all_monster_names(include_custom=False, include_standard=True)
+            if monster_results:
+                # Limit to 20 common monsters to avoid excessively long prompts
+                common_monsters = [m['name'] for m in monster_results[:20]]
+                monster_names = common_monsters
+                logger.debug(f"Retrieved {len(monster_names)} standard monster names for prompt")
+        except Exception as e:
+            logger.error(f"Error retrieving monster names for prompt: {e}")
+        
+        # Basic prompt structure
         prompt = f"""Generate a D&D 5e encounter based on these parameters. Respond ONLY with a JSON object.
 
 Parameters:
@@ -178,12 +191,28 @@ Instructions:
 4. Suggest 1-2 simple tactical considerations for the monsters.
 5. Format the entire response as a single JSON object with keys: 'monsters' (list of strings), 'narrative' (string), 'tactics' (string).
 
+IMPORTANT: 
+- Please use standard D&D 5e monsters when possible.
+- Prefer common/standard monsters rather than rare or exotic ones.
+- Use exact official monster names from the Monster Manual and other official sources.
+"""
+
+        # Add monster suggestions if available
+        if monster_names:
+            prompt += f"""
+Available Monsters (existing in database):
+{', '.join(monster_names)}
+
+You can use monsters from this list or other standard D&D 5e monsters. Using monsters from this list will be more efficient.
+"""
+
+        prompt += """
 Example JSON:
-{{
+{
   "monsters": ["Kobold", "Kobold", "Winged Kobold"],
   "narrative": "As the party enters the dusty chamber, they hear scrabbling sounds from behind stalagmites. Three small figures emerge, brandishing crude spears.",
   "tactics": "The Kobolds use pack tactics if possible. The Winged Kobold stays airborne, dropping rocks."
-}}
+}
 
 **IMPORTANT: Output ONLY the JSON object. No extra text before or after.**
 """
@@ -274,13 +303,33 @@ Example JSON:
                     f"The response is missing these required fields: {', '.join(missing_keys)}.\n"
                     "The encounter may be incomplete.")
             
+            # Pre-check monster existence as soon as we have the encounter data
+            monsters_list = parsed_data.get("monsters", [])
+            if monsters_list:
+                # Create a status list showing what monsters already exist
+                monster_status = []
+                for name in monsters_list:
+                    monster_exists = self.db_manager.get_monster_by_name(name) is not None
+                    monster_status.append(f"{'✓' if monster_exists else '⊕'} {name}")
+                
+                # Add the status to parsed_data for display
+                parsed_data["monster_status"] = monster_status
+            
             self.current_encounter_data = parsed_data  # Store for adding to combat
             
             # Display formatted results
             display_text = f"## Encounter Details\n\n"
             display_text += f"**Narrative:**\n{parsed_data.get('narrative', 'N/A')}\n\n"
-            display_text += f"**Monsters:**\n- {'\n- '.join(parsed_data.get('monsters', []))}\n\n"
-            display_text += f"**Tactics:**\n{parsed_data.get('tactics', 'N/A')}"
+            display_text += "**Monsters:**\n"
+            
+            # If we have status info, use it for nicer display
+            if "monster_status" in parsed_data:
+                for status in parsed_data["monster_status"]:
+                    display_text += f"- {status} {'(in database)' if status.startswith('✓') else '(will be generated)'}\n"
+            else:
+                display_text += f"- {'\n- '.join(parsed_data.get('monsters', []))}\n"
+            
+            display_text += f"\n**Tactics:**\n{parsed_data.get('tactics', 'N/A')}"
             
             self.results_display.setPlainText(display_text)
             self.add_to_combat_button.setEnabled(True)
