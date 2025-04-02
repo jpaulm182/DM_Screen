@@ -918,92 +918,123 @@ class CombatTrackerPanel(BasePanel):
     
     def _check_concentration(self, row, damage):
         """Check if concentration is maintained after taking damage"""
-        # Current implementation...
-        
-        # After rolling concentration check
-        if row < self.initiative_table.rowCount():
-            name_item = self.initiative_table.item(row, 0)
-            conc_item = self.initiative_table.item(row, 5)
-            if name_item and conc_item:
-                name = name_item.text()
-                dc = max(10, damage // 2)
-                roll = random.randint(1, 20)
-                success = roll >= dc
+        conc_item = self.initiative_table.item(row, 5)
+        if conc_item and conc_item.checkState() == Qt.Checked:
+            dc = max(10, damage // 2)
+            name = self.initiative_table.item(row, 0).text()
+            
+            # Roll the concentration check
+            roll = random.randint(1, 20)
+            success = roll >= dc
+            
+            # Log concentration check
+            self._log_combat_action(
+                "Status Effect", 
+                name, 
+                "rolled concentration check", 
+                result=f"DC {dc}, Roll: {roll}, {'Success' if success else 'Failure'}"
+            )
+            
+            # If concentration check failed
+            if not success:
+                conc_item.setCheckState(Qt.Unchecked)
+                self.concentrating.discard(row)
                 
-                # Log concentration check
+                # Log concentration lost
                 self._log_combat_action(
                     "Status Effect", 
                     name, 
-                    "rolled concentration check", 
-                    result=f"DC {dc}, Roll: {roll}, {'Success' if success else 'Failure'}"
+                    "lost concentration", 
+                    result="Failed check"
                 )
                 
-                # If concentration check failed
-                if not success and conc_item.checkState() == Qt.Checked:
-                    conc_item.setCheckState(Qt.Unchecked)
-                    self.concentrating.discard(row)
-                    
-                    # Log concentration lost
-                    self._log_combat_action(
-                        "Status Effect", 
-                        name, 
-                        "lost concentration", 
-                        result="Failed check"
-                    )
-        
-        # Continue with existing implementation...
+                # Show message
+                QMessageBox.information(
+                    self,
+                    "Concentration Lost",
+                    f"{name} failed DC {dc} concentration check with roll of {roll}."
+                )
+            else:
+                # Show message for successful check
+                QMessageBox.information(
+                    self,
+                    "Concentration Maintained",
+                    f"{name} passed DC {dc} concentration check with roll of {roll}."
+                )
     
     def _manage_death_saves(self, row):
         """Manage death saving throws for a character"""
-        # Current implementation...
+        current_saves = self.death_saves.get(row, {"successes": 0, "failures": 0})
+        dialog = DeathSavesDialog(self, current_saves)
         
-        # After handling death saves
-        if row < self.initiative_table.rowCount():
+        if dialog.exec_():
+            dialog_result = dialog.get_saves()
+            self.death_saves[row] = dialog_result
+            saves = self.death_saves[row]
+            
             name_item = self.initiative_table.item(row, 0)
             if name_item:
                 name = name_item.text()
                 
-                # Get death saves from dialog or calculation
-                if "dialog_result" in locals():  # If using a dialog
-                    death_saves = dialog_result
+                # Log death save changes
+                if saves:
+                    successes = saves.get("successes", 0)
+                    failures = saves.get("failures", 0)
                     
-                    # Log death save changes
-                    if death_saves and hasattr(death_saves, 'get'):
-                        successes = death_saves.get("successes", 0)
-                        failures = death_saves.get("failures", 0)
+                    if successes >= 3:
+                        self._log_combat_action(
+                            "Death Save", 
+                            name, 
+                            "stabilized", 
+                            result=f"{successes} successes"
+                        )
+                        QMessageBox.information(self, "Stabilized", 
+                            f"{name} has stabilized!")
+                        self.death_saves.pop(row)
                         
-                        if successes >= 3:
-                            self._log_combat_action(
-                                "Death Save", 
-                                name, 
-                                "stabilized", 
-                                result=f"{successes} successes"
-                            )
-                        elif failures >= 3:
-                            self._log_combat_action(
-                                "Death Save", 
-                                name, 
-                                "failed death saves", 
-                                result=f"{failures} failures"
-                            )
-                        else:
-                            self._log_combat_action(
-                                "Death Save", 
-                                name, 
-                                "updated death saves", 
-                                result=f"{successes} successes, {failures} failures"
-                            )
-        
-        # Continue with existing implementation...
+                        # Update status to stable
+                        status_item = self.initiative_table.item(row, 4)
+                        if status_item:
+                            status_item.setText("Stable")
+                            
+                    elif failures >= 3:
+                        self._log_combat_action(
+                            "Death Save", 
+                            name, 
+                            "failed death saves", 
+                            result=f"{failures} failures"
+                        )
+                        QMessageBox.warning(self, "Death", 
+                            f"{name} has died!")
+                        self.death_saves.pop(row)
+                        
+                        # Update status to dead
+                        status_item = self.initiative_table.item(row, 4)
+                        if status_item:
+                            status_item.setText("Dead")
+                    else:
+                        self._log_combat_action(
+                            "Death Save", 
+                            name, 
+                            "updated death saves", 
+                            result=f"{successes} successes, {failures} failures"
+                        )
     
     def _set_status(self, status):
         """Apply a status condition to selected combatants"""
-        # Current implementation...
-        
-        # After setting status
+        # Get selected rows
         selected_rows = set(index.row() for index in self.initiative_table.selectedIndexes())
+        if not selected_rows:
+            return
+        
+        # Apply status to each selected row
         for row in selected_rows:
             if row < self.initiative_table.rowCount():
+                status_item = self.initiative_table.item(row, 4)
+                if status_item:
+                    status_item.setText(status)
+                
+                # Log status change if there's a name
                 name_item = self.initiative_table.item(row, 0)
                 if name_item:
                     name = name_item.text()
@@ -1016,8 +1047,6 @@ class CombatTrackerPanel(BasePanel):
                         name, 
                         status
                     )
-        
-        # Continue with existing implementation...
     
     def _round_changed(self, value):
         """Handle round number change"""
@@ -1042,19 +1071,29 @@ class CombatTrackerPanel(BasePanel):
         self.timer_label.setText(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
     
     def _roll_initiative(self):
-        """Roll initiative for all combatants"""
-        # Current implementation...
+        """Roll initiative for the current combatant"""
+        from random import randint
+        modifier = self.init_mod_input.value()
+        roll = randint(1, 20)
+        total = roll + modifier
+        self.initiative_input.setValue(total)
         
-        # After rolling initiative for each combatant
-        for row in range(self.initiative_table.rowCount()):
-            name_item = self.initiative_table.item(row, 0)
-            init_item = self.initiative_table.item(row, 1)
-            if name_item and init_item:
-                name = name_item.text()
-                init_roll = int(init_item.text() or "0")
-                self._log_combat_action("Initiative", name, "rolled initiative", result=f"{init_roll}")
+        # Show roll details
+        QMessageBox.information(
+            self,
+            "Initiative Roll",
+            f"Roll: {roll}\nModifier: {modifier:+d}\nTotal: {total}"
+        )
         
-        # Continue with existing implementation...
+        # Log the initiative roll if a name is entered
+        name = self.name_input.text()
+        if name:
+            self._log_combat_action(
+                "Initiative", 
+                name, 
+                "rolled initiative", 
+                result=f"{roll} + {modifier} = {total}"
+            )
     
     def _update_game_time(self):
         """Update the in-game time display"""
