@@ -582,6 +582,9 @@ class MonsterPanel(BasePanel):
                     self.current_monster = edited_monster
                     self._add_or_update_monster_in_list(edited_monster)
                     self._populate_monster_list()
+                    # We don't need to emit the signal here as we're editing an existing monster
+                    # self.custom_monster_created.emit(edited_monster.name) - Remove or comment this line
+                    logger.info(f"Custom monster '{edited_monster.name}' updated.")
                     # ... reselect edited monster ...
                     found = False
                     for i in range(self.monster_list.count()):

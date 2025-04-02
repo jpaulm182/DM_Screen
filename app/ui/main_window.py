@@ -999,34 +999,11 @@ class MainWindow(QMainWindow):
         """Connect signals between different panels."""
         print("Attempting to connect panel signals...") # Debug
         try:
-            # Get panel instances via the dock widget's widget()
-            monster_dock = self.panel_manager.panels.get("monster")
-            notes_dock = self.panel_manager.panels.get("session_notes")
-
-            monster_panel = monster_dock.widget() if monster_dock else None
-            notes_panel = notes_dock.widget() if notes_dock else None
-
-            if isinstance(monster_panel, MonsterPanel) and isinstance(notes_panel, SessionNotesPanel):
-                # Connect MonsterPanel's custom_monster_created signal to SessionNotesPanel's slot
-                monster_panel.custom_monster_created.connect(notes_panel.add_monster_creation_note)
-                print("Connected MonsterPanel.custom_monster_created to SessionNotesPanel.add_monster_creation_note") # Debug
-            else:
-                if not monster_panel or not isinstance(monster_panel, MonsterPanel):
-                    print(f"Warning: Could not find or incorrect type for MonsterPanel (dock found: {monster_dock is not None}, type: {type(monster_panel)}). Signal not connected.")
-                if not notes_panel or not isinstance(notes_panel, SessionNotesPanel):
-                     print(f"Warning: Could not find or incorrect type for SessionNotesPanel (dock found: {notes_dock is not None}, type: {type(notes_panel)}). Signal not connected.")
-
-            # --- Connect other signals as needed --- 
-            # Example: Connect Add To Combat from Monster Panel to Combat Tracker
-            # combat_tracker_dock = self.panel_manager.panels.get("combat_tracker")
-            # combat_tracker_panel = combat_tracker_dock.widget() if combat_tracker_dock else None
-            # if isinstance(monster_panel, MonsterPanel) and combat_tracker_panel:
-            #    # Assuming CombatTrackerPanel has a slot like `add_combatant(dict)`
-            #    if hasattr(combat_tracker_panel, 'add_monster'): # Check correct slot name
-            #        monster_panel.add_to_combat.connect(combat_tracker_panel.add_monster)
-            #        print("Connected MonsterPanel.add_to_combat to CombatTrackerPanel.add_monster")
-            #    else:
-            #        print("Warning: CombatTrackerPanel does not have 'add_monster' slot.")
+            # The connections below are now handled by PanelManager._connect_panel_signals
+            # and we're avoiding duplicate connections that would cause duplicate notes
+            
+            # --- Connect other signals that aren't handled by PanelManager here --- 
+            pass  # Currently no additional connections needed here
 
         except Exception as e:
             print(f"Error connecting panel signals: {e}")
