@@ -27,6 +27,7 @@ from app.ui.panels.llm_panel import LLMPanel  # Import the new LLM panel
 from app.ui.panels.npc_generator_panel import NPCGeneratorPanel  # Import the NPC Generator panel
 from app.ui.panels.rules_clarification_panel import RulesClarificationPanel  # Import the Rules Clarification panel
 from app.ui.panels.location_generator_panel import LocationGeneratorPanel  # Import the Location Generator panel
+from app.ui.panels.treasure_generator_panel import TreasureGeneratorPanel # Import Treasure Generator
 
 
 class PanelManager(QObject):
@@ -66,6 +67,7 @@ class PanelManager(QObject):
         self.panels["npc_generator"] = self._create_panel(NPCGeneratorPanel, "npc_generator")  # Add the NPC Generator panel
         self.panels["rules_clarification"] = self._create_panel(RulesClarificationPanel, "rules_clarification")  # Add the Rules Clarification panel
         self.panels["location_generator"] = self._create_panel(LocationGeneratorPanel, "location_generator")  # Add the Location Generator panel
+        self.panels["treasure_generator"] = self._create_panel(TreasureGeneratorPanel, "treasure_generator") # Initialize Treasure Generator
         
         # Organize panels by category
         self._organize_panels_by_category()
@@ -296,6 +298,7 @@ class PanelManager(QObject):
             "npc_generator": NPCGeneratorPanel,  # Add NPC Generator panel to the map
             "rules_clarification": RulesClarificationPanel,  # Add Rules Clarification panel to the map
             "location_generator": LocationGeneratorPanel,  # Add Location Generator panel to the map
+            "treasure_generator": TreasureGeneratorPanel # Add Treasure Generator panel to the map
         }
         
         if panel_type in self.panels and self.panels[panel_type]:

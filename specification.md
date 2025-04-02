@@ -31,7 +31,7 @@ LLM Integration
         * ✅ Monster stat block extraction and formatting
         * ✅ Spell lookup and interpretation
         * 🔜 Location-appropriate random encounter generation
-        * 🔜 Custom magic item creation with balanced mechanics
+        * 🔄 Custom magic item creation with balanced mechanics
         * 🔜 Interactive tavern and shop scenes with dynamic NPCs
         * 🔄 Session prep assistance with encounter and location planning
         * 🔄 Fast combat resolution with detailed narrative results
@@ -82,10 +82,10 @@ Core Features
         * 🔜 Points of interest and secrets
         * 🔜 Appropriate NPCs and encounters
         * 🔜 Environmental challenges
-    - 🔜 Treasure Generation:
-        * 🔜 Magic items with backstories and mechanics
-        * 🔜 Treasure hoards contextual to location and monsters
-        * 🔜 Balanced rewards based on party level
+    - 🔄 Treasure Generation:
+        * 🔄 Magic items with backstories and mechanics
+        * 🔄 Treasure hoards contextual to location and monsters
+        * 🔄 Balanced rewards based on party level
     - 🔜 Encounter Generation:
         * 🔜 Balanced for party composition
         * 🔜 Terrain-appropriate challenges
@@ -177,7 +177,7 @@ Next Implementation Steps:
 10. ✅ Enhance Monster panel with custom monster creation
 11. 🔄 Develop Location Generator panel for dynamic location creation
 12. 🔄 Implement combat narration and fast resolution system
-13. 🔜 Create treasure generator with balanced rewards
+13. 🔄 Create treasure generator with balanced rewards
 14. 🔜 Build encounter generator with party composition awareness
 
 Player Character Quick Reference Specification:
@@ -210,12 +210,12 @@ Location Generator Panel:
 - 🔜 Integration with encounter generator for location-appropriate encounters
 
 Treasure Generator Panel:
-- 🔜 Generate treasure hoards based on CR and party level
-- 🔜 Custom magic items with unique properties and backstories
-- 🔜 Balance treasure value against party needs and campaign economy
-- 🔜 Thematic treasure generation tied to monsters and locations
-- 🔜 Save generated items to campaign database
-- 🔜 Integration with monster panel for creature-appropriate loot
+- 🔄 Generate treasure hoards based on CR and party level
+- 🔄 Custom magic items with unique properties and backstories
+- 🔄 Balance treasure value against party needs and campaign economy
+- 🔄 Thematic treasure generation tied to monsters and locations
+- 🔄 Save generated items to campaign database
+- 🔄 Integration with monster panel for creature-appropriate loot
 
 Development Priorities
     1. ✅ LLM integration framework and core functionality
@@ -224,7 +224,7 @@ Development Priorities
     4. ✅ Monster stat block extraction and formatting
     5. 🔄 Fast combat resolution system
     6. 🔄 Location generator panel
-    7. 🔜 Treasure generator panel
+    7. 🔄 Treasure generator panel
     8. 🔄 Core reference functionality enhancements
     9. 🔄 Campaign management tools expansion
     10. 🔜 Advanced LLM generation features

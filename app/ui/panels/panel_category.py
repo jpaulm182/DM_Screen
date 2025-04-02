@@ -31,6 +31,7 @@ class PanelCategory:
         "player_character": CAMPAIGN,
         "npc_generator": CAMPAIGN,
         "location_generator": CAMPAIGN,
+        "treasure_generator": CAMPAIGN,
         "weather": UTILITY,
         "time_tracker": UTILITY
     }
