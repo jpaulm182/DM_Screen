@@ -329,7 +329,13 @@ class CombatTrackerPanel(BasePanel):
         self.next_turn_button = QPushButton("Next Combatant")
         self.next_turn_button.clicked.connect(self._next_turn)
         control_layout.addWidget(self.next_turn_button)
-        
+
+        # Add Fast Resolve button
+        self.fast_resolve_button = QPushButton("Fast Resolve")
+        self.fast_resolve_button.setToolTip("Resolve the current combat using AI (Experimental)")
+        self.fast_resolve_button.clicked.connect(self._fast_resolve_combat)
+        control_layout.addWidget(self.fast_resolve_button)
+
         # Reset Combat button
         self.reset_button = QPushButton("Reset Combat")
         self.reset_button.clicked.connect(self._reset_combat)
@@ -792,6 +798,16 @@ class CombatTrackerPanel(BasePanel):
             
             print("Combat Restarted") # Optional: Confirmation
             
+    def _fast_resolve_combat(self):
+        """(Placeholder) Use LLM to resolve the current combat encounter."""
+        # TODO: Implement logic to gather combat state, call LLM service,
+        # and update the combat tracker based on the result.
+        QMessageBox.information(
+            self, 
+            "Fast Resolve (Experimental)", 
+            "This feature is not yet implemented. It will use AI to resolve the combat."
+        )
+    
     def save_state(self):
         """Save the combat tracker state"""
         state = {

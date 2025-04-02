@@ -33,8 +33,8 @@ LLM Integration
         * 🔜 Location-appropriate random encounter generation
         * 🔜 Custom magic item creation with balanced mechanics
         * 🔜 Interactive tavern and shop scenes with dynamic NPCs
-        * 🔜 Session prep assistance with encounter and location planning
-        * 🔜 Fast combat resolution with detailed narrative results
+        * 🔄 Session prep assistance with encounter and location planning
+        * 🔄 Fast combat resolution with detailed narrative results
     - 🔄 Context-aware generation utilizing:
         * ✅ Campaign history and notes
         * ✅ Player character data and backgrounds
@@ -114,7 +114,7 @@ Core Features
     - ✅ Dice roller with custom formulas
     - ✅ Weather system with effects on gameplay
     - 🔄 LLM-powered advanced functions:
-        * 🔜 Fast combat resolution with narrative results
+        * 🔄 Fast combat resolution with narrative results
         * 🔜 Custom tables generated from text prompts
         * 🔜 Combat narration based on actions and results
 
@@ -175,8 +175,8 @@ Next Implementation Steps:
 8. ✅ Implement monster stat block extraction and formatting
 9. 🔄 Add font size adjustment for accessibility
 10. ✅ Enhance Monster panel with custom monster creation
-11. 🔜 Develop Location Generator panel for dynamic location creation
-12. 🔜 Implement combat narration and fast resolution system
+11. 🔄 Develop Location Generator panel for dynamic location creation
+12. 🔄 Implement combat narration and fast resolution system
 13. 🔜 Create treasure generator with balanced rewards
 14. 🔜 Build encounter generator with party composition awareness
 
@@ -192,13 +192,13 @@ Player Character Quick Reference Specification:
 - 🔄 LLM-generated character insights and plot elements
 
 Fast Combat Resolution System (LLM-powered):
-- 🔜 Single-click resolution of entire combat encounters
-- 🔜 Round-by-round narrative breakdown with key moments
-- 🔜 Tactical decision-making based on character/monster capabilities
-- 🔜 Resource and status effect tracking
-- 🔜 Detailed aftermath summary
-- 🔜 Options to customize resolution detail level
-- 🔜 Manual override for key decision points
+- 🔄 Single-click resolution of entire combat encounters
+- 🔄 Round-by-round narrative breakdown with key moments
+- 🔄 Tactical decision-making based on character/monster capabilities
+- 🔄 Resource and status effect tracking
+- 🔄 Detailed aftermath summary
+- 🔄 Options to customize resolution detail level
+- 🔄 Manual override for key decision points
 
 Location Generator Panel:
 - 🔜 Generate detailed locations with descriptions, NPCs, and points of interest
@@ -222,8 +222,8 @@ Development Priorities
     2. ✅ Persistent storage for generated content 
     3. ✅ Basic content generation modules (NPCs, rules clarification)
     4. ✅ Monster stat block extraction and formatting
-    5. 🔜 Fast combat resolution system
-    6. 🔜 Location generator panel
+    5. 🔄 Fast combat resolution system
+    6. 🔄 Location generator panel
     7. 🔜 Treasure generator panel
     8. 🔄 Core reference functionality enhancements
     9. 🔄 Campaign management tools expansion
