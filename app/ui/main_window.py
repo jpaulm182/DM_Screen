@@ -7,7 +7,7 @@ Implements the main UI window with dynamic layout system and panel management.
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QDockWidget, QToolBar, QMenu, QMenuBar,
-    QStatusBar, QFileDialog, QMessageBox, QLabel, QInputDialog, QComboBox
+    QStatusBar, QFileDialog, QMessageBox, QLabel, QInputDialog, QComboBox, QSizePolicy
 )
 from PySide6.QtCore import Qt, QSize, QTimer, QByteArray
 from PySide6.QtGui import QIcon, QAction, QKeySequence
@@ -284,32 +284,158 @@ class MainWindow(QMainWindow):
                 action.triggered.connect(lambda checked=False, n=name: self._load_preset_layout(n))
     
     def _create_toolbar(self):
-        """Create the main toolbar"""
+        """Create the main toolbar with categorized quick select buttons"""
         toolbar = QToolBar("Main Toolbar")
         toolbar.setObjectName("MainToolbar")  # Set object name to fix state saving
         toolbar.setMovable(False)
         toolbar.setIconSize(QSize(24, 24))
         self.addToolBar(toolbar)
         
-        # Add quick access buttons for all panels
-        panel_keys = list(self.panel_actions.keys())  # Copy keys to avoid modifying during iteration
-        for panel_id in panel_keys:
-            action = self.panel_actions[panel_id]
-            panel_button = toolbar.addAction(panel_id.replace('_', ' ').title())
-            panel_button.setToolTip(f"Toggle {panel_id.replace('_', ' ').title()} Panel")
-            panel_button.triggered.connect(lambda checked=False, p=panel_id: self.panel_manager.toggle_panel(p))
-            self.panel_actions[f"{panel_id}_toolbar"] = panel_button
+        # Define panel descriptions and keyboard shortcuts for tooltips
+        panel_info = {
+            # Combat Category
+            "combat_tracker": {
+                "description": "Track initiative, hit points, and conditions for combat encounters",
+                "shortcut": "Ctrl+1"
+            },
+            "dice_roller": {
+                "description": "Roll various dice combinations with modifiers",
+                "shortcut": "Ctrl+2"
+            },
+            # Reference Category
+            "monster": {
+                "description": "Browse, search, and manage monster stat blocks",
+                "shortcut": "Ctrl+3"
+            },
+            "spell_reference": {
+                "description": "Look up spell details, levels, and components",
+                "shortcut": "Ctrl+4"
+            },
+            "conditions": {
+                "description": "Reference condition effects and apply them to combatants",
+                "shortcut": "Ctrl+5"
+            },
+            "rules_reference": {
+                "description": "Quick access to game rules and mechanics",
+                "shortcut": "Ctrl+6"
+            },
+            # Campaign Category
+            "session_notes": {
+                "description": "Create, edit and organize campaign notes",
+                "shortcut": "Ctrl+7"
+            },
+            "player_character": {
+                "description": "Manage player character information and stats",
+                "shortcut": "Ctrl+8"
+            },
+            "encounter_generator": {
+                "description": "Generate balanced encounters based on party level",
+                "shortcut": "Ctrl+9"
+            },
+            "npc_generator": {
+                "description": "Create NPCs with personalities, goals, and backstories",
+                "shortcut": ""
+            },
+            "location_generator": {
+                "description": "Generate detailed locations, buildings, and environments",
+                "shortcut": ""
+            },
+            "treasure_generator": {
+                "description": "Create appropriate treasure for encounters and hoards",
+                "shortcut": ""
+            },
+            # Utility Category
+            "llm": {
+                "description": "AI assistant for creative ideas and game rulings",
+                "shortcut": "Ctrl+0"
+            },
+            "weather": {
+                "description": "Track and generate weather conditions",
+                "shortcut": ""
+            },
+            "time_tracker": {
+                "description": "Keep track of in-game time, rest periods, and events",
+                "shortcut": ""
+            },
+            "rules_clarification": {
+                "description": "Get AI assistance for rules explanations and interpretations",
+                "shortcut": ""
+            }
+        }
         
-        # Update panel action states to reflect current visibility
-        self._update_panel_action_states()
+        # Define panel categories and their order
+        panel_categories = [
+            {
+                "title": "Combat",
+                "panels": ["combat_tracker", "dice_roller"]
+            },
+            {
+                "title": "Reference",
+                "panels": ["monster", "spell_reference", "conditions", "rules_reference"]
+            },
+            {
+                "title": "Campaign",
+                "panels": ["session_notes", "player_character", "encounter_generator", "npc_generator", "location_generator", "treasure_generator"]
+            },
+            {
+                "title": "Utility",
+                "panels": ["llm", "weather", "time_tracker", "rules_clarification"]
+            }
+        ]
+        
+        # Create buttons for each category
+        for category in panel_categories:
+            # Add category label
+            category_label = QLabel(f"<b>{category['title']}</b>:")
+            category_label.setStyleSheet("margin-left: 10px; margin-right: 5px;")
+            toolbar.addWidget(category_label)
+            
+            # Add buttons for panels in this category
+            for panel_id in category['panels']:
+                if panel_id in self.panel_actions:
+                    action = self.panel_actions[panel_id]
+                    panel_name = panel_id.replace('_', ' ').title()
+                    
+                    # Create the button with a more descriptive name
+                    panel_button = toolbar.addAction(panel_name)
+                    
+                    # Create detailed tooltip with shortcut info if available
+                    tooltip = panel_info.get(panel_id, {})
+                    desc = tooltip.get("description", f"Toggle {panel_name} Panel")
+                    shortcut = tooltip.get("shortcut", "")
+                    tooltip_text = f"{desc}"
+                    if shortcut:
+                        tooltip_text += f" ({shortcut})"
+                        
+                        # Set the actual keyboard shortcut
+                        panel_button.setShortcut(shortcut)
+                    
+                    panel_button.setToolTip(tooltip_text)
+                    panel_button.triggered.connect(lambda checked=False, p=panel_id: self.panel_manager.toggle_panel(p))
+                    
+                    # Store the action for state updates
+                    self.panel_actions[f"{panel_id}_toolbar"] = panel_button
+            
+            # Add separator between categories (except after the last one)
+            if category != panel_categories[-1]:
+                toolbar.addSeparator()
+        
+        # Add spacer between panel buttons and layout selector
+        spacer_label = QLabel()
+        spacer_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        toolbar.addWidget(spacer_label)
         
         # Initialize layout selector as a QMenu
         self.layout_selector = QMenu("Layouts")
         layout_button = toolbar.addAction("Select Layout")
+        layout_button.setToolTip("Choose, save, or manage panel layouts")
         layout_button.setMenu(self.layout_selector)
 
         # Populate layout selector
         self._update_layout_selector()
+        
+        # Update panel action states to reflect current visibility
+        self._update_panel_action_states()
     
     def _update_layout_selector(self):
         """Update the layout selector menu with available layouts"""
@@ -380,14 +506,14 @@ class MainWindow(QMainWindow):
         self._style_toolbar_buttons()
     
     def _style_toolbar_buttons(self):
-        """Apply styling to toolbar buttons based on panel states"""
+        """Apply styling to toolbar buttons based on panel states and categories"""
         toolbar = self.findChild(QToolBar)
         if not toolbar:
             return
             
         # Set appropriate styling for each action in the toolbar
         for action in toolbar.actions():
-            if not action.text():  # Skip separators
+            if not action.text() or action.text() == "Select Layout":  # Skip separators and layout selector
                 continue
                 
             # Find the corresponding panel if any
@@ -397,28 +523,56 @@ class MainWindow(QMainWindow):
                     panel_id = key.split('_toolbar')[0] if '_toolbar' in key else key
                     break
             
-            if panel_id and self.panel_manager.is_panel_visible(panel_id):
-                # Use a background color from the panel's category
+            if panel_id:
+                # Get the panel's category
                 category = PanelCategory.get_category(panel_id)
                 colors = PanelCategory.get_colors(panel_id, self.current_theme)
                 
-                if colors:
-                    # Style the active button
-                    toolbar_btn = toolbar.widgetForAction(action)
-                    if toolbar_btn:
-                        toolbar_btn.setStyleSheet(f"""
-                            background-color: {colors['title_bg'].name()};
-                            color: {colors['title_text'].name()};
-                            font-weight: bold;
-                            border: 1px solid white;
-                            border-radius: 3px;
-                            padding: 4px;
-                        """)
-            else:
-                # Reset to default style
                 toolbar_btn = toolbar.widgetForAction(action)
-                if toolbar_btn:
-                    toolbar_btn.setStyleSheet("")
+                if not toolbar_btn:
+                    continue
+                
+                is_visible = self.panel_manager.is_panel_visible(panel_id)
+                    
+                if is_visible and colors:
+                    # Style the active button
+                    toolbar_btn.setStyleSheet(f"""
+                        background-color: {colors['title_bg'].name()};
+                        color: {colors['title_text'].name()};
+                        font-weight: bold;
+                        border: 1px solid {colors['border'].name()};
+                        border-radius: 4px;
+                        padding: 4px 8px;
+                        margin: 2px 3px;
+                    """)
+                else:
+                    # Inactive button style - lighter and less prominent
+                    light_text = "#E0E0E0" if self.current_theme == "dark" else "#505050"
+                    light_bg = "#424242" if self.current_theme == "dark" else "#F0F0F0"
+                    border_color = "#555555" if self.current_theme == "dark" else "#CCCCCC"
+                    
+                    # Apply category hint color to inactive buttons
+                    if colors:
+                        hint_color = colors['title_bg'].name()
+                        # Make the color more subtle for inactive state
+                        toolbar_btn.setStyleSheet(f"""
+                            background-color: {light_bg};
+                            color: {light_text};
+                            border: 1px solid {border_color};
+                            border-left: 3px solid {hint_color};
+                            border-radius: 4px;
+                            padding: 4px 8px;
+                            margin: 2px 3px;
+                        """)
+                    else:
+                        toolbar_btn.setStyleSheet(f"""
+                            background-color: {light_bg};
+                            color: {light_text};
+                            border: 1px solid {border_color};
+                            border-radius: 4px;
+                            padding: 4px 8px;
+                            margin: 2px 3px;
+                        """)
     
     def _create_status_bar(self):
         """Create the status bar"""

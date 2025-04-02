@@ -603,8 +603,8 @@ class SessionNotesPanel(BasePanel):
                 new_note_data['id'] = inserted_id
                 print(f"Note '{title}' saved with ID: {inserted_id}") # Debug
 
-                # Add to internal list and update UI
-                self.notes.append(new_note_data)
+                # Add to beginning of internal list to maintain chronological order (newest first)
+                self.notes.insert(0, new_note_data)
                 self._update_tag_list()
                 self._filter_notes() # This will update the list widget
 
