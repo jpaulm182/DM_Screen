@@ -80,7 +80,7 @@ class AppState:
                 "is_preset": True,
                 "category": "Combat",
                 "description": "Optimized for combat encounters with all combat tools available.",
-                "visible_panels": ["combat_tracker", "dice_roller", "conditions"],
+                "visible_panels": ["combat_tracker", "dice_roller", "combat_log", "conditions"],
                 "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             },
             "Exploration": {

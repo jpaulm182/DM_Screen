@@ -29,6 +29,7 @@ from app.ui.panels.rules_clarification_panel import RulesClarificationPanel  # I
 from app.ui.panels.location_generator_panel import LocationGeneratorPanel  # Import the Location Generator panel
 from app.ui.panels.treasure_generator_panel import TreasureGeneratorPanel # Import Treasure Generator
 from app.ui.panels.encounter_generator_panel import EncounterGeneratorPanel # Import Encounter Generator
+from app.ui.panels.combat_log_panel import CombatLogPanel
 
 
 class PanelManager(QObject):
@@ -70,6 +71,7 @@ class PanelManager(QObject):
         self.panels["location_generator"] = self._create_panel(LocationGeneratorPanel, "location_generator")  # Add the Location Generator panel
         self.panels["treasure_generator"] = self._create_panel(TreasureGeneratorPanel, "treasure_generator") # Initialize Treasure Generator
         self.panels["encounter_generator"] = self._create_panel(EncounterGeneratorPanel, "encounter_generator") # Initialize Encounter Generator
+        self.panels["combat_log"] = self._create_panel(CombatLogPanel, "combat_log")
         
         # Organize panels by category
         self._organize_panels_by_category()
@@ -331,7 +333,8 @@ class PanelManager(QObject):
             "rules_clarification": RulesClarificationPanel,  # Add Rules Clarification panel to the map
             "location_generator": LocationGeneratorPanel,  # Add Location Generator panel to the map
             "treasure_generator": TreasureGeneratorPanel, # Add Treasure Generator panel to the map
-            "encounter_generator": EncounterGeneratorPanel # Add Encounter Generator panel to the map
+            "encounter_generator": EncounterGeneratorPanel, # Add Encounter Generator panel to the map
+            "combat_log": CombatLogPanel
         }
         
         if panel_type in self.panels and self.panels[panel_type]:
@@ -659,3 +662,97 @@ class PanelManager(QObject):
         if panel_type in self.panels and self.panels[panel_type]:
             return self.panels[panel_type].isVisible()
         return False
+
+    def _setup_initial_layout(self):
+        """Set up the initial panel layout"""
+        # Show welcome panel first if this is a first launch
+        if self.app_state.get_setting("first_launch", True):
+            self.toggle_panel("welcome")
+            self.app_state.update_setting("first_launch", False)
+            return
+
+        # Get list of panels to show on startup
+        visible_panels = self.app_state.get_setting("visible_panels", ["combat_tracker", "dice_roller", "combat_log", "conditions"])
+        
+        # Show the panels
+        for panel_id in visible_panels:
+            if panel_id in self.panels:
+                self.panels[panel_id].show()
+        
+        # Set up specific layouts
+        
+        # Combat category: organize combat_tracker, dice_roller, and combat_log
+        if "combat_tracker" in self.panels and self.panels["combat_tracker"] and "dice_roller" in self.panels and self.panels["dice_roller"]:
+            # Tabify combat tracker and combat log
+            if "combat_log" in self.panels and self.panels["combat_log"]:
+                self.tabifyDockWidget(
+                    self.panels["combat_tracker"],
+                    self.panels["combat_log"]
+                )
+                # Split them horizontally with dice roller
+                self.splitDockWidget(
+                    self.panels["combat_tracker"],
+                    self.panels["dice_roller"],
+                    Qt.Horizontal
+                )
+            else:
+                # If no combat log, just split combat tracker and dice roller
+                self.splitDockWidget(
+                    self.panels["combat_tracker"],
+                    self.panels["dice_roller"],
+                    Qt.Horizontal
+                )
+            
+            # Raise the combat tracker initially
+            if "combat_tracker" in self.panels and self.panels["combat_tracker"]:
+                self.panels["combat_tracker"].raise_()
+                
+        # Reference category: tabify conditions, rules reference, and spell reference
+        condition_docks = [self.panels.get(id) for id in ["conditions", "rules_reference", "spell_reference"] if id in self.panels and self.panels[id]]
+        self._tabify_multiple(condition_docks)
+
+    def organize_panel_layout(self):
+        """Organize the layout of visible panels by category"""
+        # Use the new _setup_initial_layout method
+        if hasattr(self, '_setup_initial_layout'):
+            self._setup_initial_layout()
+            return
+            
+        # Legacy layout organization (kept for backward compatibility)
+        # Show welcome panel first if this is a first launch
+        if self.app_state.get_setting("first_launch", True):
+            self.toggle_panel("welcome")
+            self.app_state.update_setting("first_launch", False)
+            return
+
+        # Get list of panels to show on startup
+        visible_panels = self.app_state.get_setting("visible_panels", ["combat_tracker", "dice_roller", "conditions"])
+        
+        # Show the panels
+        for panel_id in visible_panels:
+            if panel_id in self.panels:
+                self.panels[panel_id].show()
+        
+        # If both combat tracker and dice roller are shown, split them horizontally
+        if "combat_tracker" in self.panels and self.panels["combat_tracker"] and \
+           "dice_roller" in self.panels and self.panels["dice_roller"]:
+            self.splitDockWidget(
+                self.panels["combat_tracker"],
+                self.panels["dice_roller"],
+                Qt.Horizontal
+            )
+        
+        # Tabify similar panels - group by category
+        condition_docks = []
+        if "conditions" in self.panels and self.panels["conditions"]:
+            condition_docks.append(self.panels["conditions"])
+        if "rules_reference" in self.panels and self.panels["rules_reference"]:
+            condition_docks.append(self.panels["rules_reference"])
+        if "spell_reference" in self.panels and self.panels["spell_reference"]:
+            condition_docks.append(self.panels["spell_reference"])
+        
+        self._tabify_multiple(condition_docks)
+        
+        # Raise the combat tracker initially
+        if "combat_tracker" in self.panels and self.panels["combat_tracker"]:
+            self.panels["combat_tracker"].raise_()

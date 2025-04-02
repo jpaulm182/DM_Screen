@@ -158,6 +158,11 @@ class MainWindow(QMainWindow):
             lambda: self.panel_manager.toggle_panel("dice_roller"))
         self.panel_actions["dice_roller"] = dice_roller_action
         
+        combat_log_action = combat_menu.addAction("Combat Log")
+        combat_log_action.triggered.connect(
+            lambda: self.panel_manager.toggle_panel("combat_log"))
+        self.panel_actions["combat_log"] = combat_log_action
+        
         # Reference panels
         reference_menu = panels_menu.addMenu("&Reference")
         rules_action = reference_menu.addAction("Rules Reference")

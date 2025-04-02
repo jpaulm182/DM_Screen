@@ -113,16 +113,13 @@ class WelcomePanel(QWidget):
         """Add grouped panels by category"""
         row = 0
         
-        # Combat Tools
-        combat_group = self._create_category_group(
-            "Combat Tools", 
-            PanelCategory.COMBAT, 
-            [
-                ("Combat Tracker", "combat_tracker", "Initiative and combat management"),
-                ("Dice Roller", "dice_roller", "Roll dice and save commonly used roll patterns")
-            ]
-        )
-        layout.addWidget(combat_group, row, 0)
+        # Combat panels
+        combat_panels = [
+            ("Combat Tracker", "combat_tracker", "Initiative and combat management"),
+            ("Dice Roller", "dice_roller", "Roll dice and save commonly used roll patterns"),
+            ("Combat Log", "combat_log", "Track combat actions and timeline")
+        ]
+        self._add_category("Combat", combat_panels)
         
         # Reference Tools
         reference_group = self._create_category_group(

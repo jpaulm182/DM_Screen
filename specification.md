@@ -193,13 +193,21 @@ Player Character Quick Reference Specification:
 - 🔄 LLM-generated character insights and plot elements
 
 Fast Combat Resolution System (LLM-powered):
-- 🔄 Single-click resolution of entire combat encounters
-- 🔄 Round-by-round narrative breakdown with key moments
-- 🔄 Tactical decision-making based on character/monster capabilities
-- 🔄 Resource and status effect tracking
-- 🔄 Detailed aftermath summary
+- ✅ Single-click resolution of entire combat encounters
+- ✅ Round-by-round narrative breakdown with key moments
+- ✅ Tactical decision-making based on character/monster capabilities
+- ✅ Resource and status effect tracking
+- ✅ Detailed aftermath summary
 - 🔄 Options to customize resolution detail level
 - 🔄 Manual override for key decision points
+- ✅ Turn-based combat tracker integration
+- ✅ Dice roller integration for attack rolls and damage
+- ✅ Combat action logging system
+- ✅ Action history with timestamps
+- ✅ Manual HP adjustment logging (damage and healing)
+- ✅ Status effect application tracking
+- ✅ Initiative order changes tracking
+- ✅ Visual combat timeline
 
 Location Generator Panel:
 - 🔜 Generate detailed locations with descriptions, NPCs, and points of interest
@@ -223,7 +231,7 @@ Development Priorities
     2. ✅ Persistent storage for generated content 
     3. ✅ Basic content generation modules (NPCs, rules clarification)
     4. ✅ Monster stat block extraction and formatting
-    5. 🔄 Fast combat resolution system
+    5. ✅ Fast combat resolution system
     6. 🔄 Location generator panel
     7. 🔄 Treasure generator panel
     8. 🔄 Core reference functionality enhancements

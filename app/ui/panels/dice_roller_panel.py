@@ -171,6 +171,41 @@ class DiceRollerPanel(BasePanel):
         while len(self.roll_history) > 50:
             self.roll_history.pop()
             self.history_list.takeItem(self.history_list.count() - 1)
+            
+        # Log to combat log if available
+        self._log_roll_to_combat_log(expression, result, details)
+    
+    def _log_roll_to_combat_log(self, expression, result, details=None):
+        """Log the roll to the combat log if available"""
+        combat_log = self._get_combat_log()
+        if combat_log:
+            # Determine the roll category
+            category = "Other"
+            if "d20" in expression.lower():
+                if "advantage" in expression.lower() or "disadvantage" in expression.lower():
+                    category = "Attack"  # Assumes advantage/disadvantage is used for attacks
+                else:
+                    category = "Attack"  # Default d20 rolls are often attacks or ability checks
+            
+            # Format result string
+            result_str = f"{result}"
+            if details:
+                result_str += f" {details}"
+                
+            # Log to combat log
+            combat_log.add_log_entry(
+                category,
+                "Dice Roller",
+                f"rolled {expression}",
+                None,
+                result_str
+            )
+    
+    def _get_combat_log(self):
+        """Get the combat log panel if available"""
+        if hasattr(self.app_state, 'panel_manager') and hasattr(self.app_state.panel_manager, 'get_panel_widget'):
+            return self.app_state.panel_manager.get_panel_widget("combat_log")
+        return None
     
     def _clear_history(self):
         """Clear the roll history"""

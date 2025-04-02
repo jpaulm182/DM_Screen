@@ -21,6 +21,7 @@ class PanelCategory:
     PANEL_CATEGORIES = {
         "combat_tracker": COMBAT,
         "dice_roller": COMBAT,
+        "combat_log": COMBAT,
         "conditions": REFERENCE,
         "rules_reference": REFERENCE,
         "monster": REFERENCE,
