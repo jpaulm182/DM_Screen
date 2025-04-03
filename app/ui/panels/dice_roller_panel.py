@@ -15,12 +15,12 @@ import random
 import json
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QLineEdit, QLabel, QListWidget, QGroupBox,
+    QLineEdit, QLabel, QListWidget, QGroupBox, QListWidgetItem,
     QSpinBox, QComboBox, QCheckBox, QMessageBox,
     QScrollArea, QSizePolicy, QMenu, QInputDialog
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QColor, QPalette
+from PySide6.QtGui import QFont, QColor, QPalette, QTextDocument
 from app.ui.panels.base_panel import BasePanel
 
 class DiceRollerPanel(BasePanel):
@@ -57,15 +57,17 @@ class DiceRollerPanel(BasePanel):
         layout.addWidget(quick_roll_group)
         
         # Latest roll result display
-        self.result_display = QLabel("Roll some dice...")
+        self.result_display = QLabel()
         self.result_display.setAlignment(Qt.AlignCenter)
-        result_font = self.result_display.font()
-        result_font.setPointSize(result_font.pointSize() * 2)
-        result_font.setBold(True)
-        self.result_display.setFont(result_font)
+        self.result_display.setTextFormat(Qt.RichText)  # Enable rich text support
+        
+        # Set initial text with the same styling used in our dice roll
+        default_text = f"<span style='font-size: 24px; font-weight: bold;'>Roll some dice</span><br><span style='font-size: 14px; color: #555;'>Use buttons or formula above</span>"
+        self.result_display.setText(default_text)
+        
         self.result_display.setStyleSheet("background-color: rgba(0, 0, 0, 0.1); border-radius: 5px; padding: 10px;")
         self.result_display.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        self.result_display.setMinimumHeight(60)
+        self.result_display.setMinimumHeight(100)  # Increased height to accommodate larger text
         layout.addWidget(self.result_display)
         
         # Custom roll input with saved rolls
@@ -89,7 +91,7 @@ class DiceRollerPanel(BasePanel):
         # Roll input field
         input_layout = QHBoxLayout()
         self.roll_input = QLineEdit()
-        self.roll_input.setPlaceholderText("Enter roll (e.g. 2d6+3)")
+        self.roll_input.setPlaceholderText("Enter roll (e.g. 2d6+3 or 1d8+2d4+5)")
         self.roll_input.returnPressed.connect(self._custom_roll)
         input_layout.addWidget(self.roll_input)
         
@@ -133,6 +135,9 @@ class DiceRollerPanel(BasePanel):
         self.history_list.setFont(history_list_font)
         self.history_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.history_list.customContextMenuRequested.connect(self._show_history_context_menu)
+        # Enable rich text (HTML) in list items
+        self.history_list.setTextElideMode(Qt.ElideNone)  # Prevent text from being truncated
+        self.history_list.setWordWrap(True)  # Enable word wrapping
         
         history_layout.addWidget(self.history_list)
         
@@ -190,31 +195,54 @@ class DiceRollerPanel(BasePanel):
     
     def _parse_and_roll(self, expression):
         """Parse and evaluate a dice roll expression"""
-        # Basic dice roll pattern: XdY+Z
-        pattern = r'^(\d+)?d(\d+)([+-]\d+)?$'
-        match = re.match(pattern, expression)
+        # Remove all spaces for easier parsing
+        expression = expression.replace(" ", "").lower()
         
-        if not match:
+        # For complex expressions with multiple dice types and modifiers
+        dice_pattern = r'(\d+)?d(\d+)'  # Pattern for dice components like 2d6
+        modifier_pattern = r'([+-]\d+)'  # Pattern for modifiers like +3
+        
+        # Find all dice components (like 2d6, 1d8)
+        dice_components = re.finditer(dice_pattern, expression)
+        
+        # Track the result
+        all_rolls = []  # Store all individual dice rolls
+        total = 0
+        rolls_text = []  # For display purposes
+        
+        # Process each dice component
+        for match in dice_components:
+            count = int(match.group(1)) if match.group(1) else 1
+            sides = int(match.group(2))
+            
+            if count > 100:
+                raise ValueError("Too many dice (maximum 100 per type)")
+            if sides > 1000:
+                raise ValueError("Die has too many sides (maximum 1000)")
+            
+            # Roll the dice
+            rolls = [random.randint(1, sides) for _ in range(count)]
+            all_rolls.extend(rolls)
+            total += sum(rolls)
+            
+            # Format for the details display
+            rolls_text.append(f"{count}d{sides}[{', '.join(map(str, rolls))}]")
+        
+        # If no dice were found, the expression is invalid
+        if not rolls_text:
             raise ValueError("Invalid dice expression format")
-        
-        count = int(match.group(1)) if match.group(1) else 1
-        sides = int(match.group(2))
-        modifier = int(match.group(3)) if match.group(3) else 0
-        
-        if count > 100:
-            raise ValueError("Too many dice (maximum 100)")
-        if sides > 1000:
-            raise ValueError("Die has too many sides (maximum 1000)")
-        
-        # Roll the dice
-        rolls = [random.randint(1, sides) for _ in range(count)]
-        total = sum(rolls) + modifier
+            
+        # Find all modifiers (like +3, -2)
+        modifiers = re.finditer(modifier_pattern, expression)
+        for match in modifiers:
+            mod = int(match.group(1))
+            total += mod
+            # Only add non-zero modifiers to the display
+            if mod != 0:
+                rolls_text.append(f"{'+' if mod > 0 else ''}{mod}")
         
         # Format details
-        details = f"[{', '.join(map(str, rolls))}]"
-        if modifier:
-            details += f" {'+' if modifier > 0 else ''}{modifier}"
-        
+        details = " ".join(rolls_text)
         return total, details
     
     def _add_to_history(self, expression, result, details=None):
@@ -223,25 +251,69 @@ class DiceRollerPanel(BasePanel):
         if details:
             text += f" {details}"
         
-        # Update the prominent result display
-        self.result_display.setText(f"{result} - {expression}")
+        # Update the prominent result display with MUCH larger text for the result
+        # Split it into a large result and smaller expression
+        result_font = QFont(self.font())
+        result_font.setBold(True)
+        result_font.setPointSize(24)  # Even larger for prominence
+        
+        # Create separate labels for result and expression for better visual hierarchy
+        # Size up the result for critical hits/fails
+        is_crit_hit = False
+        is_crit_fail = False
+        
+        if "d20" in expression.lower() and result == 20:
+            result_text = f"<span style='font-size: 48px; font-weight: bold; color: white;'>{result}</span>"
+            is_crit_hit = True
+        elif "d20" in expression.lower() and result == 1:
+            result_text = f"<span style='font-size: 48px; font-weight: bold; color: white;'>{result}</span>"
+            is_crit_fail = True
+        else:
+            result_text = f"<span style='font-size: 36px; font-weight: bold;'>{result}</span>"
+        
+        expr_text = f"<span style='font-size: 14px; color: #555;'>{expression}</span>"
+        self.result_display.setText(f"{result_text}<br>{expr_text}")
         
         # Update style based on roll type
         if "d20" in expression.lower():
             if result == 20:
                 # Critical hit!
-                self.result_display.setStyleSheet("background-color: rgba(0, 200, 0, 0.3); border-radius: 5px; padding: 10px;")
+                self.result_display.setStyleSheet("background-color: rgba(0, 200, 0, 0.5); color: white; font-weight: bold; border-radius: 5px; padding: 10px; border: 2px solid green;")
             elif result == 1:
                 # Critical fail!
-                self.result_display.setStyleSheet("background-color: rgba(200, 0, 0, 0.3); border-radius: 5px; padding: 10px;")
+                self.result_display.setStyleSheet("background-color: rgba(200, 0, 0, 0.5); color: white; font-weight: bold; border-radius: 5px; padding: 10px; border: 2px solid red;")
             else:
                 self.result_display.setStyleSheet("background-color: rgba(0, 0, 0, 0.1); border-radius: 5px; padding: 10px;")
         else:
-            self.result_display.setStyleSheet("background-color: rgba(0, 0, 0, 0.1); border-radius: 5px; padding: 10px;")
+            # For non-d20 rolls, use a neutral but visible style
+            self.result_display.setStyleSheet("background-color: rgba(0, 0, 150, 0.1); border-radius: 5px; padding: 10px;")
         
+        # Store plain text in history
         self.roll_history.append(text)
-        self.history_list.insertItem(0, text)
-        self.history_list.item(0).setToolTip(text)  # Add tooltip for longer entries
+        
+        # Add to history list with color coding but plain text (no HTML)
+        item = QListWidgetItem(text)
+        item.setToolTip(text)  # Add tooltip for longer entries
+        
+        # Apply color formatting based on roll type
+        if is_crit_hit:
+            item.setForeground(QColor("white"))
+            item.setBackground(QColor(0, 150, 0))  # Darker green background for better contrast
+        elif is_crit_fail:
+            item.setForeground(QColor("white"))
+            item.setBackground(QColor(180, 0, 0))  # Darker red background for better contrast
+        elif "d20" in expression.lower():
+            # Regular d20 roll - use blue for visibility
+            if result >= 15:
+                # Good roll
+                item.setForeground(QColor("darkblue"))
+                item.setBackground(QColor(220, 220, 255))  # Light blue background
+            elif result <= 5:
+                # Poor roll
+                item.setForeground(QColor("purple"))
+                item.setBackground(QColor(240, 220, 240))  # Light purple background
+        
+        self.history_list.insertItem(0, item)
         
         # Keep history at a reasonable size
         while len(self.roll_history) > 50:
@@ -287,7 +359,10 @@ class DiceRollerPanel(BasePanel):
         """Clear the roll history"""
         self.roll_history.clear()
         self.history_list.clear()
-        self.result_display.setText("Roll some dice...")
+        
+        # Reset the result display with the same styling as our enhanced display
+        default_text = f"<span style='font-size: 24px; font-weight: bold;'>Roll some dice</span><br><span style='font-size: 14px; color: #555;'>Use buttons or formula above</span>"
+        self.result_display.setText(default_text)
         self.result_display.setStyleSheet("background-color: rgba(0, 0, 0, 0.1); border-radius: 5px; padding: 10px;")
     
     def _get_default_rolls(self):
@@ -357,6 +432,29 @@ class DiceRollerPanel(BasePanel):
                 self.roll_input.setText(formula)
                 self._custom_roll()  # Auto-roll the selected formula
     
+    def _is_valid_formula(self, formula):
+        """Check if a dice formula is valid"""
+        # Remove spaces for easier validation
+        formula = formula.replace(" ", "").lower()
+        
+        # For complex dice expressions
+        dice_pattern = r'(\d+)?d(\d+)'  # Pattern for dice components like 2d6
+        modifier_pattern = r'([+-]\d+)'  # Pattern for modifiers like +3
+        
+        # Check if there's at least one dice component
+        dice_matches = list(re.finditer(dice_pattern, formula))
+        if not dice_matches:
+            return False
+            
+        # Build a pattern that combines dice and modifiers
+        # This checks that the formula consists entirely of valid dice/modifier components
+        full_pattern = dice_pattern + '|' + modifier_pattern
+        all_components = re.findall(full_pattern, formula)
+        
+        # If the joined components don't equal the original formula, there's invalid content
+        joined = ''.join(''.join(match) for match in all_components)
+        return joined == formula
+    
     def _save_current_formula(self):
         """Save the current formula"""
         formula = self.roll_input.text().strip()
@@ -364,13 +462,9 @@ class DiceRollerPanel(BasePanel):
             return
             
         # Verify it's a valid formula
-        try:
-            pattern = r'^(\d+)?d(\d+)([+-]\d+)?$'
-            if not re.match(pattern, formula.lower()):
-                raise ValueError("Invalid dice formula format")
-        except ValueError:
+        if not self._is_valid_formula(formula):
             QMessageBox.warning(self, "Invalid Formula", 
-                               "Please enter a valid dice formula (e.g. 2d6+3)")
+                               "Please enter a valid dice formula (e.g. 2d6+3 or 1d8+2d4+5)")
             return
             
         # Get a name for the formula
@@ -465,18 +559,14 @@ class DiceRollerPanel(BasePanel):
         if ok and name:
             formula, ok = QInputDialog.getText(
                 self, "Add Formula", 
-                "Enter the dice formula (e.g. 2d6+3):"
+                "Enter the dice formula (e.g. 2d6+3 or 1d8+2d4+5):"
             )
             
             if ok and formula:
                 # Verify it's a valid formula
-                try:
-                    pattern = r'^(\d+)?d(\d+)([+-]\d+)?$'
-                    if not re.match(pattern, formula.lower()):
-                        raise ValueError("Invalid dice formula format")
-                except ValueError:
+                if not self._is_valid_formula(formula):
                     QMessageBox.warning(self, "Invalid Formula", 
-                                       "Please enter a valid dice formula (e.g. 2d6+3)")
+                                       "Please enter a valid dice formula (e.g. 2d6+3 or 1d8+2d4+5)")
                     return
                 
                 self.saved_rolls[name] = formula
