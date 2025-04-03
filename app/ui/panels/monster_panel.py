@@ -209,7 +209,7 @@ class MonsterPanel(BasePanel):
         
         # Add image generation button
         self.image_button_container = QVBoxLayout()
-        self.generate_image_btn = QPushButton("Generate Image")
+        self.generate_image_btn = QPushButton("Generate Monster Manual Image")
         self.generate_image_btn.clicked.connect(self._generate_monster_image)
         self.generate_image_btn.setEnabled(False)
         self.image_button_container.addWidget(self.generate_image_btn)
@@ -276,6 +276,11 @@ class MonsterPanel(BasePanel):
 
         # Set minimum size for the panel
         self.setMinimumSize(800, 600)
+
+        # Find the generate image button in the UI and update its text and tooltip
+        if hasattr(self, 'generate_image_btn'):
+            self.generate_image_btn.setText("Generate Monster Manual Image")
+            self.generate_image_btn.setToolTip("Generate an image in the style of the D&D Monster Manual")
 
     def _load_initial_monsters(self):
         """Load all monsters from the database on startup."""
@@ -780,19 +785,54 @@ class MonsterPanel(BasePanel):
             return
         
         # Show a loading message
-        self.image_label.setText("Generating image...")
+        self.image_label.setText("Generating Monster Manual style image...")
         
         # Create a detailed prompt based on monster details
-        prompt = f"{self.current_monster.name}, a {self.current_monster.size.lower()} {self.current_monster.type}"
+        monster_details = []
+        monster_details.append(f"{self.current_monster.name}")
+        monster_details.append(f"a {self.current_monster.size.lower()} {self.current_monster.type}")
+        
+        # Add physical characteristics based on stats and type
+        if hasattr(self.current_monster, 'strength') and self.current_monster.strength >= 16:
+            monster_details.append("muscular")
+        if hasattr(self.current_monster, 'dexterity') and self.current_monster.dexterity >= 16:
+            monster_details.append("agile")
+        
+        # Add equipment or elements based on monster's actions
+        weapon_keywords = ["sword", "axe", "mace", "staff", "bow", "dagger", "spear", "wand"]
+        spell_keywords = ["fire", "ice", "lightning", "acid", "magic", "arcane", "spell"]
+        
+        has_weapon = False
+        has_spells = False
+        
+        if hasattr(self.current_monster, 'actions') and self.current_monster.actions:
+            for action in self.current_monster.actions:
+                action_desc = action.description.lower() if hasattr(action, 'description') else ""
+                # Check for weapons
+                for weapon in weapon_keywords:
+                    if weapon in action_desc and not has_weapon:
+                        monster_details.append(f"wielding a {weapon}")
+                        has_weapon = True
+                        break
+                # Check for spells
+                for spell in spell_keywords:
+                    if spell in action_desc and not has_spells:
+                        monster_details.append(f"with {spell} abilities")
+                        has_spells = True
+                        break
+        
+        # Combine all details into a prompt
+        prompt = ", ".join(monster_details)
+        
+        # Add description but limit its length
         if self.current_monster.description:
-            # Add description but limit its length
             max_desc_len = 100
             desc = self.current_monster.description
             if len(desc) > max_desc_len:
                 desc = desc[:max_desc_len] + "..."
             prompt += f". {desc}"
             
-        logger.info(f"Generating image for monster: {self.current_monster.name}")
+        logger.info(f"Generating Monster Manual style image for: {self.current_monster.name}")
         
         # Define callback to process the image
         def on_image_generated(image_path, error):

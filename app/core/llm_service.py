@@ -426,9 +426,16 @@ class LLMService(QObject):
         try:
             self.logger.info(f"Generating image for prompt: {prompt}")
             
-            # Format the prompt for better results and to avoid content policy violations
-            # Avoid words like "terrifying", "scary", "evil", etc.
-            enhanced_prompt = f"A fantasy art style illustration of a D&D monster: {prompt}. Detailed, colorful character illustration for a tabletop roleplaying game."
+            # Format the prompt for D&D Monster Manual style
+            enhanced_prompt = (
+                f"A D&D Monster Manual style illustration of {prompt}. "
+                f"Use the exact iconic art style from the official 5th Edition D&D Monster Manual: "
+                f"detailed professional fantasy illustration with a dynamic pose against a subtle neutral background. "
+                f"Clean ink lines with watercolor-style coloring, slightly desaturated fantasy art, heroic proportions. "
+                f"Include a slight drop shadow beneath the monster to ground it. "
+                f"The full creature should be visible and centered, with dramatic lighting. "
+                f"The art should look like it belongs on an official D&D Monster Manual page."
+            )
             
             # Remove potentially problematic words
             problematic_words = ["terrifying", "scary", "fearsome", "evil", "demonic", "satanic", "bloody", "gore", "violent"]
@@ -449,10 +456,14 @@ class LLMService(QObject):
                 # If there's a content policy violation, try a more sanitized prompt
                 if "content_policy_violation" in str(api_error):
                     self.logger.warning(f"Content policy violation, trying more generic prompt for: {prompt}")
-                    # Try with a very generic prompt based only on the creature type
+                    # Try with a more generic prompt based only on the creature type
                     safe_creature_type = prompt.split(',')[0] if ',' in prompt else prompt
-                    # Make an extremely safe prompt
-                    safe_prompt = f"A fantasy illustration of a {safe_creature_type} for a roleplaying game. Child-friendly, colorful, non-threatening."
+                    # Make a safe prompt that still maintains D&D Monster Manual style
+                    safe_prompt = (
+                        f"A fantasy illustration of a {safe_creature_type} in the style of the D&D Monster Manual. "
+                        f"Official Dungeons and Dragons art style, professional fantasy illustration, clean lines, "
+                        f"watercolor-style coloring. Child-friendly, non-threatening."
+                    )
                     
                     response = self.openai_client.images.generate(
                         model="dall-e-3",

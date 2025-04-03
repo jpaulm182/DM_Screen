@@ -39,8 +39,36 @@ def generate_monster_stat_block(llm_service: LLMService, monster_name: str) -> M
         return None
         
     try:
+        # Extract base monster type and specialization cues
+        parts = monster_name.split()
+        base_monster_type = parts[0] if parts else monster_name
+        
+        # Look for descriptors that might indicate elements or special traits
+        descriptors = []
+        elements = ["Fire", "Frost", "Ice", "Shadow", "Spectral", "Thunder", "Storm", "Arcane", 
+                    "Fey", "Stone", "Crystal", "Void", "Thorn", "Blood", "Ancient", "Elder"]
+        roles = ["Scout", "Warrior", "Mage", "Sorcerer", "Shaman", "Ranger", "Archer", "Brute", 
+                "Leader", "Captain", "Chieftain", "Assassin", "Rogue", "Knight", "Guardian", "Priest"]
+        
+        # Check for elemental or role descriptors in the name
+        for part in parts:
+            if part.lower() != base_monster_type.lower():
+                if any(element.lower() == part.lower() for element in elements):
+                    descriptors.append(f"elemental ({part.lower()})")
+                elif any(role.lower() == part.lower() for role in roles):
+                    descriptors.append(f"specialized role ({part.lower()})")
+                else:
+                    descriptors.append(part.lower())
+        
         # Create a detailed prompt for the LLM
         prompt = f"""Generate a D&D 5e monster stat block for a creature called "{monster_name}". Respond with ONLY a JSON object.
+
+MONSTER ANALYSIS:
+- Base monster type: {base_monster_type}
+- Special descriptors: {', '.join(descriptors) if descriptors else 'none'}
+- Monster appears to be a specialized or unique variant.
+
+Make sure to create appropriate and interesting abilities that reflect the monster's specialization, role, or elemental affinity. This should be a UNIQUE monster with distinctive traits.
 
 Format the response as a JSON object with these fields:
 {{
@@ -59,7 +87,7 @@ Format the response as a JSON object with these fields:
   "charisma": 8,  // CHA score (1-30)
   "challenge_rating": "2",  // CR as string (e.g., "1/4", "2", "10")
   "languages": "Common, Elvish",  // Languages the creature speaks
-  "skills": [  // Special skill proficiencies
+  "skills": [  // Special skill proficiencies - match these to the creature's role
     {{"name": "Perception", "modifier": 4}},
     {{"name": "Stealth", "modifier": 3}}
   ],
@@ -67,20 +95,28 @@ Format the response as a JSON object with these fields:
     {{"name": "Darkvision", "range": "60 ft."}},
     {{"name": "Passive Perception", "range": "14"}}
   ],
-  "traits": [  // Special abilities
+  "traits": [  // Special abilities - include thematic abilities that match the creature's role
     {{"name": "Amphibious", "description": "The creature can breathe air and water."}}
   ],
-  "actions": [  // Actions in combat
+  "actions": [  // Actions in combat - make these interesting and unique
     {{"name": "Multiattack", "description": "The creature makes two attacks: one with its bite and one with its claws."}},
     {{"name": "Bite", "description": "Melee Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 7 (1d8 + 3) piercing damage."}}
   ],
   "legendary_actions": [  // Optional: legendary actions (null if none)
     {{"name": "Detect", "description": "The creature makes a Wisdom (Perception) check.", "cost": 1}}
   ],
-  "description": "A brief lore description of the {monster_name} and its habits or origins."
+  "description": "A detailed lore description of the {monster_name}, explaining what makes it different from standard {base_monster_type}s, its unique role, and its behaviors or origins."
 }}
 
-Be creative but consistent with D&D 5e rules. Ensure CR and stats are balanced.
+IMPORTANT GUIDELINES:
+1. This should be a UNIQUE and INTERESTING monster with distinctive traits and abilities.
+2. If the monster name suggests an elemental affinity (e.g., "Frost Goblin"), add appropriate elemental damage and resistances.
+3. If the monster name suggests a specialized role (e.g., "Scout", "Mage"), give it abilities that match that role.
+4. Make the stats, abilities, and actions interesting, creative, and thematically appropriate.
+5. Add at least one UNIQUE signature ability that makes this monster stand out.
+6. Ensure CR and stats are balanced according to D&D 5e rules.
+7. Be creative but consistent with D&D 5e mechanics.
+
 IMPORTANT: Respond with ONLY the JSON object. No additional explanations.
 """
 
@@ -164,30 +200,128 @@ def _create_placeholder_monster(monster_name: str) -> Monster:
     """
     logger.info(f"Creating placeholder monster for '{monster_name}'")
     
-    # For testing, create a minimal valid Monster object
+    # Extract potential role or type from the name
+    name_parts = monster_name.lower().split()
+    
+    # Default values
+    size = "Medium"
+    monster_type = "humanoid"
+    hp = "20 (3d8 + 3)"
+    str_val, dex_val, con_val, int_val, wis_val, cha_val = 10, 10, 10, 10, 10, 10
+    speed = "30 ft."
+    cr = "1"
+    
+    # Adjust based on name hints
+    if any(x in name_parts for x in ["tiny", "small", "diminutive"]):
+        size = "Small"
+        hp = "10 (3d6)"
+        str_val = 8
+    elif any(x in name_parts for x in ["large", "big", "great"]):
+        size = "Large"
+        hp = "45 (6d10 + 12)"
+        str_val = 16
+        con_val = 14
+    
+    # Adjust type based on name
+    if any(x in name_parts for x in ["undead", "skeleton", "zombie", "ghoul"]):
+        monster_type = "undead"
+    elif any(x in name_parts for x in ["dragon", "drake", "wyrm"]):
+        monster_type = "dragon"
+        cr = "3"
+    elif any(x in name_parts for x in ["beast", "animal", "wolf", "bear"]):
+        monster_type = "beast"
+    
+    # Adjust abilities based on role
+    actions = []
+    traits = []
+    
+    # Basic attack
+    melee_attack = MonsterAction(
+        name="Slam", 
+        description=f"Melee Weapon Attack: +3 to hit, reach 5 ft., one target. Hit: 5 (1d6 + 2) bludgeoning damage."
+    )
+    
+    # Add specialized attacks and traits based on name
+    if any(x in name_parts for x in ["mage", "wizard", "sorcerer", "caster", "magic"]):
+        int_val = 14
+        cha_val = 14
+        cr = "2"
+        actions.append(MonsterAction(
+            name="Magic Missile",
+            description="Ranged Spell Attack: The creature fires three magical darts. Each dart hits a creature of the caster's choice within 120 feet and deals 3 (1d4 + 1) force damage."
+        ))
+        traits.append({
+            "name": "Spellcasting",
+            "description": f"The {monster_name} is a 3rd-level spellcaster. Its spellcasting ability is Intelligence (spell save DC 12, +4 to hit with spell attacks)."
+        })
+    elif any(x in name_parts for x in ["archer", "ranger", "shooter", "sniper"]):
+        dex_val = 14
+        wis_val = 12
+        actions.append(MonsterAction(
+            name="Longbow",
+            description="Ranged Weapon Attack: +4 to hit, range 150/600 ft., one target. Hit: 6 (1d8 + 2) piercing damage."
+        ))
+    elif any(x in name_parts for x in ["warrior", "fighter", "brute", "soldier"]):
+        str_val = 14
+        con_val = 12
+        actions.append(MonsterAction(
+            name="Greatsword",
+            description="Melee Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 9 (2d6 + 2) slashing damage."
+        ))
+        actions.append(MonsterAction(
+            name="Shield Bash",
+            description="Melee Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 5 (1d4 + 3) bludgeoning damage, and the target must succeed on a DC 13 Strength saving throw or be knocked prone."
+        ))
+    elif any(x in name_parts for x in ["scout", "rogue", "thief", "stalker"]):
+        dex_val = 15
+        int_val = 12
+        actions.append(MonsterAction(
+            name="Dagger",
+            description="Melee or Ranged Weapon Attack: +4 to hit, reach 5 ft. or range 20/60 ft., one target. Hit: 4 (1d4 + 2) piercing damage."
+        ))
+        traits.append({
+            "name": "Sneak Attack",
+            "description": "The creature deals an extra 7 (2d6) damage when it hits a target with a weapon attack and has advantage on the attack roll, or when the target is within 5 feet of an ally of the creature that isn't incapacitated and the creature doesn't have disadvantage on the attack roll."
+        })
+    
+    # Always include at least one basic attack
+    if not actions:
+        actions.append(melee_attack)
+    
+    # Generate a more interesting description based on monster name
+    description = f"A placeholder {monster_name} created when LLM generation failed. This appears to be a {size.lower()} {monster_type} with "
+    
+    # Add flavor based on stats
+    if str_val > 12:
+        description += "notable physical strength. "
+    elif dex_val > 12:
+        description += "quick, nimble movements. "
+    elif int_val > 12:
+        description += "a cunning, intelligent demeanor. "
+    else:
+        description += "an unremarkable appearance. "
+    
+    description += f"It likely serves as a {name_parts[-1] if len(name_parts) > 1 else 'standard fighter'} in its society."
+    
     try:
         test_monster = Monster(
             name=monster_name.strip() or "Unknown Creature",
-            size="Medium",
-            type="humanoid",
+            size=size,
+            type=monster_type,
             alignment="neutral",
-            armor_class=12,
-            hit_points="20 (3d8 + 3)",
-            speed="30 ft.",
-            strength=10,
-            dexterity=10,
-            constitution=10,
-            intelligence=10,
-            wisdom=10,
-            charisma=10,
-            challenge_rating="1",
-            description=f"A placeholder {monster_name}. This is a test monster generated as a fallback when LLM generation failed.",
-            actions=[
-                MonsterAction(
-                    name="Basic Attack", 
-                    description="Melee Weapon Attack: +3 to hit, reach 5 ft., one target. Hit: 5 (1d6 + 2) slashing damage."
-                )
-            ],
+            armor_class=10 + (dex_val - 10) // 2,  # Simple AC calculation
+            hit_points=hp,
+            speed=speed,
+            strength=str_val,
+            dexterity=dex_val,
+            constitution=con_val,
+            intelligence=int_val,
+            wisdom=wis_val,
+            charisma=cha_val,
+            challenge_rating=cr,
+            description=description,
+            actions=actions,
+            traits=traits,
             is_custom=True,
             source="AI Generated (Placeholder)"
         )

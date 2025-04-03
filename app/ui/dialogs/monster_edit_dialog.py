@@ -185,7 +185,8 @@ class MonsterEditDialog(QDialog):
         
         # Image buttons
         button_layout = QVBoxLayout()
-        self.generate_image_btn = QPushButton("Generate Image")
+        self.generate_image_btn = QPushButton("Generate Monster Manual Image")
+        self.generate_image_btn.setToolTip("Generate an image in the style of the D&D Monster Manual")
         self.generate_image_btn.clicked.connect(self._generate_monster_image)
         button_layout.addWidget(self.generate_image_btn)
         button_layout.addStretch()
@@ -588,12 +589,47 @@ class MonsterEditDialog(QDialog):
             return
         
         # Show a loading message
-        self.image_label.setText("Generating image...")
+        self.image_label.setText("Generating Monster Manual style image...")
         self.generate_image_btn.setEnabled(False)
         
         # Create a detailed prompt based on monster details
-        prompt = f"{self.monster.name}, a {self.monster.size.lower()} {self.monster.type}"
+        monster_details = []
+        monster_details.append(f"{self.monster.name}")
+        monster_details.append(f"a {self.monster.size.lower()} {self.monster.type}")
         
+        # Add physical characteristics based on stats and type
+        if hasattr(self.monster, 'strength') and self.monster.strength >= 16:
+            monster_details.append("muscular")
+        if hasattr(self.monster, 'dexterity') and self.monster.dexterity >= 16:
+            monster_details.append("agile")
+        
+        # Add equipment or elements based on monster's actions
+        weapon_keywords = ["sword", "axe", "mace", "staff", "bow", "dagger", "spear", "wand"]
+        spell_keywords = ["fire", "ice", "lightning", "acid", "magic", "arcane", "spell"]
+        
+        has_weapon = False
+        has_spells = False
+        
+        if hasattr(self.monster, 'actions') and self.monster.actions:
+            for action in self.monster.actions:
+                action_desc = action.description.lower() if hasattr(action, 'description') else ""
+                # Check for weapons
+                for weapon in weapon_keywords:
+                    if weapon in action_desc and not has_weapon:
+                        monster_details.append(f"wielding a {weapon}")
+                        has_weapon = True
+                        break
+                # Check for spells
+                for spell in spell_keywords:
+                    if spell in action_desc and not has_spells:
+                        monster_details.append(f"with {spell} abilities")
+                        has_spells = True
+                        break
+        
+        # Combine all details into a prompt
+        prompt = ", ".join(monster_details)
+        
+        # Add description but limit its length
         if self.monster.description:
             # Add description but limit its length
             max_desc_len = 100
@@ -602,7 +638,7 @@ class MonsterEditDialog(QDialog):
                 desc = desc[:max_desc_len] + "..."
             prompt += f". {desc}"
             
-        logger.info(f"Generating image for monster: {self.monster.name}")
+        logger.info(f"Generating Monster Manual style image for: {self.monster.name}")
         
         # Define callback to process the image
         def on_image_generated(image_path, error):

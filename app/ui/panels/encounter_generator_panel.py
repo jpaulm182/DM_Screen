@@ -8,11 +8,12 @@ Includes automatic generation and saving of new monster stat blocks.
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
     QSpinBox, QComboBox, QTextEdit, QGroupBox, QLineEdit,
-    QMessageBox, QFormLayout
+    QMessageBox, QFormLayout, QCheckBox
 )
 from PySide6.QtCore import Qt, Signal
 import json
 import logging
+import random
 
 from app.ui.panels.base_panel import BasePanel
 # Need access to db_manager for checking/saving monsters
@@ -80,6 +81,21 @@ class EncounterGeneratorPanel(BasePanel):
         self.context_input.setPlaceholderText("Optional: Any specific context, recent events, or required monster types...")
         self.context_input.setMaximumHeight(60)
         config_layout.addRow("Context (Optional):", self.context_input)
+        
+        # Checkboxes for monster generation options
+        checkbox_layout = QVBoxLayout()
+        
+        # Add checkbox for diverse monsters
+        self.diverse_monsters_checkbox = QCheckBox("Generate diverse and interesting monsters")
+        self.diverse_monsters_checkbox.setChecked(True)  # Enable by default
+        checkbox_layout.addWidget(self.diverse_monsters_checkbox)
+        
+        # Add checkbox for rare/unique monsters
+        self.rare_monsters_checkbox = QCheckBox("Prioritize rare/unique monsters")
+        self.rare_monsters_checkbox.setChecked(True)  # Enable by default
+        checkbox_layout.addWidget(self.rare_monsters_checkbox)
+        
+        config_layout.addRow("Options:", checkbox_layout)
         
         self.generate_button = QPushButton("Generate Encounter")
         config_layout.addRow(self.generate_button)
@@ -157,19 +173,23 @@ class EncounterGeneratorPanel(BasePanel):
             "players": self.players_spinbox.value(),
             "difficulty": self.difficulty_combo.currentText(),
             "environment": self.environment_input.text().strip(),
-            "context": self.context_input.toPlainText().strip()
+            "context": self.context_input.toPlainText().strip(),
+            "diverse": self.diverse_monsters_checkbox.isChecked(),
+            "rare": self.rare_monsters_checkbox.isChecked()
         }
 
     def _create_encounter_prompt(self, params: dict) -> str:
         # Get a list of available monsters from the database to hint to the LLM
         monster_names = []
         try:
-            # Get common monster names from the database (first 40 to provide more variety options)
+            # Get just a small sample of monster names for reference
             monster_results = self.db_manager.get_all_monster_names(include_custom=True, include_standard=True)
             if monster_results:
-                # Increase limit to provide more variety
-                common_monsters = [m['name'] for m in monster_results[:40]]
-                monster_names = common_monsters
+                # Take a small random sample to avoid biasing toward common monsters
+                if len(monster_results) > 15:
+                    monster_names = [m['name'] for m in random.sample(monster_results, 15)]
+                else:
+                    monster_names = [m['name'] for m in monster_results]
                 logger.debug(f"Retrieved {len(monster_names)} monster names for prompt")
         except Exception as e:
             logger.error(f"Error retrieving monster names for prompt: {e}")
@@ -183,6 +203,8 @@ Parameters:
 - Desired Difficulty: {params['difficulty']}
 - Environment: {params['environment']}
 - Context: {params['context'] if params['context'] else 'None'}
+- Diverse Monsters: {params['diverse']}
+- Prioritize Rare/Unique Monsters: {params['rare']}
 
 Instructions:
 1. Create a balanced, diverse encounter matching the difficulty, player count, and level.
@@ -192,29 +214,30 @@ Instructions:
 5. Format the entire response as a single JSON object with keys: 'monsters' (list of strings), 'narrative' (string), 'tactics' (string).
 
 IMPORTANT: 
+- CREATE UNCOMMON AND UNIQUE MONSTERS! Prefer generating new and interesting monsters over using common ones.
 - Create interesting and varied encounters with diverse monster combinations.
-- Avoid using multiple copies of the exact same monster type (e.g., don't use ["Goblin", "Goblin", "Goblin"]).
-- Instead, create variety by using different variants or related creatures (e.g., ["Goblin Scout", "Goblin Archer", "Goblin Boss"]).
+- Avoid using multiple copies of the exact same monster type.
+- Include rare, unusual, and specialized variants of monsters - these will be automatically generated.
 - Match monsters logically to the environment and include interesting terrain features.
 - Consider adding environmental hazards, traps, or unique combat conditions to make encounters more dynamic.
-- Use exact official monster names from the Monster Manual and other official sources when possible.
+- Feel free to invent creative monster variants with specialized roles (e.g., "Frost Goblin Shaman", "Dire Wolf Alpha").
 """
 
-        # Add monster suggestions if available
+        # Add monster suggestions if available, but present them differently
         if monster_names:
             prompt += f"""
-Available Monsters (existing in database):
+Some example monsters (for reference only):
 {', '.join(monster_names)}
 
-You can use monsters from this list or other standard D&D 5e monsters. Using monsters from this list will be more efficient, but feel free to include interesting variants or specialized versions to increase diversity.
+DO NOT FEEL LIMITED by these examples. The system can generate ANY monster you specify, including rare, unique or specialized variants. {'STRONGLY prioritize creating new, rare monsters' if params['rare'] else 'Prioritize creating interesting and unusual monster combinations'}.
 """
 
         prompt += """
 Example JSON:
 {
-  "monsters": ["Kobold Scout", "Kobold Sorcerer", "Winged Kobold"],
-  "narrative": "As the party enters the dusty chamber, they hear scrabbling sounds from behind stalagmites. A winged kobold perches on a ledge while two others prepare an ambush, one holding a wand crackling with energy.",
-  "tactics": "The Winged Kobold stays airborne, dropping rocks. The Kobold Scout uses hit-and-run tactics from the shadows while the Sorcerer casts spells from a protected position."
+  "monsters": ["Goblin Pyromancer", "Shadow Wolf", "Thorn Sprite"],
+  "narrative": "Flickering flames illuminate the darkened chamber as a goblin wielding burning magic commands a shadowy wolf. From the surrounding plants, tiny thorn-covered fey creatures emerge, their eyes gleaming with malice.",
+  "tactics": "The Goblin Pyromancer stays behind cover, launching fire spells while the Shadow Wolf flanks enemies. The Thorn Sprites attack in bursts, retreating into the vegetation between strikes."
 }
 
 **IMPORTANT: Output ONLY the JSON object. No extra text before or after.**
