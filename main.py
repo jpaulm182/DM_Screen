@@ -23,7 +23,7 @@ def main():
     # Create the Qt Application
     app = QApplication(sys.argv)
     app.setApplicationName("DM Screen")
-    app.setApplicationVersion("0.1.0")
+    app.setApplicationVersion("0.5.0")
     
     # Initialize application state~
     app_state = AppState()

@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
     QListWidgetItem # Added QListWidgetItem
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont, QIcon, QPixmap
 
 from app.ui.panels.base_panel import BasePanel
@@ -88,6 +88,9 @@ class MonsterPanel(BasePanel):
 
     # Signal emitted when a new custom monster is created/saved
     custom_monster_created = Signal(str) # Emits new monster's name
+    
+    # Signal to save image path in main thread
+    save_image_signal = Signal(str) # Emits image path to save
 
     def __init__(self, app_state):
         # Get services from app_state
@@ -97,6 +100,9 @@ class MonsterPanel(BasePanel):
         self.current_monster: Optional[Monster] = None
         super().__init__(app_state, "Monster Reference") # Calls _setup_ui via BasePanel
 
+        # Connect the image save signal to save image path in main thread
+        self.save_image_signal.connect(self._save_monster_image_path_slot)
+        
         # Load monsters after UI is set up
         self._load_initial_monsters()
 
@@ -449,8 +455,23 @@ class MonsterPanel(BasePanel):
 
         # Display monster image if available
         if monster.image_path:
+            logger.info(f"Monster has image_path: {monster.image_path}")
             try:
-                pixmap = QPixmap(monster.image_path)
+                # Handle relative paths by resolving against app_dir
+                image_path = monster.image_path
+                if not os.path.isabs(image_path):
+                    # This is a relative path, resolve it against app_dir
+                    app_dir = self.app_state.app_dir
+                    image_path = os.path.normpath(os.path.join(app_dir, image_path))
+                    logger.info(f"Resolved relative path to: {image_path}")
+                
+                # Check if file exists
+                if os.path.exists(image_path):
+                    logger.info(f"Image file exists at path: {image_path}")
+                else:
+                    logger.error(f"Image file does not exist at path: {image_path}")
+                    
+                pixmap = QPixmap(image_path)
                 if not pixmap.isNull():
                     # Scale the image to fit the label while maintaining aspect ratio
                     pixmap = pixmap.scaled(
@@ -459,14 +480,15 @@ class MonsterPanel(BasePanel):
                         Qt.SmoothTransformation
                     )
                     self.image_label.setPixmap(pixmap)
-                    logger.debug(f"Displayed monster image from: {monster.image_path}")
+                    logger.info(f"Successfully displayed monster image from: {image_path}")
                 else:
-                    logger.warning(f"Failed to load image: {monster.image_path}")
+                    logger.error(f"Failed to load image into QPixmap: {image_path}")
                     self.image_label.clear()
             except Exception as e:
-                logger.error(f"Error displaying monster image: {e}")
+                logger.error(f"Error displaying monster image: {e}", exc_info=True)
                 self.image_label.clear()
         else:
+            logger.info(f"Monster {monster.name} (ID: {monster.id}) has no image_path")
             self.image_label.clear()
             
         # Enable/disable image generation button
@@ -793,7 +815,6 @@ class MonsterPanel(BasePanel):
                 # Update the monster object with the image path in memory only
                 # NOTE: We don't save to the database here due to threading issues
                 # (SQLite objects created in a thread can only be used in that same thread)
-                # Image will still display but won't persist between sessions
                 self.current_monster.image_path = image_path
                 
                 # Display the image
@@ -807,6 +828,11 @@ class MonsterPanel(BasePanel):
                     )
                     self.image_label.setPixmap(pixmap)
                     logger.info(f"Monster image generated and displayed: {image_path}")
+                    
+                    # Emit signal to save image path in the main thread
+                    # This avoids threading issues with SQLite
+                    logger.info(f"Emitting save_image_signal with path: {image_path}")
+                    self.save_image_signal.emit(image_path)
                 else:
                     logger.error(f"Failed to load generated image: {image_path}")
                     self.image_label.setText("Failed to load generated image")
@@ -820,6 +846,59 @@ class MonsterPanel(BasePanel):
             callback=on_image_generated,
             monster_id=self.current_monster.id
         )
+
+    def _save_monster_image_path_slot(self, image_path):
+        """Slot to save the monster's image path to the database in the main thread."""
+        logger.info(f"_save_monster_image_path_slot called in main thread with path: {image_path}")
+        
+        if not self.current_monster or not self.current_monster.is_custom:
+            logger.warning("Cannot save image path: No current monster or monster is not custom")
+            return
+            
+        try:
+            # Convert absolute path to relative path based on app_dir for better portability
+            if image_path:
+                try:
+                    # Get the app_dir from app_state
+                    app_dir = self.app_state.app_dir
+                    logger.info(f"App directory: {app_dir}")
+                    image_path_obj = Path(image_path)
+                    logger.info(f"Original image path: {image_path_obj}")
+                    
+                    # Check if this is already an absolute path
+                    if image_path_obj.is_absolute():
+                        # Try to make it relative to app_dir
+                        try:
+                            rel_path = image_path_obj.relative_to(app_dir)
+                            # Store as a relative path with forward slashes for cross-platform compatibility
+                            rel_path_str = str(rel_path).replace("\\", "/")
+                            logger.info(f"Converted absolute path '{image_path}' to relative: '{rel_path_str}'")
+                            
+                            # Update the current monster with the relative path
+                            self.current_monster.image_path = rel_path_str
+                        except ValueError:
+                            # If the path is not relative to app_dir, keep it as is
+                            logger.warning(f"Could not convert absolute path to relative: {image_path}")
+                            # Keep using the original path
+                            self.current_monster.image_path = str(image_path)
+                except Exception as e:
+                    logger.warning(f"Error converting image path to relative: {e}")
+                    # Keep using the original path
+                    self.current_monster.image_path = str(image_path)
+            
+            logger.info(f"Final image path to save to database: {self.current_monster.image_path}")
+            
+            # Save to database using the db_manager in the main thread
+            saved_monster = self.db_manager.save_custom_monster(self.current_monster)
+            if saved_monster:
+                logger.info(f"Successfully saved monster with image_path to database. Returned monster has image_path: {saved_monster.image_path}")
+                # Update our current monster with any changes from the saved version
+                self.current_monster = saved_monster
+                self._add_or_update_monster_in_list(saved_monster)
+            else:
+                logger.error(f"Failed to save monster image path to database for {self.current_monster.name}")
+        except Exception as e:
+            logger.error(f"Error saving monster image path to database: {e}", exc_info=True)
 
     # --- State Management (Example) ---
     # Override if BasePanel requires specific state handling for this panel

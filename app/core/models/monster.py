@@ -2,7 +2,7 @@
 
 import json
 from dataclasses import dataclass, field, asdict
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 import logging
 
 @dataclass
@@ -141,74 +141,98 @@ class Monster:
 
         logger = logging.getLogger(__name__) # Get logger inside method
         logger.debug(f"Monster.from_dict called with data: {data}")
+        
+        # Check if image_path is in the data
+        if 'image_path' in mapped_data:
+            logger.info(f"Found image_path in monster data: {mapped_data['image_path']}")
+        elif 'image_path' in data:
+            # Try to extract it directly if mapping failed
+            logger.info(f"Found image_path in original data: {data['image_path']}")
+            mapped_data['image_path'] = data['image_path']
+        else:
+            logger.warning("No image_path found in monster data")
 
-        # Deserialize nested lists
+        # Process nested dataclass structures
         for field_name, field_type in cls.__annotations__.items():
-            # Handle List[SomeDataclass]
-            if hasattr(field_type, '__origin__') and field_type.__origin__ == list:
-                item_type = field_type.__args__[0]
-                if hasattr(item_type, '__dataclass_fields__') and field_name in mapped_data and isinstance(mapped_data[field_name], list):
-                     mapped_data[field_name] = [item_type(**item_data) for item_data in mapped_data[field_name]]
-                pass # Keep as is
+            # Skip if no value for this field
+            if field_name not in mapped_data:
+                continue
 
-            # Handle Optional[List[SomeDataclass]]
-            elif hasattr(field_type, '__origin__') and field_type.__origin__ == Optional:
-                 inner_type = field_type.__args__[0]
-                 if hasattr(inner_type, '__origin__') and inner_type.__origin__ == list:
-                    item_type = inner_type.__args__[0]
-                    logger.debug(f"Checking Optional[List] field: {field_name}, item_type: {item_type}")
-                    if hasattr(item_type, '__dataclass_fields__') and field_name in mapped_data and mapped_data[field_name] is not None:
-                        if isinstance(mapped_data[field_name], list):
-                            original_data = mapped_data[field_name]
-                            logger.debug(f"  Found list data for {field_name}: {original_data}")
+            # Handle MonsterSkill, MonsterAction, etc.
+            if field_name in ["skills", "senses", "traits", "actions"]:
+                # Get the appropriate subclass type (assume List[Type])
+                value = mapped_data[field_name]
+                if not value or not isinstance(value, list):
+                    continue # Skip if not a list or empty
+
+                # Determine the inner dataclass type from the type annotation
+                if hasattr(field_type, '__origin__') and field_type.__origin__ is list and len(field_type.__args__) > 0:
+                    inner_type = field_type.__args__[0]
+                    try:
+                        mapped_data[field_name] = [inner_type(**item) for item in value if isinstance(item, dict)]
+                    except Exception as e:
+                        logger.error(f"Error converting {field_name}: {e}")
+                        mapped_data[field_name] = [] # Set to empty list on error
+            elif field_name == "legendary_actions" and mapped_data.get(field_name) is not None:
+                # Similar to the above but handles the Optional wrapper
+                value = mapped_data[field_name]
+                if isinstance(value, list):
+                    # Determine the inner type, unwrapping Optional
+                    if (hasattr(field_type, '__origin__') and field_type.__origin__ is Union and 
+                        len(field_type.__args__) > 0 and field_type.__args__[1] is type(None)):
+                        # Optional[List[Type]] -> extract Type
+                        inner_type_wrapper = field_type.__args__[0]
+                        if hasattr(inner_type_wrapper, '__origin__') and inner_type_wrapper.__origin__ is list:
+                            inner_type = inner_type_wrapper.__args__[0]
                             try:
-                                mapped_data[field_name] = [item_type(**item_data) for item_data in original_data]
-                                logger.debug(f"  Successfully converted {field_name} to list of {item_type.__name__}")
+                                mapped_data[field_name] = [inner_type(**item) for item in value if isinstance(item, dict)]
                             except Exception as e:
-                                 logger.error(f"  Error converting item in {field_name} list: {e}", exc_info=True)
-                                 # Decide on error handling: skip field, use empty list, or raise?
-                                 # Let's default to None for the Optional field on error
-                                 mapped_data[field_name] = None
-                                 logger.warning(f"  Setting {field_name} to None due to conversion error.")
-                        else:
-                             logger.warning(f"  Expected list for {field_name}, but got {type(mapped_data[field_name])}. Setting to None.")
-                             mapped_data[field_name] = None
-                    elif field_name in mapped_data and mapped_data[field_name] is None:
-                         logger.debug(f"  Field {field_name} is explicitly None.")
-                         # Keep it None, which is valid for Optional
-                    elif field_name not in mapped_data:
-                         logger.debug(f"  Optional list field {field_name} not found in input data. Will default to None.")
-                         # Let the dataclass constructor handle the default (which is None)
+                                logger.error(f"Error converting legendary_actions: {e}")
+                                mapped_data[field_name] = None # Set to None on error
 
-
-        # Filter out keys not part of the dataclass
-        init_data = {k: v for k, v in mapped_data.items() if k in cls.__dataclass_fields__}
-        logger.debug(f"Final init_data for Monster: {init_data}")
-
+        # Create and return the monster object
         try:
-            instance = cls(**init_data)
-            logger.debug("Monster instance created successfully.")
-            return instance
+            monster = cls(**mapped_data)
+            logger.debug(f"Successfully created monster from dict: {monster.name}, image_path: {monster.image_path}")
+            return monster
         except Exception as e:
-            logger.error(f"Error creating Monster instance: {e}", exc_info=True)
-            # Reraise or return None/default? Reraising might be better.
+            logger.error(f"Error creating Monster object from dict: {e}")
             raise
 
     @classmethod
     def from_db_row(cls, row: Dict[str, Any], is_custom: bool = False) -> 'Monster':
         """Creates a Monster object from a database row (dictionary)."""
+        logger = logging.getLogger(__name__) # Get logger inside method
+        logger.debug(f"Monster.from_db_row called with is_custom={is_custom}, row keys: {list(row.keys())}")
+        
         if is_custom:
             # Custom monsters store data in a JSON blob
-            monster_data = json.loads(row.get('data', '{}'))
-            monster_data['id'] = row.get('id') # Add DB ID
-            monster_data['created_at'] = row.get('created_at')
-            monster_data['updated_at'] = row.get('updated_at')
-            monster_data['is_custom'] = True
-            monster_data['source'] = monster_data.get('source', 'Custom') # Ensure source defaults to Custom
-            # Ensure core fields are present even if missing in JSON blob
-            monster_data['name'] = row.get('name', monster_data.get('name', 'Unnamed Custom'))
+            try:
+                data_json = row.get('data', '{}')
+                logger.debug(f"Custom monster data JSON: {data_json[:150]}...") # Log start of JSON
+                monster_data = json.loads(data_json)
+                
+                # Check if image_path is in the serialized data
+                if 'image_path' in monster_data:
+                    logger.info(f"Found image_path in serialized data: {monster_data['image_path']}")
+                else:
+                    logger.warning(f"No image_path found in serialized monster data for ID {row.get('id')}")
+                
+                monster_data['id'] = row.get('id') # Add DB ID
+                monster_data['created_at'] = row.get('created_at')
+                monster_data['updated_at'] = row.get('updated_at')
+                monster_data['is_custom'] = True
+                monster_data['source'] = monster_data.get('source', 'Custom') # Ensure source defaults to Custom
+                # Ensure core fields are present even if missing in JSON blob
+                monster_data['name'] = row.get('name', monster_data.get('name', 'Unnamed Custom'))
 
-            return cls.from_dict(monster_data)
+                monster = cls.from_dict(monster_data)
+                logger.debug(f"Created custom monster from DB row: {monster.name}, ID: {monster.id}")
+                logger.info(f"Custom monster image_path after from_dict: {monster.image_path}")
+                return monster
+            except Exception as e:
+                logger.error(f"Error creating custom monster from DB row: {e}", exc_info=True)
+                raise
         else:
             # Standard monsters have individual columns
             # Basic mapping
@@ -268,7 +292,6 @@ class Monster:
                      init_data['legendary_actions'] = None
             except (json.JSONDecodeError, TypeError):
                  init_data['legendary_actions'] = None
-
 
             # Filter out None values for fields that don't allow None
             final_init_data = {}

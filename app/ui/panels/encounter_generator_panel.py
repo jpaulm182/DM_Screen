@@ -164,13 +164,13 @@ class EncounterGeneratorPanel(BasePanel):
         # Get a list of available monsters from the database to hint to the LLM
         monster_names = []
         try:
-            # Get common monster names from the database (first 20 only to keep prompt size manageable)
-            monster_results = self.db_manager.get_all_monster_names(include_custom=False, include_standard=True)
+            # Get common monster names from the database (first 40 to provide more variety options)
+            monster_results = self.db_manager.get_all_monster_names(include_custom=True, include_standard=True)
             if monster_results:
-                # Limit to 20 common monsters to avoid excessively long prompts
-                common_monsters = [m['name'] for m in monster_results[:20]]
+                # Increase limit to provide more variety
+                common_monsters = [m['name'] for m in monster_results[:40]]
                 monster_names = common_monsters
-                logger.debug(f"Retrieved {len(monster_names)} standard monster names for prompt")
+                logger.debug(f"Retrieved {len(monster_names)} monster names for prompt")
         except Exception as e:
             logger.error(f"Error retrieving monster names for prompt: {e}")
         
@@ -185,16 +185,19 @@ Parameters:
 - Context: {params['context'] if params['context'] else 'None'}
 
 Instructions:
-1. Create a balanced encounter matching the difficulty, player count, and level.
-2. List the specific monster types and quantities (e.g., ["Goblin", "Goblin", "Goblin Boss"]).
+1. Create a balanced, diverse encounter matching the difficulty, player count, and level.
+2. List the specific monster types and quantities (e.g., ["Goblin Scout", "Goblin Shaman", "Goblin Boss"]).
 3. Provide a brief narrative description setting the scene (2-3 sentences).
 4. Suggest 1-2 simple tactical considerations for the monsters.
 5. Format the entire response as a single JSON object with keys: 'monsters' (list of strings), 'narrative' (string), 'tactics' (string).
 
 IMPORTANT: 
-- Please use standard D&D 5e monsters when possible.
-- Prefer common/standard monsters rather than rare or exotic ones.
-- Use exact official monster names from the Monster Manual and other official sources.
+- Create interesting and varied encounters with diverse monster combinations.
+- Avoid using multiple copies of the exact same monster type (e.g., don't use ["Goblin", "Goblin", "Goblin"]).
+- Instead, create variety by using different variants or related creatures (e.g., ["Goblin Scout", "Goblin Archer", "Goblin Boss"]).
+- Match monsters logically to the environment and include interesting terrain features.
+- Consider adding environmental hazards, traps, or unique combat conditions to make encounters more dynamic.
+- Use exact official monster names from the Monster Manual and other official sources when possible.
 """
 
         # Add monster suggestions if available
@@ -203,15 +206,15 @@ IMPORTANT:
 Available Monsters (existing in database):
 {', '.join(monster_names)}
 
-You can use monsters from this list or other standard D&D 5e monsters. Using monsters from this list will be more efficient.
+You can use monsters from this list or other standard D&D 5e monsters. Using monsters from this list will be more efficient, but feel free to include interesting variants or specialized versions to increase diversity.
 """
 
         prompt += """
 Example JSON:
 {
-  "monsters": ["Kobold", "Kobold", "Winged Kobold"],
-  "narrative": "As the party enters the dusty chamber, they hear scrabbling sounds from behind stalagmites. Three small figures emerge, brandishing crude spears.",
-  "tactics": "The Kobolds use pack tactics if possible. The Winged Kobold stays airborne, dropping rocks."
+  "monsters": ["Kobold Scout", "Kobold Sorcerer", "Winged Kobold"],
+  "narrative": "As the party enters the dusty chamber, they hear scrabbling sounds from behind stalagmites. A winged kobold perches on a ledge while two others prepare an ambush, one holding a wand crackling with energy.",
+  "tactics": "The Winged Kobold stays airborne, dropping rocks. The Kobold Scout uses hit-and-run tactics from the shadows while the Sorcerer casts spells from a protected position."
 }
 
 **IMPORTANT: Output ONLY the JSON object. No extra text before or after.**

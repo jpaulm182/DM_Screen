@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 from typing import Optional, List
 from dataclasses import asdict
 from pathlib import Path
@@ -279,22 +280,15 @@ class MonsterEditDialog(QDialog):
 
     def _populate_fields(self):
         """Fill the UI fields with data from the self.monster object."""
-        if not self.monster:
-            return
-
-        # Basic fields
+        # Fill basic fields
         self.name_input.setText(self.monster.name)
-        self.size_combo.setCurrentText(self.monster.size)
         self.type_input.setText(self.monster.type)
-        self.alignment_input.setText(self.monster.alignment)
-        self.ac_spin.setValue(self.monster.armor_class)
-        self.hp_input.setText(self.monster.hit_points)
-        self.speed_input.setText(self.monster.speed)
-        self.cr_input.setText(self.monster.challenge_rating)
-        self.languages_input.setText(self.monster.languages)
-        self.description_edit.setText(self.monster.description or "")
-        self.source_input.setText(self.monster.source or "Custom") # Default to Custom
-
+        if self.monster.size and self.size_combo.findText(self.monster.size, Qt.MatchExactly) >= 0:
+             self.size_combo.setCurrentText(self.monster.size)
+        if self.monster.alignment:
+             self.alignment_input.setText(self.monster.alignment)
+        self.description_edit.setPlainText(self.monster.description or "")
+        
         # Abilities
         self.str_spin.setValue(self.monster.strength)
         self.dex_spin.setValue(self.monster.dexterity)
@@ -302,15 +296,24 @@ class MonsterEditDialog(QDialog):
         self.int_spin.setValue(self.monster.intelligence)
         self.wis_spin.setValue(self.monster.wisdom)
         self.cha_spin.setValue(self.monster.charisma)
-
-        # Complex fields (serialize to JSON for text edits)
-        # Wrap in try-except blocks as JSON operations can fail
+        
+        # Combat stats
+        self.ac_spin.setValue(self.monster.armor_class)
+        self.hp_input.setText(self.monster.hit_points)
+        self.speed_input.setText(self.monster.speed)
+        self.cr_input.setText(self.monster.challenge_rating)
+        self.languages_input.setText(self.monster.languages)
+        
+        # Complex fields (as JSON text for now)
+        # We use json.dumps with indent=2 for readability
         try:
+            # Skills list
             self.skills_edit.setText(json.dumps([asdict(s) for s in self.monster.skills], indent=2) if self.monster.skills else "[]")
         except Exception as e:
-            logger.warning(f"Could not serialize skills: {e}")
-            self.skills_edit.setText("[]")
+             logger.warning(f"Could not serialize skills: {e}")
+             self.skills_edit.setText("[]")
         try:
+            # Senses list 
             self.senses_edit.setText(json.dumps([asdict(s) for s in self.monster.senses], indent=2) if self.monster.senses else "[]")
         except Exception as e:
              logger.warning(f"Could not serialize senses: {e}")
@@ -334,7 +337,15 @@ class MonsterEditDialog(QDialog):
         # Load image if available
         if self.monster.image_path:
             try:
-                pixmap = QPixmap(self.monster.image_path)
+                # Handle relative paths by resolving against app_dir
+                image_path = self.monster.image_path
+                if not os.path.isabs(image_path):
+                    # This is a relative path, resolve it against app_dir
+                    app_dir = self.llm_service.app_state.app_dir
+                    image_path = os.path.normpath(os.path.join(app_dir, image_path))
+                    logger.debug(f"Resolved relative path to: {image_path}")
+                
+                pixmap = QPixmap(image_path)
                 if not pixmap.isNull():
                     # Scale the image to fit the label while maintaining aspect ratio
                     pixmap = pixmap.scaled(
@@ -613,12 +624,37 @@ class MonsterEditDialog(QDialog):
                 return
                 
             try:
+                # Convert absolute path to relative path for better portability
+                try:
+                    app_dir = self.llm_service.app_state.app_dir
+                    image_path_obj = Path(image_path)
+                    
+                    # Check if this is an absolute path
+                    if image_path_obj.is_absolute():
+                        # Try to make it relative to app_dir
+                        try:
+                            rel_path = image_path_obj.relative_to(app_dir)
+                            # Store as a relative path with forward slashes for cross-platform compatibility
+                            image_path = str(rel_path).replace("\\", "/")
+                            logger.info(f"Converted absolute path to relative: {image_path}")
+                        except ValueError:
+                            # If the path is not relative to app_dir, keep it as is
+                            logger.warning(f"Could not convert absolute path to relative: {image_path}")
+                except Exception as e:
+                    logger.warning(f"Error converting image path to relative: {e}")
+                
                 # Update the monster object with the image path in memory only
                 # The image path will be saved when the dialog is accepted and the monster is saved
                 self.monster.image_path = image_path
                 
-                # Display the image
-                pixmap = QPixmap(image_path)
+                # Display the image - use the original absolute path for display
+                image_path_for_display = image_path
+                if not os.path.isabs(image_path_for_display):
+                    # Resolve relative path for display
+                    app_dir = self.llm_service.app_state.app_dir
+                    image_path_for_display = os.path.normpath(os.path.join(app_dir, image_path))
+                    
+                pixmap = QPixmap(image_path_for_display)
                 if not pixmap.isNull():
                     # Scale the image to fit the label while maintaining aspect ratio
                     pixmap = pixmap.scaled(
@@ -630,7 +666,7 @@ class MonsterEditDialog(QDialog):
                     self.image_label.setText("")  # Clear any text
                     logger.info(f"Monster image generated and displayed: {image_path}")
                 else:
-                    logger.error(f"Failed to load generated image: {image_path}")
+                    logger.error(f"Failed to load generated image: {image_path_for_display}")
                     self.image_label.setText("Failed to load generated image")
             except Exception as e:
                 logger.error(f"Error processing generated image: {e}")
