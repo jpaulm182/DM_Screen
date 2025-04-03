@@ -307,13 +307,21 @@ SESSION NOTES:
             return
         
         # Create a title with date
-        date_str = QDateTime.currentDateTime().toString("yyyy-MM-dd")
+        current_datetime = QDateTime.currentDateTime()
+        date_str = current_datetime.toString("yyyy-MM-dd")
         title = f"Session Recap ({style}) - {date_str}"
         
         # Create a new note with the recap content
         parent = self.parent()
         if parent:
             parent._create_note_with_content(title, recap_text, tags="recap,summary")
+            
+            # Update the last recap date in app settings
+            iso_date = current_datetime.toString(Qt.ISODate)
+            parent.last_recap_date = iso_date
+            parent.app_state.set_setting("last_recap_date", iso_date)
+            parent.app_state.save_settings()
+            
             QMessageBox.information(
                 self, "Success", 
                 "Session recap saved as a new note."
@@ -334,11 +342,19 @@ class SessionNotesPanel(BasePanel):
         self.all_tags = []
         self.current_note = None
         
+        # This date tracks when the last recap was generated
+        # When generating a new recap, only notes created or updated after
+        # this date will be included by default, unless notes are explicitly selected
+        self.last_recap_date = None
+        
         # Call parent constructor which will call _setup_ui
         super().__init__(app_state, "Session Notes")
         
         # Load notes
         self._load_notes()
+        
+        # Load last recap date from settings
+        self.last_recap_date = self.app_state.get_setting("last_recap_date")
     
     def _setup_ui(self):
         """Set up the panel UI components"""
@@ -858,11 +874,11 @@ class SessionNotesPanel(BasePanel):
 
     def _generate_recap(self):
         """Open the dialog to generate a session recap"""
-        # Check if any notes are selected in list, otherwise include all filtered notes
+        # Check if any notes are selected in list, otherwise include all notes since last recap
         selected_items = self.notes_list.selectedItems()
         
         if not selected_items:
-            # No notes selected, use all filtered notes
+            # No notes selected, use all notes since last recap
             if not self.filtered_notes:
                 QMessageBox.warning(
                     self, "No Notes Available", 
@@ -870,7 +886,33 @@ class SessionNotesPanel(BasePanel):
                     "Please create some session notes first."
                 )
                 return
-            notes_to_include = self.filtered_notes
+            
+            if self.last_recap_date:
+                # Filter notes since last recap
+                notes_since_last_recap = []
+                for note in self.filtered_notes:
+                    # Check if note was created or updated after last recap
+                    note_date = max(
+                        QDateTime.fromString(note['created_at'], Qt.ISODate),
+                        QDateTime.fromString(note['updated_at'], Qt.ISODate)
+                    )
+                    last_recap_dt = QDateTime.fromString(self.last_recap_date, Qt.ISODate)
+                    if note_date >= last_recap_dt:
+                        notes_since_last_recap.append(note)
+                
+                if notes_since_last_recap:
+                    notes_to_include = notes_since_last_recap
+                else:
+                    # If no notes since last recap, use all filtered notes
+                    notes_to_include = self.filtered_notes
+                    QMessageBox.information(
+                        self, "No New Notes", 
+                        "No new notes found since the last recap. "
+                        "All current notes will be included in the recap."
+                    )
+            else:
+                # No last recap date, use all filtered notes
+                notes_to_include = self.filtered_notes
         else:
             # Use selected notes
             selected_notes = []
