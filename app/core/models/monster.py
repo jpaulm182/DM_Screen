@@ -85,6 +85,9 @@ class Monster:
     # Fluff & Source
     description: Optional[str] = None # General description or lore
     source: str = "Custom" # Origin (e.g., "MM", "Custom", "LLM")
+    
+    # Image related fields
+    image_path: Optional[str] = None # Path to monster image (can be relative or absolute)
 
     # Timestamps for custom monsters
     created_at: Optional[str] = None

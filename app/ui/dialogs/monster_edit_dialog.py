@@ -5,6 +5,7 @@ import json
 import logging
 from typing import Optional, List
 from dataclasses import asdict
+from pathlib import Path
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QTextEdit,
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QWidget, QFrame, QGroupBox, QInputDialog, QApplication
 )
 from PySide6.QtCore import Qt, Slot, QObject, Signal, QRunnable, QThreadPool
+from PySide6.QtGui import QPixmap
 
 from app.core.models.monster import (
     Monster, MonsterSkill, MonsterSense, MonsterTrait, MonsterAction, MonsterLegendaryAction
@@ -167,6 +169,32 @@ class MonsterEditDialog(QDialog):
         self.languages_input.setPlaceholderText("Comma-separated, e.g., Common, Draconic")
         form_layout.addRow("Languages:", self.languages_input)
 
+        # Add an image section
+        image_group = QGroupBox("Monster Image")
+        image_layout = QVBoxLayout()
+        
+        # Image display
+        self.image_display_layout = QHBoxLayout()
+        self.image_label = QLabel("No image")
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setMinimumHeight(200)
+        self.image_label.setMaximumHeight(300)
+        self.image_label.setStyleSheet("background-color: #f0f0f0; border: 1px solid #ccc;")
+        self.image_display_layout.addWidget(self.image_label)
+        
+        # Image buttons
+        button_layout = QVBoxLayout()
+        self.generate_image_btn = QPushButton("Generate Image")
+        self.generate_image_btn.clicked.connect(self._generate_monster_image)
+        button_layout.addWidget(self.generate_image_btn)
+        button_layout.addStretch()
+        
+        self.image_display_layout.addLayout(button_layout)
+        image_layout.addLayout(self.image_display_layout)
+        
+        image_group.setLayout(image_layout)
+        content_layout.addWidget(image_group)
+
         content_layout.addLayout(form_layout) # Add main form to content layout
 
         # --- Complex Fields (Text Areas) ---
@@ -303,6 +331,27 @@ class MonsterEditDialog(QDialog):
              logger.warning(f"Could not serialize legendary actions: {e}")
              self.legendary_actions_edit.setText("null")
 
+        # Load image if available
+        if self.monster.image_path:
+            try:
+                pixmap = QPixmap(self.monster.image_path)
+                if not pixmap.isNull():
+                    # Scale the image to fit the label while maintaining aspect ratio
+                    pixmap = pixmap.scaled(
+                        300, 300,
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation
+                    )
+                    self.image_label.setPixmap(pixmap)
+                    self.image_label.setText("")  # Clear any text
+                else:
+                    self.image_label.setText("Image could not be loaded")
+            except Exception as e:
+                logger.error(f"Error loading monster image: {e}")
+                self.image_label.setText("Error loading image")
+        else:
+            self.image_label.setText("No image")
+
     def _update_monster_from_fields(self) -> bool:
         """Update the self.monster object from UI fields. Returns True on success, False on validation/parse error."""
         logger.debug("Updating monster object from UI fields...")
@@ -405,6 +454,9 @@ class MonsterEditDialog(QDialog):
              QMessageBox.warning(self, "Data Error", f"Error creating Legendary Action objects from JSON: {e}")
              self.legendary_actions_edit.setFocus()
              return False
+
+        # Preserve the image path
+        # Note: We don't modify image_path here, we preserve whatever was already there
 
         logger.debug("Successfully updated monster object from UI fields.")
         return True # Success
@@ -517,5 +569,78 @@ class MonsterEditDialog(QDialog):
         if self.monster and self.monster.id is not None:
             return self.monster
         return None
+
+    def _generate_monster_image(self):
+        """Generate an image for the monster using the LLM service."""
+        # First update the monster object with current field values
+        if not self._update_monster_from_fields():
+            return
+        
+        # Show a loading message
+        self.image_label.setText("Generating image...")
+        self.generate_image_btn.setEnabled(False)
+        
+        # Create a detailed prompt based on monster details
+        prompt = f"{self.monster.name}, a {self.monster.size.lower()} {self.monster.type}"
+        
+        if self.monster.description:
+            # Add description but limit its length
+            max_desc_len = 100
+            desc = self.monster.description
+            if len(desc) > max_desc_len:
+                desc = desc[:max_desc_len] + "..."
+            prompt += f". {desc}"
+            
+        logger.info(f"Generating image for monster: {self.monster.name}")
+        
+        # Define callback to process the image
+        def on_image_generated(image_path, error):
+            self.generate_image_btn.setEnabled(True)
+            
+            if error:
+                logger.error(f"Image generation failed: {error}")
+                self.image_label.setText(f"Image generation failed: {error}")
+                QMessageBox.warning(
+                    self, 
+                    "Image Generation Failed",
+                    f"Failed to generate monster image: {error}"
+                )
+                return
+                
+            if not image_path:
+                logger.error("No image path returned from image generation")
+                self.image_label.setText("Image generation failed")
+                return
+                
+            try:
+                # Update the monster object with the image path in memory only
+                # The image path will be saved when the dialog is accepted and the monster is saved
+                self.monster.image_path = image_path
+                
+                # Display the image
+                pixmap = QPixmap(image_path)
+                if not pixmap.isNull():
+                    # Scale the image to fit the label while maintaining aspect ratio
+                    pixmap = pixmap.scaled(
+                        300, 300,
+                        Qt.KeepAspectRatio, 
+                        Qt.SmoothTransformation
+                    )
+                    self.image_label.setPixmap(pixmap)
+                    self.image_label.setText("")  # Clear any text
+                    logger.info(f"Monster image generated and displayed: {image_path}")
+                else:
+                    logger.error(f"Failed to load generated image: {image_path}")
+                    self.image_label.setText("Failed to load generated image")
+            except Exception as e:
+                logger.error(f"Error processing generated image: {e}")
+                self.image_label.setText("Error processing generated image")
+        
+        # Generate the image asynchronously
+        self.llm_service.generate_image_async(
+            prompt=prompt,
+            callback=on_image_generated,
+            monster_id=self.monster.id
+        )
 
 # End of class MonsterEditDialog 

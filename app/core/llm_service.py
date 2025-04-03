@@ -11,6 +11,8 @@ import time
 import logging
 from enum import Enum
 from pathlib import Path
+import base64
+import uuid
 
 import openai
 from openai import OpenAI
@@ -161,6 +163,10 @@ class LLMService(QObject):
         
         # Initialize API clients
         self._init_clients()
+        
+        # Ensure image directory exists
+        self.monster_images_dir = self.app_state.app_dir / "data" / "monster_images"
+        self.monster_images_dir.mkdir(parents=True, exist_ok=True)
     
     def _init_clients(self):
         """Initialize API clients based on available credentials"""
@@ -396,4 +402,115 @@ class LLMService(QObject):
         messages = [{"role": "user", "content": prompt}]
         
         # Generate the completion
-        return self.generate_completion(model, messages, system_prompt, temperature, max_tokens) 
+        return self.generate_completion(model, messages, system_prompt, temperature, max_tokens)
+
+    def generate_image(self, prompt, output_path=None, monster_id=None, size="1024x1024"):
+        """
+        Generate an image using OpenAI DALL-E through GPT-4o
+        
+        Args:
+            prompt (str): The image generation prompt
+            output_path (str or Path, optional): Path to save the image to.
+                If None, a default path in the monster_images directory will be used.
+            monster_id (int, optional): ID of the monster for naming the file.
+            size (str, optional): Image size. One of "1024x1024", "1024x1792", "1792x1024".
+                Default: "1024x1024".
+                
+        Returns:
+            str: Path to the saved image file, or None if generation failed
+        """
+        if not self.openai_client:
+            self.logger.error("OpenAI client not initialized. Please set an API key.")
+            return None
+            
+        try:
+            self.logger.info(f"Generating image for prompt: {prompt}")
+            
+            # Format the prompt for better results and to avoid content policy violations
+            # Avoid words like "terrifying", "scary", "evil", etc.
+            enhanced_prompt = f"A fantasy art style illustration of a D&D monster: {prompt}. Detailed, colorful character illustration for a tabletop roleplaying game."
+            
+            # Remove potentially problematic words
+            problematic_words = ["terrifying", "scary", "fearsome", "evil", "demonic", "satanic", "bloody", "gore", "violent"]
+            for word in problematic_words:
+                enhanced_prompt = enhanced_prompt.replace(word, "")
+            
+            # Generate image
+            try:
+                response = self.openai_client.images.generate(
+                    model="dall-e-3",
+                    prompt=enhanced_prompt,
+                    size=size,
+                    quality="standard",
+                    n=1,
+                    response_format="b64_json"
+                )
+            except Exception as api_error:
+                # If there's a content policy violation, try a more sanitized prompt
+                if "content_policy_violation" in str(api_error):
+                    self.logger.warning(f"Content policy violation, trying more generic prompt for: {prompt}")
+                    # Try with a very generic prompt based only on the creature type
+                    safe_creature_type = prompt.split(',')[0] if ',' in prompt else prompt
+                    # Make an extremely safe prompt
+                    safe_prompt = f"A fantasy illustration of a {safe_creature_type} for a roleplaying game. Child-friendly, colorful, non-threatening."
+                    
+                    response = self.openai_client.images.generate(
+                        model="dall-e-3",
+                        prompt=safe_prompt,
+                        size=size,
+                        quality="standard",
+                        n=1,
+                        response_format="b64_json"
+                    )
+                else:
+                    # Re-raise if it's not a content policy violation
+                    raise
+            
+            # Get the base64-encoded image data
+            image_data = response.data[0].b64_json
+            revised_prompt = response.data[0].revised_prompt
+            
+            self.logger.debug(f"Image generated with revised prompt: {revised_prompt}")
+            
+            # Determine output path if not provided
+            if not output_path:
+                filename = f"monster_{monster_id or uuid.uuid4()}.png"
+                output_path = self.monster_images_dir / filename
+            else:
+                output_path = Path(output_path)
+                
+            # Ensure the directory exists
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Save image
+            with open(output_path, "wb") as f:
+                f.write(base64.b64decode(image_data))
+                
+            self.logger.info(f"Image saved to {output_path}")
+            return str(output_path)
+            
+        except Exception as e:
+            self.logger.error(f"Error generating image: {e}", exc_info=True)
+            return None
+            
+    def generate_image_async(self, prompt, callback, output_path=None, monster_id=None, size="1024x1024"):
+        """
+        Generate an image asynchronously
+        
+        Args:
+            prompt (str): The image generation prompt
+            callback (callable): Function to call with result (path_to_image, error)
+            output_path (str or Path, optional): Path to save the image to
+            monster_id (int, optional): ID of the monster for naming the file
+            size (str, optional): Image size
+        """
+        def run_in_thread():
+            try:
+                path = self.generate_image(prompt, output_path, monster_id, size)
+                callback(path, None)
+            except Exception as e:
+                self.logger.error(f"Error in async image generation: {e}", exc_info=True)
+                callback(None, str(e))
+                
+        # Run in thread pool
+        self.thread_pool.start(QRunnable.create(run_in_thread)) 

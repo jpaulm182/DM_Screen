@@ -11,7 +11,9 @@ Features:
 """
 
 import logging
+import os
 from typing import List, Optional, Dict, Any
+from pathlib import Path
 
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -22,7 +24,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem # Added QListWidgetItem
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtGui import QFont, QIcon, QPixmap
 
 from app.ui.panels.base_panel import BasePanel
 from app.core.models.monster import Monster # Import Monster dataclass
@@ -190,6 +192,25 @@ class MonsterPanel(BasePanel):
         self.meta_label = QLabel("") # For size, type, alignment
         self.meta_label.setStyleSheet("font-style: italic;")
         self.stat_block_layout.addWidget(self.meta_label)
+        
+        # Add image display area
+        self.image_container = QHBoxLayout()
+        self.image_label = QLabel("")
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setMinimumHeight(200)
+        self.image_label.setMaximumHeight(300)
+        self.image_container.addWidget(self.image_label)
+        
+        # Add image generation button
+        self.image_button_container = QVBoxLayout()
+        self.generate_image_btn = QPushButton("Generate Image")
+        self.generate_image_btn.clicked.connect(self._generate_monster_image)
+        self.generate_image_btn.setEnabled(False)
+        self.image_button_container.addWidget(self.generate_image_btn)
+        self.image_button_container.addStretch()
+        
+        self.image_container.addLayout(self.image_button_container)
+        self.stat_block_layout.addLayout(self.image_container)
         
         self.stat_block_layout.addWidget(QFrame(frameShape=QFrame.HLine))
         
@@ -426,6 +447,31 @@ class MonsterPanel(BasePanel):
             self.cr_label.setVisible(False)
             self.xp_label.setVisible(False)
 
+        # Display monster image if available
+        if monster.image_path:
+            try:
+                pixmap = QPixmap(monster.image_path)
+                if not pixmap.isNull():
+                    # Scale the image to fit the label while maintaining aspect ratio
+                    pixmap = pixmap.scaled(
+                        300, 300,
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation
+                    )
+                    self.image_label.setPixmap(pixmap)
+                    logger.debug(f"Displayed monster image from: {monster.image_path}")
+                else:
+                    logger.warning(f"Failed to load image: {monster.image_path}")
+                    self.image_label.clear()
+            except Exception as e:
+                logger.error(f"Error displaying monster image: {e}")
+                self.image_label.clear()
+        else:
+            self.image_label.clear()
+            
+        # Enable/disable image generation button
+        self.generate_image_btn.setEnabled(True)
+
         # Clear previous dynamic content (Traits, Actions, etc.)
         self._clear_layout(self.traits_layout)
         self._clear_layout(self.actions_layout)
@@ -494,6 +540,9 @@ class MonsterPanel(BasePanel):
         self.cr_label.clear()
         self.xp_label.clear() # Clear XP label
         self.description_label.clear()
+        # Clear image
+        self.image_label.clear()
+        self.image_label.setPixmap(QPixmap())
         # Clear dynamic layouts
         self._clear_layout(self.traits_layout)
         self._clear_layout(self.actions_layout)
@@ -650,6 +699,7 @@ class MonsterPanel(BasePanel):
         self.add_to_combat_btn.setEnabled(has_selection)
         self.edit_monster_btn.setEnabled(is_custom_selected)
         self.delete_monster_btn.setEnabled(is_custom_selected)
+        self.generate_image_btn.setEnabled(has_selection)
 
     # Helper to update internal list after create/edit
     def _add_or_update_monster_in_list(self, updated_monster: Monster):
@@ -701,6 +751,75 @@ class MonsterPanel(BasePanel):
             
         # Not found
         return None
+
+    def _generate_monster_image(self):
+        """Generate an image for the current monster using the LLM service."""
+        if not self.current_monster:
+            return
+        
+        # Show a loading message
+        self.image_label.setText("Generating image...")
+        
+        # Create a detailed prompt based on monster details
+        prompt = f"{self.current_monster.name}, a {self.current_monster.size.lower()} {self.current_monster.type}"
+        if self.current_monster.description:
+            # Add description but limit its length
+            max_desc_len = 100
+            desc = self.current_monster.description
+            if len(desc) > max_desc_len:
+                desc = desc[:max_desc_len] + "..."
+            prompt += f". {desc}"
+            
+        logger.info(f"Generating image for monster: {self.current_monster.name}")
+        
+        # Define callback to process the image
+        def on_image_generated(image_path, error):
+            if error:
+                logger.error(f"Image generation failed: {error}")
+                self.image_label.setText(f"Image generation failed: {error}")
+                QMessageBox.warning(
+                    self, 
+                    "Image Generation Failed",
+                    f"Failed to generate monster image: {error}"
+                )
+                return
+                
+            if not image_path:
+                logger.error("No image path returned from image generation")
+                self.image_label.setText("Image generation failed")
+                return
+                
+            try:
+                # Update the monster object with the image path in memory only
+                # NOTE: We don't save to the database here due to threading issues
+                # (SQLite objects created in a thread can only be used in that same thread)
+                # Image will still display but won't persist between sessions
+                self.current_monster.image_path = image_path
+                
+                # Display the image
+                pixmap = QPixmap(image_path)
+                if not pixmap.isNull():
+                    # Scale the image to fit the label while maintaining aspect ratio
+                    pixmap = pixmap.scaled(
+                        300, 300,
+                        Qt.KeepAspectRatio, 
+                        Qt.SmoothTransformation
+                    )
+                    self.image_label.setPixmap(pixmap)
+                    logger.info(f"Monster image generated and displayed: {image_path}")
+                else:
+                    logger.error(f"Failed to load generated image: {image_path}")
+                    self.image_label.setText("Failed to load generated image")
+            except Exception as e:
+                logger.error(f"Error processing generated image: {e}")
+                self.image_label.setText("Error processing generated image")
+        
+        # Generate the image asynchronously
+        self.llm_service.generate_image_async(
+            prompt=prompt,
+            callback=on_image_generated,
+            monster_id=self.current_monster.id
+        )
 
     # --- State Management (Example) ---
     # Override if BasePanel requires specific state handling for this panel
