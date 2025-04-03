@@ -13,19 +13,22 @@ Features:
 - Keyboard shortcuts
 - Quick HP updates
 - Combat log integration
+- View monster and character details
 """
 
 from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QPushButton,
     QLineEdit, QSpinBox, QHBoxLayout, QVBoxLayout, QComboBox,
     QLabel, QCheckBox, QMenu, QMessageBox, QDialog, QDialogButtonBox,
-    QGroupBox, QWidget, QStyledItemDelegate, QStyle, QToolButton
+    QGroupBox, QWidget, QStyledItemDelegate, QStyle, QToolButton,
+    QTabWidget, QScrollArea, QFormLayout, QFrame
 )
 from PySide6.QtCore import Qt, QTimer, Signal, Slot, QSize
 from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QBrush, QPalette
 import random
 
 from app.ui.panels.base_panel import BasePanel
+from app.ui.panels.panel_category import PanelCategory
 
 # D&D 5e Conditions
 CONDITIONS = [
@@ -104,6 +107,616 @@ class HPUpdateDelegate(QStyledItemDelegate):
         self.hpChanged.emit(index.row(), value)
 
 # --- Dialog Classes --- 
+
+class CombatantDetailsDialog(QDialog):
+    """Dialog for displaying monster or character details"""
+    def __init__(self, parent=None, combatant_data=None, combatant_type=None):
+        super().__init__(parent)
+        self.combatant_data = combatant_data
+        self.combatant_type = combatant_type  # "monster", "character", or "unknown"
+        
+        # Debug: Print raw combatant data
+        print(f"[CombatDetailsDialog] Received data for {combatant_type}: {combatant_data}")
+        
+        # If it's an object with __dict__, print its attributes
+        if hasattr(combatant_data, '__dict__'):
+            print(f"[CombatDetailsDialog] Attributes: {combatant_data.__dict__}")
+        
+        # Helper function to get attribute from either dict or object
+        def get_attr(obj, attr, default=None, alt_attrs=None):
+            """Get attribute from object or dict, trying alternate attribute names if specified"""
+            alt_attrs = alt_attrs or []
+            
+            result = default
+            source = "default"
+            
+            if isinstance(obj, dict):
+                # Try the main attribute name first
+                if attr in obj:
+                    result = obj[attr]
+                    source = f"dict[{attr}]"
+                # Try alternative attribute names
+                elif any(alt_attr in obj for alt_attr in alt_attrs):
+                    for alt_attr in alt_attrs:
+                        if alt_attr in obj:
+                            result = obj[alt_attr]
+                            source = f"dict[{alt_attr}]"
+                            break
+                # Check if stats are nested in a 'stats' dictionary
+                elif 'stats' in obj and isinstance(obj['stats'], dict):
+                    if attr in obj['stats']:
+                        result = obj['stats'][attr]
+                        source = f"dict[stats][{attr}]"
+                    else:
+                        for alt_attr in alt_attrs:
+                            if alt_attr in obj['stats']:
+                                result = obj['stats'][alt_attr]
+                                source = f"dict[stats][{alt_attr}]"
+                                break
+                
+                # If attribute is ability_scores, check for individual abilities
+                elif attr == "ability_scores":
+                    # Try to build ability_scores from individual attributes
+                    ability_scores = {}
+                    ability_pairs = [
+                        ("strength", "str"), 
+                        ("dexterity", "dex"), 
+                        ("constitution", "con"),
+                        ("intelligence", "int"), 
+                        ("wisdom", "wis"), 
+                        ("charisma", "cha")
+                    ]
+                    
+                    for full_name, short_name in ability_pairs:
+                        # Check for abilities in the main dict
+                        if full_name in obj:
+                            ability_scores[short_name] = obj[full_name]
+                        elif short_name in obj:
+                            ability_scores[short_name] = obj[short_name]
+                        # Check in stats dict if it exists
+                        elif 'stats' in obj and isinstance(obj['stats'], dict):
+                            if full_name in obj['stats']:
+                                ability_scores[short_name] = obj['stats'][full_name]
+                            elif short_name in obj['stats']:
+                                ability_scores[short_name] = obj['stats'][short_name]
+                    
+                    # If we found any abilities, return them
+                    if ability_scores:
+                        result = ability_scores
+                        source = "individual_dict_attrs"
+            
+            # Try getattr for object access
+            elif hasattr(obj, attr):
+                result = getattr(obj, attr)
+                source = f"obj.{attr}"
+            # Try alternative attributes for objects
+            elif any(hasattr(obj, alt_attr) for alt_attr in alt_attrs):
+                for alt_attr in alt_attrs:
+                    if hasattr(obj, alt_attr):
+                        result = getattr(obj, alt_attr)
+                        source = f"obj.{alt_attr}"
+                        break
+            
+            # If attribute is ability_scores, check for individual abilities
+            elif attr == "ability_scores" and not hasattr(obj, attr):
+                # Try to build ability_scores from individual attributes
+                ability_scores = {}
+                ability_pairs = [
+                    ("strength", "str"), 
+                    ("dexterity", "dex"), 
+                    ("constitution", "con"),
+                    ("intelligence", "int"), 
+                    ("wisdom", "wis"), 
+                    ("charisma", "cha")
+                ]
+                
+                for full_name, short_name in ability_pairs:
+                    # Try full name
+                    if hasattr(obj, full_name):
+                        ability_scores[short_name] = getattr(obj, full_name)
+                    # Try short name
+                    elif hasattr(obj, short_name):
+                        ability_scores[short_name] = getattr(obj, short_name)
+                    # Try upper case short name (e.g., "STR")
+                    elif hasattr(obj, short_name.upper()):
+                        ability_scores[short_name] = getattr(obj, short_name.upper())
+                
+                # If we found any abilities, return them
+                if ability_scores:
+                    result = ability_scores
+                    source = "individual_obj_attrs"
+            
+            # Debug print for ability_scores attribute
+            if attr == "ability_scores":
+                print(f"[CombatDetailsDialog] get_attr('{attr}') = {result} (from {source})")
+                
+                # If we have a dict, check for keys in different formats
+                if isinstance(obj, dict):
+                    for key in obj.keys():
+                        if isinstance(key, str) and key.lower() in ["ability_scores", "ability scores", "abilities", "stats"]:
+                            print(f"[CombatDetailsDialog] Found potential ability scores key: '{key}' = {obj[key]}")
+                
+                # If we have an object, check for attributes in different formats
+                else:
+                    for attr_name in dir(obj):
+                        if attr_name.lower() in ["ability_scores", "ability scores", "abilities", "stats"]:
+                            print(f"[CombatDetailsDialog] Found potential ability scores attribute: '{attr_name}' = {getattr(obj, attr_name)}")
+            
+            return result
+             
+        # Store the helper function as an instance method
+        self.get_attr = get_attr
+        
+        # Get the name of the combatant
+        name = self.get_attr(combatant_data, "name", "Unknown", [])
+        
+        if combatant_type == "monster":
+            self.setWindowTitle(f"Monster: {name}")
+        elif combatant_type == "character":
+            self.setWindowTitle(f"Character: {name}")
+        else:
+            self.setWindowTitle(f"Combatant: {name}")
+            
+        self.setMinimumSize(450, 400)
+        self._setup_ui()
+    
+    def _setup_ui(self):
+        """Set up the dialog UI with a compact layout"""
+        main_layout = QVBoxLayout(self)
+        main_layout.setSpacing(6)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        
+        # --- Header with essential info ---
+        header_widget = QWidget()
+        header_layout = QVBoxLayout(header_widget)
+        header_layout.setSpacing(2)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Name (large and bold)
+        name = self.get_attr(self.combatant_data, "name", "Unknown", [])
+        name_label = QLabel(name)
+        name_label.setStyleSheet("font-size: 16pt; font-weight: bold;")
+        header_layout.addWidget(name_label)
+        
+        # Type/Class line
+        subheader_text = ""
+        if self.combatant_type == "monster":
+            size = self.get_attr(self.combatant_data, "size", "", [])
+            type_val = self.get_attr(self.combatant_data, "type", "", [])
+            alignment = self.get_attr(self.combatant_data, "alignment", "", [])
+            
+            if size and type_val:
+                subheader_text = f"{size} {type_val}"
+                if alignment:
+                    subheader_text += f", {alignment}"
+        else:  # character or unknown
+            race = self.get_attr(self.combatant_data, "race", "", [])
+            character_class = self.get_attr(self.combatant_data, "character_class", "", ["class"])
+            level = self.get_attr(self.combatant_data, "level", None, [])
+            
+            parts = []
+            if level is not None:
+                parts.append(f"Level {level}")
+            if race:
+                parts.append(race)
+            if character_class:
+                parts.append(character_class)
+                
+            subheader_text = " ".join(parts)
+            
+        if subheader_text:
+            subheader_label = QLabel(subheader_text)
+            subheader_label.setStyleSheet("font-style: italic;")
+            header_layout.addWidget(subheader_label)
+        
+        # Horizontal line separator
+        header_layout.addWidget(QFrame(frameShape=QFrame.HLine))
+        
+        # --- Combat Stats in a single row ---
+        combat_stats_layout = QHBoxLayout()
+        combat_stats_layout.setSpacing(10)
+        
+        # AC
+        ac = self.get_attr(self.combatant_data, "armor_class", None, ["ac", "AC"])
+        if ac is not None:
+            ac_layout = QVBoxLayout()
+            ac_layout.setSpacing(0)
+            ac_title = QLabel("AC")
+            ac_title.setStyleSheet("font-weight: bold;")
+            ac_title.setAlignment(Qt.AlignCenter)
+            ac_layout.addWidget(ac_title)
+            
+            ac_value = QLabel(str(ac))
+            ac_value.setAlignment(Qt.AlignCenter)
+            ac_layout.addWidget(ac_value)
+            combat_stats_layout.addLayout(ac_layout)
+        
+        # HP
+        hp_layout = QVBoxLayout()
+        hp_layout.setSpacing(0)
+        hp_title = QLabel("HP")
+        hp_title.setStyleSheet("font-weight: bold;")
+        hp_title.setAlignment(Qt.AlignCenter)
+        hp_layout.addWidget(hp_title)
+        
+        hp_text = ""
+        if self.combatant_type == "monster":
+            hp = self.get_attr(self.combatant_data, "hit_points", None, ["hp", "HP"])
+            if hp is not None:
+                hp_text = str(hp)
+        else:  # character
+            current_hp = self.get_attr(self.combatant_data, "current_hp", None, ["hp"])
+            max_hp = self.get_attr(self.combatant_data, "max_hp", None, ["maximum_hp"])
+            if current_hp is not None and max_hp is not None:
+                hp_text = f"{current_hp}/{max_hp}"
+                
+                temp_hp = self.get_attr(self.combatant_data, "temp_hp", 0, ["temporary_hp"])
+                if temp_hp and int(temp_hp) > 0:
+                    hp_text += f" (+{temp_hp})"
+        
+        hp_value = QLabel(hp_text or "—")
+        hp_value.setAlignment(Qt.AlignCenter)
+        hp_layout.addWidget(hp_value)
+        combat_stats_layout.addLayout(hp_layout)
+        
+        # Speed
+        speed = self.get_attr(self.combatant_data, "speed", None, [])
+        if speed is not None:
+            speed_layout = QVBoxLayout()
+            speed_layout.setSpacing(0)
+            speed_title = QLabel("Speed")
+            speed_title.setStyleSheet("font-weight: bold;")
+            speed_title.setAlignment(Qt.AlignCenter)
+            speed_layout.addWidget(speed_title)
+            
+            speed_value = QLabel(f"{speed}")
+            speed_value.setAlignment(Qt.AlignCenter)
+            speed_layout.addWidget(speed_value)
+            combat_stats_layout.addLayout(speed_layout)
+        
+        # Initiative (for characters)
+        if self.combatant_type == "character":
+            init_bonus = self.get_attr(self.combatant_data, "initiative_bonus", None, ["initiative"])
+            if init_bonus is not None:
+                init_layout = QVBoxLayout()
+                init_layout.setSpacing(0)
+                init_title = QLabel("Init")
+                init_title.setStyleSheet("font-weight: bold;")
+                init_title.setAlignment(Qt.AlignCenter)
+                init_layout.addWidget(init_title)
+                
+                init_text = f"+{init_bonus}" if int(init_bonus) >= 0 else str(init_bonus)
+                init_value = QLabel(init_text)
+                init_value.setAlignment(Qt.AlignCenter)
+                init_layout.addWidget(init_value)
+                combat_stats_layout.addLayout(init_layout)
+        
+        # CR (for monsters)
+        if self.combatant_type == "monster":
+            cr = self.get_attr(self.combatant_data, "challenge_rating", None, ["cr", "CR"])
+            if cr is not None:
+                cr_layout = QVBoxLayout()
+                cr_layout.setSpacing(0)
+                cr_title = QLabel("CR")
+                cr_title.setStyleSheet("font-weight: bold;")
+                cr_title.setAlignment(Qt.AlignCenter)
+                cr_layout.addWidget(cr_title)
+                
+                cr_value = QLabel(str(cr))
+                cr_value.setAlignment(Qt.AlignCenter)
+                cr_layout.addWidget(cr_value)
+                combat_stats_layout.addLayout(cr_layout)
+        
+        header_layout.addLayout(combat_stats_layout)
+        
+        # --- Ability Scores in a dedicated section ---
+        ability_scores = {}
+        
+        # First try to get ability_scores as a dict
+        scores_dict = self.get_attr(self.combatant_data, "ability_scores", {}, [])
+        print(f"[CombatDetailsDialog] Initial ability_scores retrieval: {scores_dict}")
+        
+        if scores_dict and isinstance(scores_dict, dict):
+            ability_scores = scores_dict
+            print(f"[CombatDetailsDialog] Using scores_dict: {ability_scores}")
+        # If not found as a dict, try individual ability scores
+        elif any(self.get_attr(self.combatant_data, attr, None, [alt]) is not None 
+                for attr, alt in [
+                    ("strength", "str"),
+                    ("dexterity", "dex"),
+                    ("constitution", "con"),
+                    ("intelligence", "int"),
+                    ("wisdom", "wis"),
+                    ("charisma", "cha")
+                ]):
+            ability_scores = {
+                'str': self.get_attr(self.combatant_data, "strength", 'X', ["str"]),
+                'dex': self.get_attr(self.combatant_data, "dexterity", 'X', ["dex"]),
+                'con': self.get_attr(self.combatant_data, "constitution", 'X', ["con"]),
+                'int': self.get_attr(self.combatant_data, "intelligence", 'X', ["int"]),
+                'wis': self.get_attr(self.combatant_data, "wisdom", 'X', ["wis"]),
+                'cha': self.get_attr(self.combatant_data, "charisma", 'X', ["cha"])
+            }
+            print(f"[CombatDetailsDialog] Using individual abilities: {ability_scores}")
+        # If still empty, provide default values
+        else:
+            ability_scores = {
+                'str': 'X', 'dex': 'X', 'con': 'X', 'int': 'X', 'wis': 'X', 'cha': 'X'
+            }
+            print(f"[CombatDetailsDialog] Using default values: {ability_scores}")
+        
+        # Also check if ability_scores exist in uppercase format
+        if hasattr(self.combatant_data, 'ABILITY_SCORES'):
+            print(f"[CombatDetailsDialog] Found uppercase ABILITY_SCORES: {self.combatant_data.ABILITY_SCORES}")
+        
+        # Print the final ability_scores being used
+        print(f"[CombatDetailsDialog] Final ability_scores for display: {ability_scores}")
+        
+        ability_map = {
+            'str': 'STR', 'strength': 'STR',
+            'dex': 'DEX', 'dexterity': 'DEX',
+            'con': 'CON', 'constitution': 'CON',
+            'int': 'INT', 'intelligence': 'INT',
+            'wis': 'WIS', 'wisdom': 'WIS',
+            'cha': 'CHA', 'charisma': 'CHA'
+        }
+        
+        # Create a dedicated section for ability scores with a border (always show)
+        abilities_group = QGroupBox("Ability Scores")
+        abilities_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        abilities_layout = QHBoxLayout(abilities_group)
+        abilities_layout.setSpacing(5)
+        abilities_layout.setContentsMargins(10, 15, 10, 10)
+        
+        # Helper to get modifier as string
+        def get_mod_str(score):
+            if score == 'X':
+                return '(?)'
+            if isinstance(score, str):
+                try:
+                    score = int(score)
+                except ValueError:
+                    return '(?)'
+            mod = (score - 10) // 2
+            return f"+{mod}" if mod >= 0 else str(mod)
+        
+        # Always show all six ability scores
+        for ability, label in [('str', 'STR'), ('dex', 'DEX'), ('con', 'CON'), 
+                              ('int', 'INT'), ('wis', 'WIS'), ('cha', 'CHA')]:
+            # Get score value (default to 'X' if not found)
+            score = ability_scores.get(ability, None)
+            
+            # Try uppercase key if lowercase not found
+            if score is None:
+                score = ability_scores.get(ability.upper(), 'X')
+                print(f"[CombatDetailsDialog] Tried uppercase key '{ability.upper()}': {score}")
+            
+            # Try other variations
+            if score == 'X':
+                # Try variations like 'Strength', 'STRENGTH', etc.
+                variations = [
+                    ability,
+                    ability.upper(),
+                    ability.capitalize(),
+                    {'str': 'strength', 'dex': 'dexterity', 'con': 'constitution', 
+                     'int': 'intelligence', 'wis': 'wisdom', 'cha': 'charisma'}[ability],
+                    {'str': 'STRENGTH', 'dex': 'DEXTERITY', 'con': 'CONSTITUTION', 
+                     'int': 'INTELLIGENCE', 'wis': 'WISDOM', 'cha': 'CHARISMA'}[ability]
+                ]
+                
+                for variation in variations:
+                    if variation in ability_scores:
+                        score = ability_scores[variation]
+                        print(f"[CombatDetailsDialog] Found ability score using variation '{variation}': {score}")
+                        break
+            
+            print(f"[CombatDetailsDialog] Final score for {label}: {score}")
+            
+            score_layout = QVBoxLayout()
+            score_layout.setSpacing(2)
+            
+            # Ability name (STR, DEX, etc.)
+            ability_title = QLabel(label)
+            ability_title.setStyleSheet("font-weight: bold; font-size: 11pt;")
+            ability_title.setAlignment(Qt.AlignCenter)
+            score_layout.addWidget(ability_title)
+            
+            # Score value
+            score_value_label = QLabel(str(score))
+            score_value_label.setStyleSheet("font-size: 12pt;")
+            score_value_label.setAlignment(Qt.AlignCenter)
+            score_layout.addWidget(score_value_label)
+            
+            # Modifier in parentheses
+            mod_text = get_mod_str(score)
+            mod_label = QLabel(f"({mod_text})")
+            mod_label.setStyleSheet("color: #444;")
+            mod_label.setAlignment(Qt.AlignCenter)
+            score_layout.addWidget(mod_label)
+            
+            abilities_layout.addLayout(score_layout)
+        
+        # Add the abilities group below the combat stats
+        header_layout.addWidget(abilities_group)
+        
+        main_layout.addWidget(header_widget)
+        
+        # --- Tabbed Content ---
+        content_tabs = QTabWidget()
+        content_tabs.setTabPosition(QTabWidget.North)
+        
+        # --- Tab: Features & Traits ---
+        traits_tab = QWidget()
+        traits_layout = QVBoxLayout(traits_tab)
+        traits_layout.setContentsMargins(5, 5, 5, 5)
+        
+        # Different content based on combatant type
+        if self.combatant_type == "monster":
+            # Get traits
+            traits_data = self.get_attr(self.combatant_data, "special_traits", None, ["traits"])
+            if traits_data:
+                traits_widget = self._create_titled_section("Special Traits", traits_data)
+                traits_layout.addWidget(traits_widget)
+            
+            # Languages
+            languages = self.get_attr(self.combatant_data, "languages", "", [])
+            if languages:
+                languages_label = QLabel(f"<b>Languages:</b> {languages}")
+                languages_label.setWordWrap(True)
+                traits_layout.addWidget(languages_label)
+            
+            # Senses
+            senses = self.get_attr(self.combatant_data, "senses", [], [])
+            if senses:
+                senses_text = ", ".join([f"{s.name} {s.range}" for s in senses]) if hasattr(senses[0], 'name') else str(senses)
+                senses_label = QLabel(f"<b>Senses:</b> {senses_text}")
+                senses_label.setWordWrap(True)
+                traits_layout.addWidget(senses_label)
+        else:  # character
+            # Background
+            background = self.get_attr(self.combatant_data, "background", "", [])
+            if background:
+                bg_label = QLabel(f"<b>Background:</b> {background}")
+                bg_label.setWordWrap(True)
+                traits_layout.addWidget(bg_label)
+            
+            # Features
+            features = self.get_attr(self.combatant_data, "features", [], ["traits", "feats"])
+            if features:
+                features_widget = self._create_feature_list("Features & Traits", features)
+                traits_layout.addWidget(features_widget)
+        
+        traits_layout.addStretch()
+        content_tabs.addTab(traits_tab, "Features")
+        
+        # --- Tab: Actions ---
+        actions_tab = QWidget()
+        actions_layout = QVBoxLayout(actions_tab)
+        actions_layout.setContentsMargins(5, 5, 5, 5)
+        
+        if self.combatant_type == "monster":
+            # Standard actions
+            actions_data = self.get_attr(self.combatant_data, "actions", [], [])
+            if actions_data:
+                actions_widget = self._create_titled_section("Actions", actions_data)
+                actions_layout.addWidget(actions_widget)
+                
+            # Legendary actions
+            legendary_actions = self.get_attr(self.combatant_data, "legendary_actions", [], [])
+            if legendary_actions:
+                legendary_widget = self._create_titled_section("Legendary Actions", legendary_actions)
+                actions_layout.addWidget(legendary_widget)
+        else:  # character
+            # Equipment
+            equipment = self.get_attr(self.combatant_data, "equipment", [], [])
+            if equipment:
+                equipment_widget = self._create_feature_list("Equipment", equipment)
+                actions_layout.addWidget(equipment_widget)
+            
+            # Spells
+            spells = self.get_attr(self.combatant_data, "spells", [], ["spell_list"])
+            if spells:
+                spells_widget = self._create_feature_list("Spells", spells)
+                actions_layout.addWidget(spells_widget)
+        
+        actions_layout.addStretch()
+        content_tabs.addTab(actions_tab, "Actions & Items")
+        
+        # --- Tab: Notes/Description ---
+        notes_tab = QWidget()
+        notes_layout = QVBoxLayout(notes_tab)
+        notes_layout.setContentsMargins(5, 5, 5, 5)
+        
+        if self.combatant_type == "monster":
+            # Description
+            description = self.get_attr(self.combatant_data, "description", "", [])
+            if description:
+                desc_label = QLabel(description)
+                desc_label.setWordWrap(True)
+                notes_layout.addWidget(desc_label)
+        else:  # character
+            # Notes
+            notes = self.get_attr(self.combatant_data, "notes", "", [])
+            if notes:
+                notes_label = QLabel(notes)
+                notes_label.setWordWrap(True)
+                notes_layout.addWidget(notes_label)
+                
+        notes_layout.addStretch()
+        content_tabs.addTab(notes_tab, "Notes")
+        
+        main_layout.addWidget(content_tabs)
+        
+        # --- OK Button ---
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok)
+        button_box.accepted.connect(self.accept)
+        main_layout.addWidget(button_box)
+
+    def _create_titled_section(self, title, items_data):
+        """Create a widget with a title and list of items with name/description fields"""
+        section = QWidget()
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(3)
+        
+        # Title
+        title_label = QLabel(f"<b>{title}</b>")
+        layout.addWidget(title_label)
+        
+        # Add each item
+        for item in items_data:
+            if isinstance(item, dict) and 'name' in item:
+                # Get description from either 'desc' or 'description' field
+                description = item.get('desc', item.get('description', ''))
+                cost_text = ""
+                if 'cost' in item and item['cost'] > 1:
+                    cost_text = f" (Costs {item['cost']})"
+                    
+                item_label = QLabel(f"<b>{item['name']}{cost_text}.</b> {description}")
+                item_label.setWordWrap(True)
+                item_label.setTextFormat(Qt.RichText)
+                layout.addWidget(item_label)
+            elif hasattr(item, 'name'):
+                # Get description from either 'desc' or 'description' attribute
+                description = getattr(item, 'desc', getattr(item, 'description', ''))
+                cost_text = ""
+                if hasattr(item, 'cost') and item.cost > 1:
+                    cost_text = f" (Costs {item.cost})"
+                    
+                item_label = QLabel(f"<b>{item.name}{cost_text}.</b> {description}")
+                item_label.setWordWrap(True)
+                item_label.setTextFormat(Qt.RichText)
+                layout.addWidget(item_label)
+                
+        return section
+        
+    def _create_feature_list(self, title, items):
+        """Create a widget with a title and list of string items"""
+        section = QWidget()
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(3)
+        
+        # Title
+        title_label = QLabel(f"<b>{title}</b>")
+        layout.addWidget(title_label)
+        
+        # Add each item
+        for item in items:
+            if isinstance(item, str):
+                item_label = QLabel(item)
+                item_label.setWordWrap(True)
+                layout.addWidget(item_label)
+            elif isinstance(item, dict) and 'name' in item:
+                desc = item.get('description', item.get('desc', ''))
+                if desc:
+                    item_label = QLabel(f"<b>{item['name']}</b>: {desc}")
+                else:
+                    item_label = QLabel(f"<b>{item['name']}</b>")
+                item_label.setWordWrap(True)
+                layout.addWidget(item_label)
+                
+        return section
 
 class DamageDialog(QDialog):
     """Dialog for applying damage or healing"""
@@ -198,30 +811,32 @@ class CombatTrackerPanel(BasePanel):
     resolution_complete = Signal(dict, str)
     
     def __init__(self, app_state):
-        """Initialize the combat tracker panel"""
-        # Initialize combat state before calling super().__init__
-        self.current_round = 1
-        self.current_turn = 0
-        self.previous_turn = -1 # Track the previous turn index for highlighting
-        self.elapsed_time = 0  # Time in seconds
-        self.combat_started = False  # Track if combat has started
-        
-        # Initialize tracking sets/dicts
-        self.concentrating = set()  # Set of row indices tracking concentration
-        self.death_saves = {}  # Dictionary of row indices to death saves state
-        
-        # Initialize timer
+        """Initialize combat tracker panel"""
+        self.combat_started = False
+        self.current_turn = -1
+        self.previous_turn = -1
+        self.current_round = 1  # Current combat round
+        self.elapsed_time = 0  # Seconds of combat
+        self.timer_running = False
         self.timer = QTimer()
+        self.timer.timeout.connect(self._update_timer)
+        self.timer.setInterval(1000)  # 1 second interval
         
-        # Now call super().__init__ which will call _setup_ui
+        # Set up time tracking variables
+        self.combat_in_game_seconds = 0  # Time passed in game during combat
+        
+        # Tracking sets for special conditions
+        self.concentrating = set()  # Set of rows with concentration
+        self.death_saves = {}  # Dict of row -> {successes, failures}
+        
+        # Store combatant data for monster/character viewing
+        self.combatants = {}  # Dict of row index -> Monster or PlayerCharacter object
+        
         super().__init__(app_state, "Combat Tracker")
         
-        # Connect timer after UI is set up
-        self.timer.timeout.connect(self._update_timer)
-        
-        # Connect the resolution complete signal to the UI processing slot
+        # Connect combat resolver signals
         self.resolution_complete.connect(self._process_resolution_ui)
-        
+
     def _setup_ui(self):
         """Set up the combat tracker UI"""
         # Add keyboard shortcuts
@@ -559,9 +1174,15 @@ class CombatTrackerPanel(BasePanel):
         # Sort by initiative (highest first)
         rows.sort(key=lambda x: (x[1], random.random()), reverse=True)
         
+        # Save combatant data keyed by row before reordering
+        old_combatants = self.combatants.copy()
+        
         # Remember items to restore
         items = []
-        for old_row, _ in rows:
+        # Track the mapping of old_row to new_row
+        row_map = {}
+        
+        for i, (old_row, _) in enumerate(rows):
             row_items = []
             for col in range(self.initiative_table.columnCount()):
                 item = self.initiative_table.takeItem(old_row, col)
@@ -576,6 +1197,9 @@ class CombatTrackerPanel(BasePanel):
                 new_item.setTextAlignment(item.textAlignment())
                 row_items.append(new_item)
             items.append(row_items)
+            
+            # Record the mapping of old_row to its new position
+            row_map[old_row] = i
         
         # Clear the table and add items back in sorted order
         self.initiative_table.setRowCount(0)
@@ -584,6 +1208,27 @@ class CombatTrackerPanel(BasePanel):
             self.initiative_table.insertRow(row)
             for col, item in enumerate(row_items):
                 self.initiative_table.setItem(row, col, item)
+        
+        # Remap the combatants dictionary based on new row order
+        new_combatants = {}
+        for old_row, combatant in old_combatants.items():
+            if old_row in row_map:
+                new_row = row_map[old_row]
+                new_combatants[new_row] = combatant
+        self.combatants = new_combatants
+        
+        # Remap tracking sets as well
+        new_concentrating = set()
+        for old_row in self.concentrating:
+            if old_row in row_map:
+                new_concentrating.add(row_map[old_row])
+        self.concentrating = new_concentrating
+        
+        new_death_saves = {}
+        for old_row, saves in self.death_saves.items():
+            if old_row in row_map:
+                new_death_saves[row_map[old_row]] = saves
+        self.death_saves = new_death_saves
         
         # Restore selection
         if selected_names:
@@ -774,6 +1419,13 @@ class CombatTrackerPanel(BasePanel):
         remove_action = QAction("Remove", self)
         remove_action.triggered.connect(self._remove_selected)
         menu.addAction(remove_action)
+        
+        # View combatant details action
+        view_details_action = QAction("View Details", self)
+        view_details_action.triggered.connect(lambda: self._view_combatant_details(row))
+        menu.addAction(view_details_action)
+        
+        menu.addSeparator()
         
         # HP adjustment submenu
         hp_menu = menu.addMenu("Adjust HP")
@@ -1501,17 +2153,14 @@ class CombatTrackerPanel(BasePanel):
         
         added_count = 0
         for monster_data in monster_dicts:
-            if not isinstance(monster_data, dict):
-                print(f"[CombatTracker] Warning: Skipping non-dict item in monster group: {monster_data}")
-                continue
-            
             try:
-                # Use the existing add_monster logic (or adapt _add_combatant)
                 self.add_monster(monster_data)
                 added_count += 1
             except Exception as e:
-                print(f"[CombatTracker] Error adding monster '{monster_data.get('name', 'Unknown')}' from group: {e}")
-                # Optionally show a message box?
+                import traceback
+                name = monster_data.get("name", "Unknown") if isinstance(monster_data, dict) else getattr(monster_data, "name", "Unknown")
+                print(f"[CombatTracker] Error adding monster '{name}' from group: {e}")
+                traceback.print_exc()  # Print the full traceback for debugging
 
         if added_count > 0:
              print(f"[CombatTracker] Added {added_count} monsters from group.")
@@ -1520,175 +2169,349 @@ class CombatTrackerPanel(BasePanel):
              print("[CombatTracker] No monsters were added from the group.")
 
     def add_monster(self, monster_data):
-        """Add a monster to the combat tracker from the monster panel"""
-        print("Combat Tracker received monster:", monster_data)  # Debug print
-        try:
-            # Extract relevant data
-            name = monster_data.get("name", "Unknown Monster") # Use .get for safety
-
-            # Handle HP (assuming it might be "76 (9d10 + 27)" or just "76")
-            hp_raw = monster_data.get("hp", "10") # Default to 10 if missing
-            try:
-                if isinstance(hp_raw, (int, float)):
-                    hp = int(hp_raw)
-                else: # Assume string
-                    hp_text = str(hp_raw).split()[0]
-                    hp = int(hp_text)
-            except (ValueError, IndexError):
-                hp = 10 # Fallback HP
-                print(f"Warning: Could not parse HP '{hp_raw}'. Defaulting to {hp}.")
-
-            # Handle AC (could be int like 13 or string like "15 (natural armor)")
-            ac_raw = monster_data.get("ac", 10) # Default to 10 if missing
-            try:
-                if isinstance(ac_raw, (int, float)):
-                    ac = int(ac_raw)
-                else: # Assume string
-                    ac_text = str(ac_raw).split()[0] # Get first part before space
-                    ac = int(ac_text) # Convert to integer
-            except (ValueError, IndexError):
-                ac = 10 # Fallback AC
-                print(f"Warning: Could not parse AC '{ac_raw}'. Defaulting to {ac}.")
-
-            # Roll initiative using Dexterity modifier
-            # Safely access nested stats dictionary
-            dex_score = 10 # Default DEX
-            stats_dict = monster_data.get("stats")
-            if isinstance(stats_dict, dict):
-                dex_score = stats_dict.get("dex", 10)
-            elif 'dexterity' in monster_data: # Check if using full name from our dataclass
-                 dex_score = monster_data.get("dexterity", 10)
-
-            dex_mod = (dex_score - 10) // 2
-            initiative = random.randint(1, 20) + dex_mod
-
-            print(f"Adding combatant - Name: {name}, Initiative: {initiative}, HP: {hp}, AC: {ac}")  # Debug print
+        """Add a monster from monster panel to the tracker"""
+        if not monster_data:
+            return
+        
+        # Debug: Print the monster data structure to understand the format
+        print(f"[CombatTracker] Adding monster: {type(monster_data)}")
+        if isinstance(monster_data, dict):
+            print(f"[CombatTracker] Monster keys: {list(monster_data.keys())}")
+        
+        # Helper function to get attribute from either dict or object
+        def get_attr(obj, attr, default=None, alt_attrs=None):
+            """Get attribute from object or dict, trying alternate attribute names if specified"""
+            alt_attrs = alt_attrs or []
             
-            # Create new row
-            row = self.initiative_table.rowCount()
-            self.initiative_table.insertRow(row)
-            
-            # Create items
-            name_item = QTableWidgetItem(name)
-            initiative_item = QTableWidgetItem(str(initiative))
-            hp_item = QTableWidgetItem(str(hp))
-            hp_item.setData(Qt.UserRole, hp)  # Store max HP
-            ac_item = QTableWidgetItem(str(ac))
-            status_item = QTableWidgetItem("")
-            concentration_item = QTableWidgetItem()
-            concentration_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-            concentration_item.setCheckState(Qt.Unchecked)
-            notes_item = QTableWidgetItem("")
-            
-            # Set items
-            self.initiative_table.setItem(row, 0, name_item)
-            self.initiative_table.setItem(row, 1, initiative_item)
-            self.initiative_table.setItem(row, 2, hp_item)
-            self.initiative_table.setItem(row, 3, ac_item)
-            self.initiative_table.setItem(row, 4, status_item)
-            self.initiative_table.setItem(row, 5, concentration_item)
-            self.initiative_table.setItem(row, 6, notes_item)
-            
-            # If combat hasn't started, sort by initiative
-            if not self.combat_started:
-                self._sort_initiative()
+            if isinstance(obj, dict):
+                # Try the main attribute name first
+                if attr in obj:
+                    return obj[attr]
                 
-            print("Monster successfully added to combat")  # Debug print
+                # Try alternative attribute names
+                for alt_attr in alt_attrs:
+                    if alt_attr in obj:
+                        return obj[alt_attr]
+                
+                # Check if stats are nested in a 'stats' dictionary
+                if 'stats' in obj and isinstance(obj['stats'], dict):
+                    if attr in obj['stats']:
+                        return obj['stats'][attr]
+                    for alt_attr in alt_attrs:
+                        if alt_attr in obj['stats']:
+                            return obj['stats'][alt_attr]
+                
+                return default
             
-        except Exception as e:
-            print(f"Error adding monster: {str(e)}")  # Debug print
-            import traceback
-            traceback.print_exc() # Print full traceback
-            QMessageBox.warning(
-                self,
-                "Error",
-                f"Failed to add monster to combat: {str(e)}"
-            )
-    
+            # Try getattr for object access
+            if hasattr(obj, attr):
+                return getattr(obj, attr)
+            
+            # Try alternative attributes for objects
+            for alt_attr in alt_attrs:
+                if hasattr(obj, alt_attr):
+                    return getattr(obj, alt_attr)
+            
+            return default
+        
+        name = get_attr(monster_data, "name", "Unknown Monster")
+        
+        # Extract challenge rating to calculate approximate initiative bonus
+        cr = get_attr(monster_data, "challenge_rating", "0", ["cr"])
+        try:
+            # Handle fractional CR values
+            if isinstance(cr, str) and '/' in cr:
+                num, denom = cr.split('/')
+                cr_value = float(num) / float(denom)
+            else:
+                cr_value = float(cr)
+                
+            # Calculate a plausible initiative bonus based on DEX and CR
+            dex = get_attr(monster_data, "dexterity", 10, ["dex"])
+            if isinstance(dex, str):
+                dex = int(dex)
+            dex_mod = (dex - 10) // 2
+            
+            
+            # Initiative bonus based on DEX, +0-3 based on CR
+            initiative_bonus = dex_mod + min(3, int(cr_value / 5))
+        except (ValueError, TypeError):
+            # Default to +0 if any calculation errors
+            initiative_bonus = 0
+        
+        # Roll initiative with the bonus
+        initiative_roll = random.randint(1, 20) + initiative_bonus
+        
+        # Extract hit points
+        hp_text = str(get_attr(monster_data, "hit_points", "10", ["hp"]))
+        try:
+            # Handle formats like "45 (7d8+14)" or just "45"
+            hp = int(hp_text.split(' ')[0]) if ' ' in hp_text else int(hp_text)
+        except (ValueError, TypeError, IndexError):
+            # Default to 10 HP if any extraction errors
+            hp = 10
+        
+        # Get AC with special handling for various formats
+        ac = get_attr(monster_data, "armor_class", 10, ["ac", "AC"])
+        print(f"[CombatTracker] Raw AC value for {name}: {ac}")
+        
+        # Handle different AC formats (string, int, or nested dictionary)
+        if isinstance(ac, dict):
+            # Some formats store AC in a dict with a 'value' key
+            ac_value = ac.get('value', 10)
+            if isinstance(ac_value, str):
+                try:
+                    ac = int(ac_value.split(' ')[0])
+                except (ValueError, IndexError):
+                    ac = 10
+            else:
+                ac = int(ac_value) if isinstance(ac_value, (int, float)) else 10
+        elif isinstance(ac, str):
+            try:
+                ac = int(ac.split(' ')[0])
+            except (ValueError, IndexError):
+                ac = 10
+        elif not isinstance(ac, (int, float)):
+            # If it's not a recognized format, default to 10
+            ac = 10
+        
+        # Convert to int if it's a float
+        ac = int(ac)
+        print(f"[CombatTracker] Processed AC for {name}: {ac}")
+        
+        # Add to tracker
+        row = self._add_combatant(name, initiative_roll, hp, ac)
+        
+        # Store monster data for future reference
+        if row >= 0:
+            self.combatants[row] = monster_data
+        
+        # Log to combat log
+        self._log_combat_action("Setup", "DM", "added monster", name, f"(Initiative: {initiative_roll})")
+        
+        return row
+
     def add_character(self, character):
-        """Add a player character to the combat tracker from the character panel"""
-        print("Combat Tracker received character:", character.name)  # Debug print
-        try:
-            # Extract relevant data
-            name = character.name
-            hp = character.current_hp
-            ac = character.armor_class
+        """Add a player character from character panel to the tracker"""
+        if not character:
+            return
             
-            # Get initiative with bonus
-            initiative_roll = random.randint(1, 20)
-            initiative = initiative_roll + character.initiative_bonus
+        # Get initiative bonus
+        initiative_bonus = getattr(character, 'initiative_bonus', 0)
+        
+        # Roll initiative with the bonus
+        initiative_roll = random.randint(1, 20) + initiative_bonus
+        
+        # Get HP and AC
+        hp = getattr(character, 'current_hp', 10)
+        ac = getattr(character, 'armor_class', 10)
+        
+        # Add to tracker
+        row = self._add_combatant(character.name, initiative_roll, hp, ac)
+        
+        # Store character data for future reference
+        if row >= 0:
+            self.combatants[row] = character
             
-            print(f"Adding combatant - Name: {name}, Initiative: {initiative}, HP: {hp}, AC: {ac}")  # Debug print
+            # Ensure we store ability scores correctly
+            if hasattr(character, 'ability_scores') and isinstance(character.ability_scores, dict):
+                # Make sure we have a proper copy of the ability scores
+                if character.ability_scores and isinstance(character.ability_scores, dict):
+                    # Already stored in the character object
+                    pass
             
-            # Create new row
-            row = self.initiative_table.rowCount()
-            self.initiative_table.insertRow(row)
-            
-            # Create items
-            name_item = QTableWidgetItem(name)
-            initiative_item = QTableWidgetItem(str(initiative))
-            hp_item = QTableWidgetItem(str(hp))
-            hp_item.setData(Qt.UserRole, character.max_hp)  # Store max HP
-            ac_item = QTableWidgetItem(str(ac))
-            status_item = QTableWidgetItem("")
-            concentration_item = QTableWidgetItem()
-            concentration_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-            concentration_item.setCheckState(Qt.Unchecked)
-            notes_item = QTableWidgetItem(f"{character.race} {character.character_class} (Lvl {character.level})")
-            
-            # Set items
-            self.initiative_table.setItem(row, 0, name_item)
-            self.initiative_table.setItem(row, 1, initiative_item)
-            self.initiative_table.setItem(row, 2, hp_item)
-            self.initiative_table.setItem(row, 3, ac_item)
-            self.initiative_table.setItem(row, 4, status_item)
-            self.initiative_table.setItem(row, 5, concentration_item)
-            self.initiative_table.setItem(row, 6, notes_item)
-            
-            # If combat hasn't started, sort by initiative
-            if not self.combat_started:
-                self._sort_initiative()
-                
-            print("Character successfully added to combat")  # Debug print
-            
-        except Exception as e:
-            print(f"Error adding character: {str(e)}")  # Debug print
-            QMessageBox.warning(
-                self,
-                "Error",
-                f"Failed to add character to combat: {str(e)}"
-            )
+        # Log to combat log
+        self._log_combat_action("Setup", "DM", "added character", character.name, f"(Initiative: {initiative_roll})")
+        
+        return row
 
     def _remove_selected(self):
-        """Remove selected combatants from initiative"""
+        """Remove selected combatants from the initiative order"""
         selected_rows = sorted([index.row() for index in 
-                              self.initiative_table.selectionModel().selectedRows()],
-                             reverse=True)
+                               self.initiative_table.selectionModel().selectedRows()], reverse=True)
         
+        if not selected_rows:
+            return
+        
+        # Ask for confirmation if multiple rows selected
+        if len(selected_rows) > 1:
+            confirm = QMessageBox.question(
+                self,
+                "Confirm Removal",
+                f"Remove {len(selected_rows)} combatants?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if confirm != QMessageBox.Yes:
+                return
+        
+        # Remove rows from table (in reverse order to avoid index issues)
         for row in selected_rows:
-            # Log the removal
-            name_item = self.initiative_table.item(row, 0)
-            if name_item:
-                name = name_item.text()
-                self._log_combat_action(
-                    "Other", 
-                    "DM", 
-                    "removed combatant", 
-                    name, 
-                    "Removed from initiative"
-                )
-            
+            name = self.initiative_table.item(row, 0).text()
             self.initiative_table.removeRow(row)
-            # Adjust current_turn if necessary
-            if row < self.current_turn:
-                self.current_turn -= 1
-            elif row == self.current_turn:
-                self._update_highlight()
             
-            # Clean up tracking
-            self.death_saves.pop(row, None)
-            if row in self.concentrating:
-                self.concentrating.remove(row)
+            # Also remove from tracking collections
+            self.concentrating.discard(row)
+            if row in self.death_saves:
+                del self.death_saves[row]
+                
+            # Remove from combatants dictionary if present
+            if row in self.combatants:
+                del self.combatants[row]
+            
+            # Log removal
+            self._log_combat_action("Setup", "DM", "removed", name, "from combat")
         
-        # Highlight current turn again
+        # Adjust current turn index if needed
+        if self.combat_started:
+            # If we removed the current turn, move to the next
+            if self.current_turn in selected_rows:
+                if self.initiative_table.rowCount() > 0:
+                    # Set to previous turn, then _next_turn will advance
+                    self.current_turn = (self.current_turn - 1) % self.initiative_table.rowCount()
+                    self._next_turn()
+                else:
+                    # No combatants left, reset
+                    self.combat_started = False
+                    self.current_turn = -1
+            # Otherwise, just adjust for removed rows
+            elif self.current_turn >= 0:
+                # Count how many removed rows are before current
+                removed_before = sum(1 for r in selected_rows if r < self.current_turn)
+                self.current_turn -= removed_before
+                
+        # Update the highlight
         self._update_highlight()
+        
+        # Update and rebuild combatant index mapping
+        new_combatants = {}
+        # Reindex combatants dictionary to match new row indices
+        for old_row, combatant in self.combatants.items():
+            # Skip removed rows
+            if old_row in selected_rows:
+                continue
+                
+            # Calculate new row index
+            new_row = old_row - sum(1 for r in selected_rows if r < old_row)
+            new_combatants[new_row] = combatant
+                
+        self.combatants = new_combatants
+        
+        # Adjust concentrating and death_saves mappings
+        new_concentrating = set()
+        for row in self.concentrating:
+            if row not in selected_rows:
+                new_row = row - sum(1 for r in selected_rows if r < row)
+                new_concentrating.add(new_row)
+        self.concentrating = new_concentrating
+        
+        new_death_saves = {}
+        for row, saves in self.death_saves.items():
+            if row not in selected_rows:
+                new_row = row - sum(1 for r in selected_rows if r < row)
+                new_death_saves[new_row] = saves
+        self.death_saves = new_death_saves
+
+    def _view_combatant_details(self, row):
+        """View details for a selected combatant"""
+        if row < 0 or row >= self.initiative_table.rowCount():
+            return
+        
+        # Get the selected combatant's name
+        name = self.initiative_table.item(row, 0).text()
+        
+        # First check if we have stored data for this combatant
+        combatant_data = self.combatants.get(row)
+        
+        # If not found in stored data, try to get from the monster panel or character panel
+        if not combatant_data:
+            # Try to find the monster in the monster panel
+            monster_panel = self.get_panel("monster")
+            if monster_panel:
+                # Try to find monster by name
+                monster_data = monster_panel.find_monster_by_name(name)
+                if monster_data:
+                    combatant_data = monster_data
+                    combatant_type = "monster"
+                else:
+                    # No monster found, try character panel
+                    player_panel = self.get_panel("player_character")
+                    if player_panel:
+                        character_data = player_panel.find_character_by_name(name)
+                        if character_data:
+                            combatant_data = character_data
+                            combatant_type = "character"
+                        else:
+                            # No character found either, create a simple data object
+                            from types import SimpleNamespace
+                            combatant_data = SimpleNamespace(
+                                name=name,
+                                armor_class=self.initiative_table.item(row, 3).text(),
+                                hit_points=self.initiative_table.item(row, 2).text(),
+                                ability_scores={}
+                            )
+                            combatant_type = "unknown"
+                    else:
+                        # No character panel available
+                        from types import SimpleNamespace
+                        combatant_data = SimpleNamespace(
+                            name=name,
+                            armor_class=self.initiative_table.item(row, 3).text(),
+                            hit_points=self.initiative_table.item(row, 2).text(),
+                            ability_scores={}
+                        )
+                        combatant_type = "unknown"
+            else:
+                # No monster panel available
+                from types import SimpleNamespace
+                combatant_data = SimpleNamespace(
+                    name=name,
+                    armor_class=self.initiative_table.item(row, 3).text(),
+                    hit_points=self.initiative_table.item(row, 2).text(),
+                    ability_scores={}
+                )
+                combatant_type = "unknown"
+        else:
+            # Determine if the stored data is a monster or character
+            if hasattr(combatant_data, 'is_custom') and hasattr(combatant_data, 'type'):
+                combatant_type = "monster"
+                # Try to get the full monster data from the monster panel
+                monster_panel = self.get_panel("monster")
+                if monster_panel:
+                    full_monster = monster_panel.find_monster_by_name(name)
+                    if full_monster:
+                        combatant_data = full_monster
+            elif hasattr(combatant_data, 'character_class') and hasattr(combatant_data, 'race'):
+                combatant_type = "character"
+                # Try to get the full character data from the character panel
+                player_panel = self.get_panel("player_character")
+                if player_panel:
+                    full_character = player_panel.find_character_by_name(name)
+                    if full_character:
+                        combatant_data = full_character
+            else:
+                combatant_type = "unknown"
+                
+            # Debug: Print ability scores if available
+            if hasattr(combatant_data, 'ability_scores') and isinstance(combatant_data.ability_scores, dict):
+                print(f"[CombatTracker] Character ability scores for {name}: {combatant_data.ability_scores}")
+        
+        # Create and show the details dialog
+        dialog = CombatantDetailsDialog(self, combatant_data=combatant_data, combatant_type=combatant_type)
+        dialog.exec_()
+    
+    def get_panel(self, panel_id):
+        """Get a panel from the panel manager"""
+        # Try to get from the app_state panel manager
+        if hasattr(self.app_state, 'panel_manager'):
+            panel_manager = self.app_state.panel_manager
+            # First check if the panel manager has a get_panel_widget method
+            if hasattr(panel_manager, 'get_panel_widget'):
+                return panel_manager.get_panel_widget(panel_id)
+            # Otherwise try the get_panel method which returns a dock widget
+            elif hasattr(panel_manager, 'get_panel'):
+                panel_dock = panel_manager.get_panel(panel_id)
+                if panel_dock:
+                    return panel_dock.widget()
+        # If not found, use the BasePanel's get_panel method from parent class
+        return super().get_panel(panel_id)

@@ -672,6 +672,36 @@ class MonsterPanel(BasePanel):
             # Optional: Resort list if needed (e.g., after adding)
             # self.monsters.sort(key=lambda m: m.name)
 
+    def find_monster_by_name(self, monster_name):
+        """Find a monster by its name and return the full monster data.
+        
+        This method is used by the combat tracker to get the full monster data.
+        
+        Args:
+            monster_name (str): Name of the monster to find
+            
+        Returns:
+            Monster: The monster object if found, None otherwise
+        """
+        # Iterate through all loaded monsters
+        for monster in self.monsters:
+            if monster.name.lower() == monster_name.lower():
+                return monster
+                
+        # If not found in memory, try to find in database
+        try:
+            # Search both standard and custom monsters
+            monster = self.db_manager.get_monster_by_name(monster_name)
+            if monster:
+                # Add to loaded monsters for future reference
+                self.monsters.append(monster)
+                return monster
+        except Exception as e:
+            logger.error(f"Error finding monster '{monster_name}' in database: {e}")
+            
+        # Not found
+        return None
+
     # --- State Management (Example) ---
     # Override if BasePanel requires specific state handling for this panel
     # def save_state(self) -> Dict[str, Any]:

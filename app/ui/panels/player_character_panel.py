@@ -890,4 +890,23 @@ class PlayerCharacterPanel(BasePanel):
                 self, "Error Adding NPC",
                 f"Failed to add NPC as character: {str(e)}"
             )
-        return False 
+        return False
+    
+    def find_character_by_name(self, character_name):
+        """Find a character by its name and return the full character data.
+        
+        This method is used by the combat tracker to get the full character data.
+        
+        Args:
+            character_name (str): Name of the character to find
+            
+        Returns:
+            PlayerCharacter: The character object if found, None otherwise
+        """
+        # Check all loaded characters
+        for character in self.characters:
+            if character.name.lower() == character_name.lower():
+                return character
+                
+        # Not found
+        return None 
