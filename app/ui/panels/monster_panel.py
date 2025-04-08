@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
     QListWidgetItem # Added QListWidgetItem
 )
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import Qt, Signal, QTimer, QEvent
 from PySide6.QtGui import QFont, QIcon, QPixmap
 
 from app.ui.panels.base_panel import BasePanel
@@ -205,6 +205,8 @@ class MonsterPanel(BasePanel):
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setMinimumHeight(200)
         self.image_label.setMaximumHeight(300)
+        # Add double-click handler
+        self.image_label.mousePressEvent = self._image_label_mouse_press_event
         self.image_container.addWidget(self.image_label)
         
         # Add image generation button
@@ -940,23 +942,104 @@ class MonsterPanel(BasePanel):
         except Exception as e:
             logger.error(f"Error saving monster image path to database: {e}", exc_info=True)
 
-    # --- State Management (Example) ---
-    # Override if BasePanel requires specific state handling for this panel
-    # def save_state(self) -> Dict[str, Any]:
-    #     state = super().save_state()
-    #     state['current_monster_id'] = self.current_monster.id if self.current_monster else None
-    #     state['current_monster_is_custom'] = self.current_monster.is_custom if self.current_monster else None
-    #     # Add filter states if needed
-    #     return state
+    def _image_label_mouse_press_event(self, event):
+        """Handle mouse press events on the image label"""
+        # Check if it's a double-click
+        if event.type() == QEvent.MouseButtonDblClick and self.current_monster and self.current_monster.image_path:
+            logger.info(f"Double-click detected on monster image for: {self.current_monster.name}")
+            # Get the image path
+            image_path = self.current_monster.image_path
+            
+            # Resolve relative path if needed
+            if not os.path.isabs(image_path):
+                app_dir = self.app_state.app_dir
+                image_path = os.path.normpath(os.path.join(app_dir, image_path))
+                
+            # Show the fullscreen dialog
+            dialog = FullScreenImageDialog(self, image_path, self.current_monster.name)
+            dialog.exec()
 
-    # def restore_state(self, state: Dict[str, Any]):
-    #     super().restore_state(state)
-    #     monster_id = state.get('current_monster_id')
-    #     is_custom = state.get('current_monster_is_custom')
-    #     if monster_id is not None and is_custom is not None:
-    #          # Find and select the monster in the list after loading
-    #          # Need to ensure monsters are loaded before calling this
-    #          pass # Implementation depends on when restore_state is called vs _load_initial_monsters
+
+class FullScreenImageDialog(QDialog):
+    """Dialog for displaying an image in fullscreen"""
+    
+    def __init__(self, parent=None, image_path=None, title="Image Viewer"):
+        super().__init__(parent)
+        self.image_path = image_path
+        
+        # Set up the dialog
+        self.setWindowTitle(title)
+        self.resize(800, 600)  # Start with a reasonable size
+        
+        # Create the layout
+        layout = QVBoxLayout(self)
+        
+        # Create scroll area for the image
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        # Create image label
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignCenter)
+        scroll_area.setWidget(self.image_label)
+        
+        # Add scroll area to main layout
+        layout.addWidget(scroll_area)
+        
+        # Add close button at bottom
+        button_box = QDialogButtonBox(QDialogButtonBox.Close)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+        
+        # Load and display the image
+        self._load_image()
+        
+        # Set the dialog to maximize
+        self.showMaximized()
+    
+    def _load_image(self):
+        """Load and display the image in the dialog"""
+        if not self.image_path or not os.path.exists(self.image_path):
+            self.image_label.setText("Image not found")
+            return
+            
+        try:
+            pixmap = QPixmap(self.image_path)
+            if pixmap.isNull():
+                self.image_label.setText("Failed to load image")
+                return
+                
+            # Display the image at its original size
+            self.image_label.setPixmap(pixmap)
+            
+            # Set minimum size for the label to the image size
+            self.image_label.setMinimumSize(pixmap.size())
+            
+            logger.info(f"Displaying fullscreen image: {self.image_path}")
+        except Exception as e:
+            logger.error(f"Error loading image in fullscreen: {e}", exc_info=True)
+            self.image_label.setText(f"Error loading image: {str(e)}")
+
+
+# --- State Management (Example) ---
+# Override if BasePanel requires specific state handling for this panel
+# def save_state(self) -> Dict[str, Any]:
+#     state = super().save_state()
+#     state['current_monster_id'] = self.current_monster.id if self.current_monster else None
+#     state['current_monster_is_custom'] = self.current_monster.is_custom if self.current_monster else None
+#     # Add filter states if needed
+#     return state
+
+# def restore_state(self, state: Dict[str, Any]):
+#     super().restore_state(state)
+#     monster_id = state.get('current_monster_id')
+#     is_custom = state.get('current_monster_is_custom')
+#     if monster_id is not None and is_custom is not None:
+#          # Find and select the monster in the list after loading
+#          # Need to ensure monsters are loaded before calling this
+#          pass # Implementation depends on when restore_state is called vs _load_initial_monsters
 
 
 # Example: Placeholder for the Edit Dialog (would be in its own file)
