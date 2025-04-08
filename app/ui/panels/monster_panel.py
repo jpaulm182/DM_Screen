@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QSpinBox, QComboBox, QDialog, QDialogButtonBox,
     QFormLayout, QTabWidget, QScrollArea, QFrame,
     QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
-    QListWidgetItem # Added QListWidgetItem
+    QListWidgetItem, QApplication # Added QApplication
 )
 from PySide6.QtCore import Qt, Signal, QTimer, QEvent
 from PySide6.QtGui import QFont, QIcon, QPixmap
@@ -786,8 +786,18 @@ class MonsterPanel(BasePanel):
         if not self.current_monster:
             return
         
-        # Show a loading message
-        self.image_label.setText("Generating Monster Manual style image...")
+        # Check if the monster already has an image
+        has_existing_image = bool(self.current_monster.image_path)
+        
+        # Show a loading message indicating what's happening
+        if has_existing_image:
+            self.image_label.setText("Generating new image...\nYou'll be asked to choose between new and existing image.")
+        else:
+            self.image_label.setText("Generating Monster Manual style image...")
+        
+        # Disable the generate button to prevent multiple requests
+        self.generate_image_btn.setEnabled(False)
+        self.generate_image_btn.setText("Generating...")
         
         # Create a detailed prompt based on monster details
         monster_details = []
@@ -836,8 +846,20 @@ class MonsterPanel(BasePanel):
             
         logger.info(f"Generating Monster Manual style image for: {self.current_monster.name}")
         
+        # For monsters with existing images, we need to use a different temp file 
+        # to avoid overwriting the existing one
+        monster_id = self.current_monster.id
+        if has_existing_image:
+            # Create a temp filename with "_new" suffix
+            monster_id = f"{monster_id}_new_temp"
+            logger.info(f"Using temporary monster ID for image generation: {monster_id}")
+        
         # Define callback to process the image
         def on_image_generated(image_path, error):
+            # Re-enable the generate button regardless of outcome
+            self.generate_image_btn.setEnabled(True)
+            self.generate_image_btn.setText("Generate Monster Manual Image")
+            
             if error:
                 logger.error(f"Image generation failed: {error}")
                 self.image_label.setText(f"Image generation failed: {error}")
@@ -854,30 +876,31 @@ class MonsterPanel(BasePanel):
                 return
                 
             try:
-                # Update the monster object with the image path in memory only
-                # NOTE: We don't save to the database here due to threading issues
-                # (SQLite objects created in a thread can only be used in that same thread)
-                self.current_monster.image_path = image_path
+                # Don't update the monster object directly here, let the save process handle it
                 
-                # Display the image
-                pixmap = QPixmap(image_path)
-                if not pixmap.isNull():
-                    # Scale the image to fit the label while maintaining aspect ratio
-                    pixmap = pixmap.scaled(
-                        300, 300,
-                        Qt.KeepAspectRatio, 
-                        Qt.SmoothTransformation
-                    )
-                    self.image_label.setPixmap(pixmap)
-                    logger.info(f"Monster image generated and displayed: {image_path}")
-                    
-                    # Emit signal to save image path in the main thread
-                    # This avoids threading issues with SQLite
-                    logger.info(f"Emitting save_image_signal with path: {image_path}")
-                    self.save_image_signal.emit(image_path)
-                else:
-                    logger.error(f"Failed to load generated image: {image_path}")
-                    self.image_label.setText("Failed to load generated image")
+                # If monster already has an image, we'll show the side-by-side dialog in _save_monster_image_path_slot
+                # otherwise we can display the new image here
+                if not has_existing_image:
+                    # Display the image
+                    pixmap = QPixmap(image_path)
+                    if not pixmap.isNull():
+                        # Scale the image to fit the label while maintaining aspect ratio
+                        pixmap = pixmap.scaled(
+                            300, 300,
+                            Qt.KeepAspectRatio, 
+                            Qt.SmoothTransformation
+                        )
+                        self.image_label.setPixmap(pixmap)
+                        logger.info(f"Monster image generated and displayed: {image_path}")
+                    else:
+                        logger.error(f"Failed to load generated image: {image_path}")
+                        self.image_label.setText("Failed to load generated image")
+                
+                # Emit signal to save image path in the main thread
+                # This avoids threading issues with SQLite
+                logger.info(f"Emitting save_image_signal with path: {image_path}")
+                self.save_image_signal.emit(image_path)
+                
             except Exception as e:
                 logger.error(f"Error processing generated image: {e}")
                 self.image_label.setText("Error processing generated image")
@@ -886,17 +909,64 @@ class MonsterPanel(BasePanel):
         self.llm_service.generate_image_async(
             prompt=prompt,
             callback=on_image_generated,
-            monster_id=self.current_monster.id
+            monster_id=monster_id
         )
 
     def _save_monster_image_path_slot(self, image_path):
         """Slot to save the monster's image path to the database in the main thread."""
         logger.info(f"_save_monster_image_path_slot called in main thread with path: {image_path}")
         
-        if not self.current_monster or not self.current_monster.is_custom:
-            logger.warning("Cannot save image path: No current monster or monster is not custom")
+        if not self.current_monster:
+            logger.warning("Cannot save image path: No current monster")
             return
+        
+        if not self.current_monster.is_custom:
+            logger.warning("Cannot save image path: Monster is not custom")
+            return
+        
+        try:
+            # Check if monster already has an image
+            existing_image_path = self.current_monster.image_path
+            if existing_image_path:
+                # Resolve the paths if they're relative
+                resolved_existing_path = existing_image_path
+                if not os.path.isabs(existing_image_path):
+                    app_dir = self.app_state.app_dir
+                    resolved_existing_path = os.path.normpath(os.path.join(app_dir, existing_image_path))
+                
+                # If it has an existing image, show comparison dialog
+                logger.info("Monster already has image. Showing comparison dialog.")
+                
+                # Create the comparison dialog in the main thread
+                comparison_dialog = ImageComparisonDialog(
+                    self,  # Parent in same thread
+                    resolved_existing_path,
+                    image_path,
+                    self.current_monster.name
+                )
+                
+                # Connect to the image selection signal
+                comparison_dialog.image_selected.connect(self._on_image_selected)
+                
+                # Show the dialog
+                comparison_dialog.exec()
+                
+                # Dialog handling is done via the _on_image_selected slot
+                return
             
+            # No existing image, just save the new one
+            self._save_image_to_monster(image_path)
+        
+        except Exception as e:
+            logger.error(f"Error in image comparison: {e}", exc_info=True)
+
+    def _on_image_selected(self, selected_image_path):
+        """Handle the image selection from the comparison dialog."""
+        logger.info(f"Image selected: {selected_image_path}")
+        self._save_image_to_monster(selected_image_path)
+
+    def _save_image_to_monster(self, image_path):
+        """Save the selected image path to the monster and update the database."""
         try:
             # Convert absolute path to relative path based on app_dir for better portability
             if image_path:
@@ -937,6 +1007,9 @@ class MonsterPanel(BasePanel):
                 # Update our current monster with any changes from the saved version
                 self.current_monster = saved_monster
                 self._add_or_update_monster_in_list(saved_monster)
+                
+                # Display the image
+                self._display_monster_details(self.current_monster)
             else:
                 logger.error(f"Failed to save monster image path to database for {self.current_monster.name}")
         except Exception as e:
@@ -1021,6 +1094,162 @@ class FullScreenImageDialog(QDialog):
         except Exception as e:
             logger.error(f"Error loading image in fullscreen: {e}", exc_info=True)
             self.image_label.setText(f"Error loading image: {str(e)}")
+
+
+class ImageComparisonDialog(QDialog):
+    """Dialog for side-by-side comparison of two monster images."""
+    
+    image_selected = Signal(str)  # Emits path of selected image
+    
+    def __init__(self, parent=None, old_image_path=None, new_image_path=None, monster_name="Monster"):
+        """Initialize with paths to both the old and new images."""
+        super().__init__(parent)
+        self.old_image_path = old_image_path
+        self.new_image_path = new_image_path
+        self.monster_name = monster_name
+        
+        # Set up the dialog
+        self.setWindowTitle(f"Image Comparison - {monster_name}")
+        self.resize(1000, 600)
+        
+        # Create the layout
+        main_layout = QVBoxLayout(self)
+        
+        # Add title label
+        title_label = QLabel(f"Choose which image to keep for {monster_name}")
+        title_label.setAlignment(Qt.AlignCenter)
+        title_label.setFont(QFont("Arial", 12, QFont.Bold))
+        main_layout.addWidget(title_label)
+        
+        # Create side-by-side layout for images
+        images_layout = QHBoxLayout()
+        
+        # Left side - Old image
+        left_layout = QVBoxLayout()
+        left_label = QLabel("Current Image")
+        left_label.setAlignment(Qt.AlignCenter)
+        left_label.setFont(QFont("Arial", 10, QFont.Bold))
+        left_layout.addWidget(left_label)
+        
+        self.old_image_scroll = QScrollArea()
+        self.old_image_scroll.setWidgetResizable(True)
+        self.old_image_label = QLabel()
+        self.old_image_label.setAlignment(Qt.AlignCenter)
+        self.old_image_label.setStyleSheet("background-color: #f0f0f0; border: 1px solid #ccc;")
+        self.old_image_scroll.setWidget(self.old_image_label)
+        left_layout.addWidget(self.old_image_scroll)
+        
+        self.keep_old_btn = QPushButton("Keep Current Image")
+        self.keep_old_btn.clicked.connect(self._select_old_image)
+        left_layout.addWidget(self.keep_old_btn)
+        
+        # Right side - New image
+        right_layout = QVBoxLayout()
+        right_label = QLabel("New Image")
+        right_label.setAlignment(Qt.AlignCenter)
+        right_label.setFont(QFont("Arial", 10, QFont.Bold))
+        right_layout.addWidget(right_label)
+        
+        self.new_image_scroll = QScrollArea()
+        self.new_image_scroll.setWidgetResizable(True)
+        self.new_image_label = QLabel()
+        self.new_image_label.setAlignment(Qt.AlignCenter)
+        self.new_image_label.setStyleSheet("background-color: #f0f0f0; border: 1px solid #ccc;")
+        self.new_image_scroll.setWidget(self.new_image_label)
+        right_layout.addWidget(self.new_image_scroll)
+        
+        self.keep_new_btn = QPushButton("Keep New Image")
+        self.keep_new_btn.clicked.connect(self._select_new_image)
+        right_layout.addWidget(self.keep_new_btn)
+        
+        # Add both sides to the images layout
+        images_layout.addLayout(left_layout)
+        images_layout.addLayout(right_layout)
+        
+        # Add images layout to main layout
+        main_layout.addLayout(images_layout)
+        
+        # Add button box at bottom
+        button_box = QDialogButtonBox(QDialogButtonBox.Cancel)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+        
+        # Load the images
+        self._load_images()
+    
+    def _load_images(self):
+        """Load and display both images side by side."""
+        logger.info(f"Loading images for comparison: Old={self.old_image_path}, New={self.new_image_path}")
+        
+        # Verify that paths are different
+        if self.old_image_path == self.new_image_path:
+            logger.warning("Old and new image paths are identical. This may cause display issues.")
+        
+        # Helper function to load an image
+        def load_image(path, label, is_old=True):
+            if not path or not os.path.exists(path):
+                label.setText(f"{'Current' if is_old else 'New'} image not found")
+                logger.error(f"Image path does not exist: {path}")
+                return False
+            
+            try:
+                # Create a fresh QPixmap to avoid caching issues
+                pixmap = QPixmap()
+                success = pixmap.load(path)
+                
+                if not success or pixmap.isNull():
+                    label.setText(f"Failed to load {'current' if is_old else 'new'} image")
+                    logger.error(f"Failed to load pixmap: {path}")
+                    return False
+                
+                # Add a subtle border to distinguish the images
+                label_text = "Current Image" if is_old else "New Image"
+                
+                # Scale the image to a reasonable display size
+                max_size = 400
+                if pixmap.width() > max_size or pixmap.height() > max_size:
+                    pixmap = pixmap.scaled(
+                        max_size, max_size,
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation
+                    )
+                
+                # Display the image with caption
+                label.setPixmap(pixmap)
+                logger.info(f"Successfully loaded {'current' if is_old else 'new'} image: {path}")
+                return True
+            except Exception as e:
+                logger.error(f"Error loading {'current' if is_old else 'new'} image: {e}", exc_info=True)
+                label.setText(f"Error loading {'current' if is_old else 'new'} image: {str(e)}")
+                return False
+        
+        # Load both images - explicitly passing is_old flag
+        old_loaded = load_image(self.old_image_path, self.old_image_label, is_old=True)
+        # Force application to process events before loading the second image
+        QApplication.processEvents()
+        new_loaded = load_image(self.new_image_path, self.new_image_label, is_old=False)
+        
+        # Enable/disable buttons based on whether images loaded
+        self.keep_old_btn.setEnabled(old_loaded)
+        self.keep_new_btn.setEnabled(new_loaded)
+        
+        # Set different button styles to make it clearer
+        if old_loaded:
+            self.keep_old_btn.setStyleSheet("background-color: #e0e0e0;")
+        if new_loaded:
+            self.keep_new_btn.setStyleSheet("background-color: #e0f0e0;")
+    
+    def _select_old_image(self):
+        """Choose the old image and emit its path."""
+        logger.info(f"User selected to keep current image: {self.old_image_path}")
+        self.image_selected.emit(self.old_image_path)
+        self.accept()  # Close dialog with accept result
+    
+    def _select_new_image(self):
+        """Choose the new image and emit its path."""
+        logger.info(f"User selected to keep new image: {self.new_image_path}")
+        self.image_selected.emit(self.new_image_path)
+        self.accept()  # Close dialog with accept result
 
 
 # --- State Management (Example) ---
