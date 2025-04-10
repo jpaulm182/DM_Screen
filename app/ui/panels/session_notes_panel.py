@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QDateTime, Slot
 from PySide6.QtGui import QFont, QAction, QIcon
+import re
+import json
 
 from app.ui.panels.base_panel import BasePanel
 
@@ -651,12 +653,887 @@ class SessionNotesPanel(BasePanel):
             else:
                 self.note_tags.setText("Tags: None")
             
-            # Display content
-            self.note_content.setText(self.current_note['content'])
+            # Display content with type-specific formatting
+            self._display_formatted_content(self.current_note)
             
             # Enable edit/delete buttons
             self.edit_btn.setEnabled(True)
             self.delete_btn.setEnabled(True)
+    
+    def _display_formatted_content(self, note):
+        """Display note content with type-specific formatting based on tags and content"""
+        # Get content and tags
+        content = note.get('content', '')
+        tags = note.get('tags', '').lower().split(',')
+        title = note.get('title', '').lower()
+        
+        # Detect content type based on title, tags, and content structure
+        content_type = self._detect_content_type(note)
+        
+        # Create HTML content with appropriate styling
+        html_content = f"""
+        <html>
+        <head>
+        <style>
+            body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #e0e0e0; background-color: #1e1e1e; }}
+            h1 {{ color: #81a1c1; font-size: 20px; margin-top: 12px; margin-bottom: 8px; }}
+            h2 {{ color: #88c0d0; font-size: 18px; margin-top: 15px; margin-bottom: 6px; }}
+            h3 {{ color: #8fbcbb; font-size: 16px; margin-top: 10px; margin-bottom: 5px; }}
+            p {{ margin: 8px 0; color: #d8dee9; }}
+            ul {{ margin: 5px 0; padding-left: 20px; }}
+            li {{ color: #d8dee9; }}
+            .metadata {{ color: #a0a0a0; font-style: italic; font-size: 0.9em; }}
+            .monster {{ background-color: #2e2220; padding: 15px; border-left: 3px solid #bf616a; border-radius: 4px; margin-bottom: 10px; }}
+            .location {{ background-color: #1e2b23; padding: 15px; border-left: 3px solid #a3be8c; border-radius: 4px; margin-bottom: 10px; }}
+            .recap {{ background-color: #1a2533; padding: 15px; border-left: 3px solid #5e81ac; border-radius: 4px; margin-bottom: 10px; }}
+            .ai {{ background-color: #2a2438; padding: 15px; border-left: 3px solid #b48ead; border-radius: 4px; margin-bottom: 10px; }}
+            .loot {{ background-color: #2d2922; padding: 15px; border-left: 3px solid #ebcb8b; border-radius: 4px; margin-bottom: 10px; }}
+            .rules {{ background-color: #2a2826; padding: 15px; border-left: 3px solid #d08770; border-radius: 4px; margin-bottom: 10px; }}
+            .property {{ font-weight: bold; color: #eceff4; }}
+            .stat-block {{ background-color: #2e3440; padding: 10px; margin: 8px 0; border-radius: 4px; border: 1px solid #3b4252; }}
+            table {{ border-collapse: collapse; width: 100%; margin: 10px 0; }}
+            th {{ background-color: #3b4252; color: #eceff4; padding: 8px; text-align: left; border: 1px solid #4c566a; }}
+            td {{ border: 1px solid #4c566a; padding: 8px; text-align: left; color: #d8dee9; }}
+            .header-icon {{ margin-right: 5px; }}
+            .location-header {{ background-color: #2e3c34; padding: 10px; border-radius: 4px; margin-bottom: 15px; }}
+            .location-section {{ margin-top: 15px; margin-bottom: 15px; }}
+            .section-title {{ font-weight: bold; color: #a3be8c; }}
+            .npc-block {{ padding: 8px; border-left: 2px solid #5e81ac; margin: 8px 0; background-color: #2e3440; border-radius: 0 4px 4px 0; }}
+            .poi-block {{ padding: 8px; border-left: 2px solid #ebcb8b; margin: 8px 0; background-color: #2e3440; border-radius: 0 4px 4px 0; }}
+            .secret-block {{ padding: 8px; border-left: 2px solid #b48ead; margin: 8px 0; background-color: #2e3440; border-radius: 0 4px 4px 0; }}
+            strong {{ color: #ebcb8b; }}
+            em {{ color: #a3be8c; font-style: italic; }}
+            a {{ color: #88c0d0; text-decoration: none; }}
+            a:hover {{ text-decoration: underline; }}
+        </style>
+        </head>
+        <body>
+        """
+        
+        # Add type-specific container
+        if content_type == 'monster':
+            html_content += '<div class="monster">'
+        elif content_type == 'location':
+            html_content += '<div class="location">'
+        elif content_type == 'recap':
+            html_content += '<div class="recap">'
+        elif content_type == 'ai':
+            html_content += '<div class="ai">'
+        elif content_type == 'loot':
+            html_content += '<div class="loot">'
+        elif content_type == 'rules':
+            html_content += '<div class="rules">'
+        else:
+            html_content += '<div>'
+        
+        # Process the content based on its type
+        if content_type == 'monster':
+            html_content += self._format_monster_content(content)
+        elif content_type == 'location':
+            html_content += self._format_location_content(content)
+        elif content_type == 'recap':
+            html_content += self._format_recap_content(content)
+        elif content_type == 'ai':
+            html_content += self._format_ai_content(content)
+        elif content_type == 'loot':
+            html_content += self._format_loot_content(content)
+        elif content_type == 'rules':
+            html_content += self._format_rules_content(content)
+        else:
+            # Default markdown-like formatting for regular notes
+            html_content += self._format_default_content(content)
+        
+        # Close the container div and HTML
+        html_content += "</div></body></html>"
+        
+        # Set the formatted content
+        self.note_content.setHtml(html_content)
+    
+    def _detect_content_type(self, note):
+        """Detect the type of content based on title, tags, and content analysis"""
+        title = note.get('title', '').lower()
+        tags = note.get('tags', '').lower().split(',')
+        content = note.get('content', '')
+        
+        # Try to parse content as JSON first - this could override other types
+        try:
+            # Look for JSON in code blocks
+            json_match = re.search(r'```json\s*([\s\S]*?)\s*```', content)
+            if json_match:
+                # Found a JSON code block
+                json_content = json_match.group(1).strip()
+                json_data = json.loads(json_content)
+                
+                # Determine the type of JSON
+                if "narrative_output" in json_data:
+                    return 'location'  # Most location data has narrative_output
+                elif "name" in json_data and any(key in json_data for key in ["type", "environment", "points_of_interest", "npcs", "description", "size_scale"]):
+                    return 'location'
+                elif "hp" in json_data and "ac" in json_data and any(stat in json_data for stat in ["str", "dex", "con", "int", "wis", "cha"]):
+                    return 'monster'
+                elif "items" in json_data or "treasure" in json_data or "gold" in json_data:
+                    return 'loot'
+            
+            # If no code block, try raw JSON
+            elif content.strip().startswith('{') and content.strip().endswith('}'):
+                json_data = json.loads(content.strip())
+                
+                # Determine the type of JSON
+                if "narrative_output" in json_data:
+                    return 'location'
+                elif "name" in json_data and any(key in json_data for key in ["type", "environment", "points_of_interest", "npcs", "description", "size_scale"]):
+                    return 'location'
+                elif "hp" in json_data and "ac" in json_data and any(stat in json_data for stat in ["str", "dex", "con", "int", "wis", "cha"]):
+                    return 'monster'
+                elif "items" in json_data or "treasure" in json_data or "gold" in json_data:
+                    return 'loot'
+                
+        except json.JSONDecodeError:
+            # Not valid JSON, continue with normal detection
+            pass
+        except Exception as e:
+            # Log the error but continue with normal detection
+            print(f"Error parsing potential JSON content: {e}")
+            
+        # Try to identify content type from tags first (most reliable)
+        if any(tag in ['monster', 'creature', 'npc', 'enemy'] for tag in tags):
+            return 'monster'
+        elif any(tag in ['location', 'place', 'setting', 'dungeon', 'town', 'city'] for tag in tags):
+            return 'location'
+        elif any(tag in ['recap', 'summary', 'session recap'] for tag in tags):
+            return 'recap'
+        elif any(tag in ['ai', 'assistant', 'llm'] for tag in tags):
+            return 'ai'
+        elif any(tag in ['loot', 'treasure', 'item', 'items', 'magic items'] for tag in tags):
+            return 'loot'
+        elif any(tag in ['rules', 'rule', 'clarification'] for tag in tags):
+            return 'rules'
+        
+        # If tags don't provide clear identification, look at the title
+        if 'location:' in title or any(term in title for term in ['monster', 'creature', 'npc']):
+            return 'monster'
+        elif 'location:' in title or any(term in title for term in ['location', 'place', 'town', 'city', 'dungeon', 'fortress', 'lair']):
+            return 'location'
+        elif 'recap' in title or 'summary' in title:
+            return 'recap'
+        elif 'ai' in title or 'assistant' in title:
+            return 'ai'
+        elif any(term in title for term in ['loot', 'treasure', 'item']):
+            return 'loot'
+        elif 'rule' in title or 'clarification' in title:
+            return 'rules'
+        
+        # If still not identified, analyze content structure
+        if 'type:' in content.lower() and 'environment:' in content.lower() and 'points of interest' in content.lower():
+            return 'location'
+        elif 'narrative_output' in content.lower():
+            return 'location'  # Special string matching for location JSON-like content
+        elif 'hp:' in content.lower() and 'ac:' in content.lower() and any(stat in content.lower() for stat in ['str', 'dex', 'con', 'int', 'wis', 'cha']):
+            return 'monster'
+        elif 'session recap' in content.lower() or 'session summary' in content.lower():
+            return 'recap'
+        elif 'model:' in content.lower() and 'conversation:' in content.lower():
+            return 'ai'
+        elif 'gp' in content.lower() and 'sp' in content.lower() and ('magic item' in content.lower() or 'potion' in content.lower() or 'scroll' in content.lower()):
+            return 'loot'
+        elif 'rule:' in content.lower() or 'page:' in content.lower() or 'phb' in content.lower():
+            return 'rules'
+        
+        # Default to regular note
+        return 'default'
+    
+    def _format_default_content(self, content):
+        """Format regular note content with basic markdown-like parsing"""
+        # Replace markdown headings with HTML
+        content = content.replace('\n# ', '\n<h1>').replace('\n## ', '\n<h2>').replace('\n### ', '\n<h3>')
+        for i in range(1, 4):
+            heading_end = f"</h{i}>"
+            content = re.sub(r'(<h{0}>.*?)(\n)'.format(i), r'\1{0}\2'.format(heading_end), content)
+        
+        # Replace markdown lists
+        lines = content.split('\n')
+        in_list = False
+        processed_lines = []
+        
+        for line in lines:
+            # Handle bullet points
+            if line.strip().startswith('- '):
+                if not in_list:
+                    processed_lines.append('<ul>')
+                    in_list = True
+                processed_lines.append('<li>' + line.strip()[2:] + '</li>')
+            elif line.strip().startswith('* '):
+                if not in_list:
+                    processed_lines.append('<ul>')
+                    in_list = True
+                processed_lines.append('<li>' + line.strip()[2:] + '</li>')
+            else:
+                if in_list:
+                    processed_lines.append('</ul>')
+                    in_list = False
+                processed_lines.append(line)
+        
+        if in_list:
+            processed_lines.append('</ul>')
+        
+        content = '\n'.join(processed_lines)
+        
+        # Replace double line breaks with paragraph tags
+        content = content.replace('\n\n', '\n<p>')
+        
+        # Preserve line breaks
+        content = content.replace('\n', '<br>')
+        
+        # Handle emphasis
+        content = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', content)  # Bold
+        content = re.sub(r'\*(.+?)\*', r'<em>\1</em>', content)  # Italic
+        
+        return content
+    
+    def _format_monster_content(self, content):
+        """Format monster content with stat block styling"""
+        # Check if content contains JSON in code block or raw JSON
+        try:
+            # Look for code blocks with JSON
+            json_match = re.search(r'```json\s*([\s\S]*?)\s*```', content)
+            if json_match:
+                # Found a JSON code block
+                json_content = json_match.group(1).strip()
+                monster_data = json.loads(json_content)
+                return self._format_monster_json(monster_data)
+            
+            # If no code block, try to see if the entire content is JSON
+            elif content.strip().startswith('{') and content.strip().endswith('}'):
+                monster_data = json.loads(content)
+                return self._format_monster_json(monster_data)
+        except json.JSONDecodeError as e:
+            print(f"Failed to parse monster JSON content: {e}")
+        except Exception as e:
+            print(f"Error processing monster JSON: {e}")
+        
+        # Use a modified version of the default formatter if not JSON
+        formatted = self._format_default_content(content)
+        
+        # Further enhance monster-specific formatting
+        # Look for stat blocks and add special styling
+        stat_patterns = [
+            (r'HP:?\s*(\d+)', r'<div class="stat-block"><span class="property">HP:</span> \1</div>'),
+            (r'AC:?\s*(\d+)', r'<div class="stat-block"><span class="property">AC:</span> \1</div>'),
+            (r'STR:?\s*(\d+)', r'<div class="stat-block"><span class="property">STR:</span> \1</div>'),
+            (r'DEX:?\s*(\d+)', r'<div class="stat-block"><span class="property">DEX:</span> \1</div>'),
+            (r'CON:?\s*(\d+)', r'<div class="stat-block"><span class="property">CON:</span> \1</div>'),
+            (r'INT:?\s*(\d+)', r'<div class="stat-block"><span class="property">INT:</span> \1</div>'),
+            (r'WIS:?\s*(\d+)', r'<div class="stat-block"><span class="property">WIS:</span> \1</div>'),
+            (r'CHA:?\s*(\d+)', r'<div class="stat-block"><span class="property">CHA:</span> \1</div>')
+        ]
+        
+        for pattern, replacement in stat_patterns:
+            formatted = re.sub(pattern, replacement, formatted, flags=re.IGNORECASE)
+        
+        return formatted
+        
+    def _format_monster_json(self, monster_data):
+        """Format a monster from JSON data"""
+        html = []
+        
+        # Monster name as header
+        name = monster_data.get("name", "Unnamed Monster")
+        html.append(f'<div class="stat-block" style="background-color: #33272a; border-top: 3px solid #bf616a; border-bottom: 3px solid #bf616a; padding: 15px; margin-bottom: 15px;">')
+        html.append(f'<h1 style="color: #d8a9a4; text-align: center; margin-bottom: 15px;">{name}</h1>')
+        
+        # Size, type, alignment
+        size = monster_data.get("size", "")
+        monster_type = monster_data.get("type", "")
+        alignment = monster_data.get("alignment", "")
+        
+        type_line = []
+        if size:
+            type_line.append(size)
+        if monster_type:
+            type_line.append(monster_type)
+        if alignment:
+            type_line.append(alignment)
+        
+        if type_line:
+            html.append(f'<p style="font-style: italic; text-align: center; margin-bottom: 15px;">{" ".join(type_line)}</p>')
+        
+        # AC, HP, Speed
+        ac = monster_data.get("ac", monster_data.get("armor_class", ""))
+        hp = monster_data.get("hp", monster_data.get("hit_points", ""))
+        speed = monster_data.get("speed", "")
+        
+        if ac:
+            html.append(f'<div><span class="property">Armor Class:</span> {ac}</div>')
+        if hp:
+            html.append(f'<div><span class="property">Hit Points:</span> {hp}</div>')
+        if speed:
+            html.append(f'<div><span class="property">Speed:</span> {speed}</div>')
+        
+        # Add a separator
+        html.append('<hr style="border-color: #4c566a; margin: 10px 0;">')
+        
+        # Ability scores
+        html.append('<div style="display: flex; justify-content: space-between; margin-bottom: 15px;">')
+        
+        for ability in ["str", "dex", "con", "int", "wis", "cha"]:
+            score = monster_data.get(ability, monster_data.get(ability.upper(), ""))
+            if score:
+                # Calculate modifier
+                if isinstance(score, int):
+                    modifier = (score - 10) // 2
+                    modifier_str = f"{modifier:+d}" if modifier != 0 else "0"
+                    html.append(f'<div style="text-align: center;"><div style="font-weight: bold;">{ability.upper()}</div><div>{score} ({modifier_str})</div></div>')
+                else:
+                    html.append(f'<div style="text-align: center;"><div style="font-weight: bold;">{ability.upper()}</div><div>{score}</div></div>')
+        
+        html.append('</div>')
+        
+        # Add another separator
+        html.append('<hr style="border-color: #4c566a; margin: 10px 0;">')
+        
+        # Skills, Saves, etc.
+        for field in ["saving_throws", "skills", "damage_resistances", "damage_immunities", 
+                      "condition_immunities", "senses", "languages", "challenge"]:
+            value = monster_data.get(field, monster_data.get(field.replace("_", " "), ""))
+            if value:
+                field_name = field.replace("_", " ").title()
+                html.append(f'<div><span class="property">{field_name}:</span> {value}</div>')
+        
+        # Add a separator
+        html.append('<hr style="border-color: #4c566a; margin: 10px 0;">')
+        
+        # Abilities/Features
+        abilities = monster_data.get("abilities", monster_data.get("special_abilities", monster_data.get("features", [])))
+        if abilities:
+            html.append('<div style="margin-top: 15px;">')
+            
+            if isinstance(abilities, list):
+                for ability in abilities:
+                    if isinstance(ability, dict):
+                        ability_name = ability.get("name", "")
+                        ability_desc = ability.get("description", ability.get("desc", ""))
+                        
+                        if ability_name and ability_desc:
+                            html.append(f'<div style="margin-bottom: 10px;"><span style="font-weight: bold; font-style: italic;">{ability_name}.</span> {ability_desc}</div>')
+                    elif isinstance(ability, str):
+                        html.append(f'<div style="margin-bottom: 10px;">{ability}</div>')
+            elif isinstance(abilities, str):
+                html.append(f'<div>{abilities}</div>')
+            
+            html.append('</div>')
+        
+        # Actions
+        actions = monster_data.get("actions", [])
+        if actions:
+            html.append('<h3 style="border-bottom: 1px solid #bf616a; padding-bottom: 5px; margin-top: 15px;">Actions</h3>')
+            
+            if isinstance(actions, list):
+                for action in actions:
+                    if isinstance(action, dict):
+                        action_name = action.get("name", "")
+                        action_desc = action.get("description", action.get("desc", ""))
+                        
+                        if action_name and action_desc:
+                            html.append(f'<div style="margin-bottom: 10px;"><span style="font-weight: bold; font-style: italic;">{action_name}.</span> {action_desc}</div>')
+                    elif isinstance(action, str):
+                        html.append(f'<div style="margin-bottom: 10px;">{action}</div>')
+            elif isinstance(actions, str):
+                html.append(f'<div>{actions}</div>')
+        
+        # Reactions
+        reactions = monster_data.get("reactions", [])
+        if reactions:
+            html.append('<h3 style="border-bottom: 1px solid #bf616a; padding-bottom: 5px; margin-top: 15px;">Reactions</h3>')
+            
+            if isinstance(reactions, list):
+                for reaction in reactions:
+                    if isinstance(reaction, dict):
+                        reaction_name = reaction.get("name", "")
+                        reaction_desc = reaction.get("description", reaction.get("desc", ""))
+                        
+                        if reaction_name and reaction_desc:
+                            html.append(f'<div style="margin-bottom: 10px;"><span style="font-weight: bold; font-style: italic;">{reaction_name}.</span> {reaction_desc}</div>')
+                    elif isinstance(reaction, str):
+                        html.append(f'<div style="margin-bottom: 10px;">{reaction}</div>')
+            elif isinstance(reactions, str):
+                html.append(f'<div>{reactions}</div>')
+        
+        # Legendary Actions
+        legendary = monster_data.get("legendary_actions", [])
+        if legendary:
+            html.append('<h3 style="border-bottom: 1px solid #bf616a; padding-bottom: 5px; margin-top: 15px;">Legendary Actions</h3>')
+            
+            if isinstance(legendary, list):
+                for action in legendary:
+                    if isinstance(action, dict):
+                        action_name = action.get("name", "")
+                        action_desc = action.get("description", action.get("desc", ""))
+                        
+                        if action_name and action_desc:
+                            html.append(f'<div style="margin-bottom: 10px;"><span style="font-weight: bold; font-style: italic;">{action_name}.</span> {action_desc}</div>')
+                    elif isinstance(action, str):
+                        html.append(f'<div style="margin-bottom: 10px;">{action}</div>')
+            elif isinstance(legendary, str):
+                html.append(f'<div>{legendary}</div>')
+        
+        # Description or notes if available
+        description = monster_data.get("description", monster_data.get("notes", ""))
+        if description:
+            html.append('<div style="margin-top: 15px; font-style: italic;">')
+            html.append(f'<p>{description}</p>')
+            html.append('</div>')
+        
+        html.append('</div>')  # Close stat block
+        
+        return ''.join(html)
+    
+    def _format_location_content(self, content):
+        """Format location content with appropriate styling"""
+        # Check if content contains JSON in code block or raw JSON
+        try:
+            # Look for code blocks with JSON
+            json_match = re.search(r'```json\s*([\s\S]*?)\s*```', content)
+            if json_match:
+                # Found a JSON code block
+                json_content = json_match.group(1).strip()
+                location_data = json.loads(json_content)
+                return self._format_location_json(location_data)
+            
+            # If no code block, try to see if the entire content is JSON
+            elif content.strip().startswith('{') and content.strip().endswith('}'):
+                location_data = json.loads(content)
+                return self._format_location_json(location_data)
+        except json.JSONDecodeError as e:
+            print(f"Failed to parse JSON content: {e}")
+        except Exception as e:
+            print(f"Error processing location JSON: {e}")
+        
+        # If not JSON or JSON parsing failed, use the default formatter
+        formatted = self._format_default_content(content)
+        
+        # Enhance location-specific elements
+        location_patterns = [
+            (r'\*Type:\*\s*(.*?)<br>', r'<div class="stat-block"><span class="property">Type:</span> \1</div>'),
+            (r'\*Environment:\*\s*(.*?)<br>', r'<div class="stat-block"><span class="property">Environment:</span> \1</div>'),
+            (r'\*Size:\*\s*(.*?)<br>', r'<div class="stat-block"><span class="property">Size:</span> \1</div>'),
+            (r'\*Population:\*\s*(.*?)<br>', r'<div class="stat-block"><span class="property">Population:</span> \1</div>'),
+            (r'\*Danger Level:\*\s*(.*?)<br>', r'<div class="stat-block"><span class="property">Danger Level:</span> \1</div>')
+        ]
+        
+        for pattern, replacement in location_patterns:
+            formatted = re.sub(pattern, replacement, formatted)
+        
+        return formatted
+        
+    def _format_location_json(self, location_data):
+        """Format a location from JSON data"""
+        html = []
+        
+        # Location name as header
+        name = location_data.get("name", "Unnamed Location")
+        html.append(f'<div class="location-header"><h1>{name}</h1></div>')
+        
+        # Basic information in a stat block
+        html.append('<div class="stat-block">')
+        
+        # Type/Environment row
+        html.append('<div style="display: flex; justify-content: space-between; flex-wrap: wrap;">')
+        
+        # Left column - Type, environment
+        html.append('<div style="flex: 1; min-width: 150px; margin-right: 10px;">')
+        
+        location_type = location_data.get("type", "")
+        if location_type:
+            html.append(f'<div><span class="property">Type:</span> {location_type}</div>')
+        
+        environment = location_data.get("environment", "")
+        if environment:
+            html.append(f'<div><span class="property">Environment:</span> {environment}</div>')
+        
+        html.append('</div>')  # End left column
+        
+        # Right column - Size, population, danger
+        html.append('<div style="flex: 1; min-width: 150px;">')
+        
+        # Try different possible field names for size
+        size = location_data.get("size", location_data.get("size_scale", ""))
+        if size:
+            html.append(f'<div><span class="property">Size:</span> {size}</div>')
+        
+        # Try different possible field names for population
+        population = location_data.get("population", location_data.get("population_activity_level", ""))
+        if population:
+            html.append(f'<div><span class="property">Population:</span> {population}</div>')
+        
+        # Try different possible field names for danger level
+        danger = location_data.get("danger_level", location_data.get("threat_level", ""))
+        if danger:
+            html.append(f'<div><span class="property">Danger Level:</span> {danger}</div>')
+        
+        html.append('</div>')  # End right column
+        html.append('</div>')  # End flex container
+        html.append('</div>')  # End stat block
+        
+        # Narrative output (if present) - process this first
+        narrative = location_data.get("narrative_output", "")
+        if narrative and isinstance(narrative, dict):
+            # Physical description
+            phys_desc = narrative.get("physical_description", "")
+            if phys_desc:
+                html.append('<div class="location-section">')
+                html.append('<h2 class="section-title">Physical Description</h2>')
+                html.append(f'<p>{phys_desc}</p>')
+                html.append('</div>')
+            
+            # Background/history
+            hist_bg = narrative.get("history_background", "")
+            if hist_bg:
+                html.append('<div class="location-section">')
+                html.append('<h2 class="section-title">History & Background</h2>')
+                html.append(f'<p>{hist_bg}</p>')
+                html.append('</div>')
+            
+            # Atmosphere/mood
+            atmos = narrative.get("atmosphere_mood", "")
+            if atmos:
+                html.append('<div class="location-section">')
+                html.append('<h2 class="section-title">Atmosphere & Mood</h2>')
+                html.append(f'<p>{atmos}</p>')
+                html.append('</div>')
+                
+            # Notable threats and challenges
+            threats = narrative.get("notable_threats_challenges", "")
+            if threats:
+                html.append('<div class="location-section">')
+                html.append('<h2 class="section-title">Threats & Challenges</h2>')
+                html.append(f'<p>{threats}</p>')
+                html.append('</div>')
+                
+            # Handle nested POIs from narrative
+            self._append_narrative_points(html, narrative)
+            
+        # Only show description if not redundant with physical_description
+        elif not phys_desc:
+            # Description (only if not part of narrative)
+            description = location_data.get("description", "")
+            if description:
+                html.append('<div class="location-section">')
+                html.append('<h2 class="section-title">Description</h2>')
+                html.append(f'<p>{description}</p>')
+                html.append('</div>')
+        
+        # If narrative was a string or not present, handle other top-level fields
+        if not narrative or not isinstance(narrative, dict):
+            # Description
+            description = location_data.get("description", "")
+            if description:
+                html.append('<div class="location-section">')
+                html.append('<h2 class="section-title">Description</h2>')
+                html.append(f'<p>{description}</p>')
+                html.append('</div>')
+        
+            # History or background if not in narrative
+            history = location_data.get("history", location_data.get("background", ""))
+            if history:
+                html.append('<div class="location-section">')
+                html.append('<h2 class="section-title">History & Background</h2>')
+                html.append(f'<p>{history}</p>')
+                html.append('</div>')
+            
+            # Points of interest - if not already included in narrative
+            points = location_data.get("points_of_interest", [])
+            if points:
+                html.append('<div class="location-section">')
+                html.append('<h2 class="section-title">Points of Interest</h2>')
+                
+                if isinstance(points, list):
+                    for point in points:
+                        if isinstance(point, str):
+                            html.append(f'<div class="poi-block"><p>• {point}</p></div>')
+                        elif isinstance(point, dict):
+                            point_name = point.get("name", "")
+                            point_desc = point.get("description", "")
+                            
+                            if point_name and point_desc:
+                                html.append(f'<div class="poi-block"><h3>{point_name}</h3><p>{point_desc}</p></div>')
+                            elif point_name:
+                                html.append(f'<div class="poi-block"><p>• <strong>{point_name}</strong></p></div>')
+                            elif point_desc:
+                                html.append(f'<div class="poi-block"><p>• {point_desc}</p></div>')
+                elif isinstance(points, str):
+                    html.append(f'<p>{points}</p>')
+                
+                html.append('</div>')
+            
+            # NPCs - if not already included in narrative
+            npcs = location_data.get("npcs", location_data.get("key_npcs", []))
+            if npcs:
+                html.append('<div class="location-section">')
+                html.append('<h2 class="section-title">Notable NPCs</h2>')
+                
+                if isinstance(npcs, list):
+                    for npc in npcs:
+                        if isinstance(npc, str):
+                            html.append(f'<div class="npc-block"><p>• {npc}</p></div>')
+                        elif isinstance(npc, dict):
+                            npc_name = npc.get("name", "")
+                            npc_desc = npc.get("description", "")
+                            
+                            if npc_name and npc_desc:
+                                html.append(f'<div class="npc-block"><h3>{npc_name}</h3><p>{npc_desc}</p></div>')
+                            elif npc_name:
+                                html.append(f'<div class="npc-block"><p>• <strong>{npc_name}</strong></p></div>')
+                            elif npc_desc:
+                                html.append(f'<div class="npc-block"><p>• {npc_desc}</p></div>')
+                elif isinstance(npcs, str):
+                    html.append(f'<p>{npcs}</p>')
+                
+                html.append('</div>')
+            
+            # Secrets - if not already included in narrative
+            secrets = location_data.get("secrets", location_data.get("secrets_hidden_elements", []))
+            if secrets:
+                html.append('<div class="location-section">')
+                html.append('<h2 class="section-title">Secrets</h2>')
+                
+                if isinstance(secrets, list):
+                    for secret in secrets:
+                        if isinstance(secret, str):
+                            html.append(f'<div class="secret-block"><p>• {secret}</p></div>')
+                        elif isinstance(secret, dict):
+                            secret_name = secret.get("name", "")
+                            secret_desc = secret.get("description", secret.get("secret", ""))
+                            
+                            if secret_name and secret_desc:
+                                html.append(f'<div class="secret-block"><h3>{secret_name}</h3><p>{secret_desc}</p></div>')
+                            elif secret_name:
+                                html.append(f'<div class="secret-block"><p>• <strong>{secret_name}</strong></p></div>')
+                            elif secret_desc:
+                                html.append(f'<div class="secret-block"><p>• {secret_desc}</p></div>')
+                elif isinstance(secrets, str):
+                    html.append(f'<p>{secrets}</p>')
+                
+                html.append('</div>')
+                    
+            # Add threats and challenges
+            threats = location_data.get("threats", location_data.get("challenges", []))
+            if threats:
+                html.append('<div class="location-section">')
+                html.append('<h2 class="section-title">Threats & Challenges</h2>')
+                
+                if isinstance(threats, list):
+                    for threat in threats:
+                        if isinstance(threat, str):
+                            html.append(f'<p>• {threat}</p>')
+                        elif isinstance(threat, dict):
+                            threat_name = threat.get("name", "")
+                            threat_desc = threat.get("description", "")
+                            
+                            if threat_name and threat_desc:
+                                html.append(f'<h3>{threat_name}</h3><p>{threat_desc}</p>')
+                            elif threat_name:
+                                html.append(f'<p>• <strong>{threat_name}</strong></p>')
+                            elif threat_desc:
+                                html.append(f'<p>• {threat_desc}</p>')
+                
+                elif isinstance(threats, str):
+                    html.append(f'<p>{threats}</p>')
+                
+                html.append('</div>')
+        
+        # Handle any additional fields
+        for key, value in location_data.items():
+            if key not in ["name", "type", "description", "narrative_output", 
+                          "points_of_interest", "npcs", "key_npcs", "secrets", "secrets_hidden_elements", "history", 
+                          "background", "environment", "size", "size_scale", "population", "population_activity_level",
+                          "danger_level", "threat_level", "atmosphere", "mood", "atmosphere_mood",
+                          "threats", "challenges", "notable_threats_challenges"]:
+                if isinstance(value, str) and value:
+                    title = key.replace('_', ' ').title()
+                    html.append('<div class="location-section">')
+                    html.append(f'<h2 class="section-title">{title}</h2>')
+                    html.append(f'<p>{value}</p>')
+                    html.append('</div>')
+                elif isinstance(value, list) and value:
+                    title = key.replace('_', ' ').title()
+                    html.append('<div class="location-section">')
+                    html.append(f'<h2 class="section-title">{title}</h2>')
+                    
+                    for item in value:
+                        if isinstance(item, str):
+                            html.append(f'<p>• {item}</p>')
+                        elif isinstance(item, dict) and ("name" in item or "description" in item):
+                            item_name = item.get("name", "")
+                            item_desc = item.get("description", "")
+                            
+                            if item_name and item_desc:
+                                html.append(f'<h3>{item_name}</h3><p>{item_desc}</p>')
+                            elif item_name:
+                                html.append(f'<p>• <strong>{item_name}</strong></p>')
+                            elif item_desc:
+                                html.append(f'<p>• {item_desc}</p>')
+                    
+                    html.append('</div>')
+        
+        return ''.join(html)
+    
+    def _append_narrative_points(self, html_list, narrative):
+        """Helper method to append narrative points to the HTML list"""
+        # Points of interest
+        narrative_points = narrative.get("points_of_interest", [])
+        if narrative_points and len(narrative_points) > 0:
+            html_list.append('<div class="location-section">')
+            html_list.append('<h2 class="section-title">Points of Interest</h2>')
+            
+            for point in narrative_points:
+                if isinstance(point, dict):
+                    name = point.get("name", "")
+                    desc = point.get("description", "")
+                    if name and desc:
+                        html_list.append(f'<div class="poi-block"><h3>{name}</h3><p>{desc}</p></div>')
+                    elif name:
+                        html_list.append(f'<div class="poi-block"><p>• <strong>{name}</strong></p></div>')
+                    elif desc:
+                        html_list.append(f'<div class="poi-block"><p>• {desc}</p></div>')
+                elif isinstance(point, str):
+                    html_list.append(f'<div class="poi-block"><p>• {point}</p></div>')
+            
+            html_list.append('</div>')
+        
+        # NPCs
+        narrative_npcs = narrative.get("key_npcs", [])
+        if narrative_npcs and len(narrative_npcs) > 0:
+            html_list.append('<div class="location-section">')
+            html_list.append('<h2 class="section-title">Key NPCs</h2>')
+            
+            for npc in narrative_npcs:
+                if isinstance(npc, dict):
+                    name = npc.get("name", "")
+                    desc = npc.get("description", "")
+                    if name and desc:
+                        html_list.append(f'<div class="npc-block"><h3>{name}</h3><p>{desc}</p></div>')
+                    elif name:
+                        html_list.append(f'<div class="npc-block"><p>• <strong>{name}</strong></p></div>')
+                    elif desc:
+                        html_list.append(f'<div class="npc-block"><p>• {desc}</p></div>')
+                elif isinstance(npc, str):
+                    html_list.append(f'<div class="npc-block"><p>• {npc}</p></div>')
+            
+            html_list.append('</div>')
+        
+        # Secrets
+        narrative_secrets = narrative.get("secrets_hidden_elements", [])
+        if narrative_secrets and len(narrative_secrets) > 0:
+            html_list.append('<div class="location-section">')
+            html_list.append('<h2 class="section-title">Secrets & Hidden Elements</h2>')
+            
+            for secret in narrative_secrets:
+                if isinstance(secret, dict):
+                    # Some LLM responses use "secret" key, others use "name"/"description"
+                    secret_text = secret.get("secret", secret.get("description", ""))
+                    secret_name = secret.get("name", "")
+                    
+                    if secret_name and secret_text:
+                        html_list.append(f'<div class="secret-block"><h3>{secret_name}</h3><p>{secret_text}</p></div>')
+                    elif secret_name:
+                        html_list.append(f'<div class="secret-block"><p>• <strong>{secret_name}</strong></p></div>')
+                    elif secret_text:
+                        html_list.append(f'<div class="secret-block"><p>• {secret_text}</p></div>')
+                elif isinstance(secret, str):
+                    html_list.append(f'<div class="secret-block"><p>• {secret}</p></div>')
+            
+            html_list.append('</div>')
+    
+    def _format_recap_content(self, content):
+        """Format session recap content with appropriate styling"""
+        # Use default formatter as base
+        formatted = self._format_default_content(content)
+        
+        # Add any recap-specific formatting here
+        # For example, you might want to highlight key NPCs, locations, etc.
+        npc_pattern = r'([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)'  # Capitalized words as potential NPC names
+        
+        # This is a simplistic approach - might lead to false positives
+        # Only use if you can refine it for your specific content patterns
+        # formatted = re.sub(npc_pattern, r'<strong>\1</strong>', formatted)
+        
+        return formatted
+    
+    def _format_ai_content(self, content):
+        """Format AI conversation content with appropriate styling"""
+        # Handle AI conversation format which often has human/assistant turns
+        lines = content.split('\n')
+        formatted_lines = []
+        
+        in_conversation = False
+        
+        for line in lines:
+            # Detect conversation section
+            if 'conversation' in line.lower() or 'you:' in line.lower():
+                in_conversation = True
+                formatted_lines.append(line)
+            elif in_conversation:
+                # Style user messages
+                if line.strip().startswith('You:') or line.strip().startswith('User:'):
+                    formatted_lines.append(f'<strong style="color: #2980b9;">{line}</strong>')
+                # Style assistant messages
+                elif line.strip().startswith('Assistant:') or line.strip().startswith('AI:'):
+                    formatted_lines.append(f'<strong style="color: #16a085;">{line}</strong>')
+                else:
+                    formatted_lines.append(line)
+            else:
+                formatted_lines.append(line)
+        
+        # Join back and use default formatter
+        return self._format_default_content('\n'.join(formatted_lines))
+    
+    def _format_loot_content(self, content):
+        """Format loot/treasure content with appropriate styling"""
+        # Use default formatter as base
+        formatted = self._format_default_content(content)
+        
+        # Enhance gold, silver, copper values
+        currency_patterns = [
+            (r'(\d+)\s*gp', r'<span style="color: #f39c12; font-weight: bold;">\1 gp</span>'),
+            (r'(\d+)\s*sp', r'<span style="color: #7f8c8d; font-weight: bold;">\1 sp</span>'),
+            (r'(\d+)\s*cp', r'<span style="color: #d35400; font-weight: bold;">\1 cp</span>'),
+            (r'(\d+)\s*pp', r'<span style="color: #2ecc71; font-weight: bold;">\1 pp</span>')
+        ]
+        
+        for pattern, replacement in currency_patterns:
+            formatted = re.sub(pattern, replacement, formatted, flags=re.IGNORECASE)
+        
+        # Highlight magic items
+        magic_patterns = [
+            (r'([+]\d+)', r'<span style="color: #8e44ad; font-weight: bold;">\1</span>'),
+            (r'(potion of .*?)([\s\.,<])', r'<span style="color: #3498db;">\1</span>\2'),
+            (r'(scroll of .*?)([\s\.,<])', r'<span style="color: #e74c3c;">\1</span>\2'),
+            (r'(wand of .*?)([\s\.,<])', r'<span style="color: #9b59b6;">\1</span>\2'),
+            (r'(staff of .*?)([\s\.,<])', r'<span style="color: #8e44ad;">\1</span>\2'),
+            (r'(ring of .*?)([\s\.,<])', r'<span style="color: #f1c40f;">\1</span>\2')
+        ]
+        
+        for pattern, replacement in magic_patterns:
+            formatted = re.sub(pattern, replacement, formatted, flags=re.IGNORECASE)
+        
+        return formatted
+    
+    def _format_rules_content(self, content):
+        """Format rules clarification content with appropriate styling"""
+        # Use default formatter as base
+        formatted = self._format_default_content(content)
+        
+        # Enhance page references, book citations
+        rules_patterns = [
+            (r'(PHB|DMG|MM|XGE|TCE|VGM)(?:\s+p\.?\s*(\d+))?', r'<span style="color: #7d3c98; font-weight: bold;">\1\2</span>'),
+            (r'(page|p)\.?\s*(\d+)', r'<span style="color: #7d3c98; font-weight: bold;">\1 \2</span>'),
+            (r'(Chapter|Ch)\.?\s*(\d+)', r'<span style="color: #7d3c98; font-weight: bold;">\1 \2</span>')
+        ]
+        
+        for pattern, replacement in rules_patterns:
+            formatted = re.sub(pattern, replacement, formatted, flags=re.IGNORECASE)
+        
+        return formatted
     
     def _create_note(self):
         """Create a new note"""

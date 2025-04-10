@@ -938,6 +938,9 @@ class CombatTrackerPanel(BasePanel):
         self.hp_delegate.hpChanged.connect(self._hp_changed)
         self.initiative_table.setItemDelegateForColumn(2, self.hp_delegate)
         
+        # Connect cell changed signal to handle initiative updates
+        self.initiative_table.cellChanged.connect(self._handle_cell_changed)
+        
         main_layout.addWidget(self.initiative_table)
         
         # Add combatant controls
@@ -1325,6 +1328,18 @@ class CombatTrackerPanel(BasePanel):
                         "HP Reduced to 0",
                         f"{name} is down! Remember to track death saves."
                     )
+    
+    def _handle_cell_changed(self, row, column):
+        """Handle cell value changes in the initiative table"""
+        # Check if initiative column was changed
+        if column == 1:  # Initiative column
+            # Log the initiative change
+            name = self.initiative_table.item(row, 0).text() if self.initiative_table.item(row, 0) else "Unknown"
+            init_value = self.initiative_table.item(row, 1).text() if self.initiative_table.item(row, 1) else "0"
+            self._log_combat_action("Initiative", name, "changed initiative", result=f"New value: {init_value}")
+            
+            # Auto-sort the initiative table
+            self._sort_initiative()
     
     def _next_turn(self):
         """Move to the next combatant's turn"""
