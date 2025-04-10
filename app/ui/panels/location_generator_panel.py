@@ -254,6 +254,11 @@ class LocationGeneratorPanel(BasePanel):
         # Create the content widget for the scroll area
         self.formatted_content = QWidget()
         self.formatted_layout = QVBoxLayout(self.formatted_content)
+        
+        # Set size policy to ensure content expands properly
+        self.formatted_content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.formatted_content.setMinimumWidth(300)  # Ensure minimum width for content
+        
         formatted_scroll.setWidget(self.formatted_content)
         
         formatted_layout.addWidget(formatted_scroll)
@@ -716,7 +721,7 @@ class LocationGeneratorPanel(BasePanel):
                 success = session_notes_panel._create_note_with_content(
                     title=f"Location: {title}",
                     content=formatted_content,
-                    tags=",".join(tags)
+                    tags=tags  # Pass the tags as a list instead of joining them
                 )
                 
                 if success:
@@ -1032,7 +1037,9 @@ class LocationGeneratorPanel(BasePanel):
         name_font.setBold(True)
         name_label.setFont(name_font)
         name_label.setAlignment(Qt.AlignCenter)
-        name_label.setStyleSheet("color: #1a237e; margin: 10px 0;")
+        name_label.setWordWrap(True)
+        name_label.setTextFormat(Qt.PlainText)
+        name_label.setStyleSheet("color: #1a237e; margin: 10px 0; padding: 5px;")
         self.formatted_layout.addWidget(name_label)
         
         # Location type and basic info
@@ -1047,12 +1054,16 @@ class LocationGeneratorPanel(BasePanel):
         location_type = location_data.get("type", "")
         if location_type:
             type_label = QLabel(f"<b>Type:</b> {location_type}")
+            type_label.setWordWrap(True)
+            type_label.setTextFormat(Qt.RichText)
             left_layout.addWidget(type_label)
         
         # Environment
         environment = location_data.get("environment", "")
         if environment:
             env_label = QLabel(f"<b>Environment:</b> {environment}")
+            env_label.setWordWrap(True)
+            env_label.setTextFormat(Qt.RichText)
             left_layout.addWidget(env_label)
             
         info_layout.addWidget(left_info)
@@ -1065,18 +1076,24 @@ class LocationGeneratorPanel(BasePanel):
         size = location_data.get("size", "")
         if size:
             size_label = QLabel(f"<b>Size:</b> {size}")
+            size_label.setWordWrap(True)
+            size_label.setTextFormat(Qt.RichText)
             right_layout.addWidget(size_label)
             
         # Population
         population = location_data.get("population", "")
         if population:
             pop_label = QLabel(f"<b>Population:</b> {population}")
+            pop_label.setWordWrap(True)
+            pop_label.setTextFormat(Qt.RichText)
             right_layout.addWidget(pop_label)
             
         # Danger level
         danger = location_data.get("danger_level", location_data.get("threat_level", ""))
         if danger:
             danger_label = QLabel(f"<b>Danger:</b> {danger}")
+            danger_label.setWordWrap(True)
+            danger_label.setTextFormat(Qt.RichText)
             right_layout.addWidget(danger_label)
             
         info_layout.addWidget(right_info)
