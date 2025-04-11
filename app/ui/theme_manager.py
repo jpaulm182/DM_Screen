@@ -16,240 +16,268 @@ FONT_SIZES = {
     "x-large": 14
 }
 
-def apply_theme(widget, theme_name, font_size="medium"):
-    """Apply a theme to the application"""
-    if theme_name == "dark":
-        _apply_dark_theme(widget, font_size)
-    else:
-        _apply_light_theme(widget, font_size)
-
-def set_font_size(font_size):
-    """Set font size for the application"""
-    if font_size in FONT_SIZES:
-        size = FONT_SIZES[font_size]
-    else:
-        size = FONT_SIZES["medium"]
+def apply_theme(widget, theme_name="dark", font_size=None):
+    """Apply a theme to the application
     
-    app = QApplication.instance()
-    font = app.font()
+    Args:
+        widget: The main application widget
+        theme_name: The theme name ('dark' or 'light')
+        font_size: Optional font size to apply
+    """
+    # Get theme stylesheet
+    style = get_theme_stylesheet(theme_name)
+    
+    # Apply the stylesheet
+    widget.setStyleSheet(style)
+    
+    # Apply font size if specified
+    if font_size is not None:
+        set_font_size(widget, font_size)
+
+def set_font_size(widget, size):
+    """Set the application font size
+    
+    Args:
+        widget: The main application widget
+        size: Font size in points or name ('small', 'medium', 'large')
+    """
+    # Convert named sizes to points if needed
+    if isinstance(size, str):
+        size_map = {
+            "small": 10,
+            "medium": 12,
+            "large": 14,
+            "x-large": 16
+        }
+        size = size_map.get(size.lower(), 12)
+    
+    # Get current font
+    font = widget.font()
     font.setPointSize(size)
-    app.setFont(font)
     
-    return size
+    # Apply font to application
+    widget.setFont(font)
+    
+    # Apply to all child widgets
+    for child in widget.findChildren(object):
+        try:
+            if hasattr(child, 'setFont'):
+                child.setFont(font)
+        except:
+            pass
 
-def _apply_dark_theme(widget, font_size="medium"):
-    """Apply the dark theme palette"""
-    palette = QPalette()
+def get_theme_stylesheet(theme_name):
+    """Get the CSS stylesheet for a theme
     
-    # Base colors
-    palette.setColor(QPalette.Window, QColor(53, 53, 53))
-    palette.setColor(QPalette.WindowText, QColor(255, 255, 255))
-    palette.setColor(QPalette.Base, QColor(42, 42, 42))
-    palette.setColor(QPalette.AlternateBase, QColor(66, 66, 66))
-    palette.setColor(QPalette.Text, QColor(255, 255, 255))
-    palette.setColor(QPalette.Button, QColor(53, 53, 53))
-    palette.setColor(QPalette.ButtonText, QColor(255, 255, 255))
-    
-    # Highlight colors
-    palette.setColor(QPalette.Highlight, QColor(49, 106, 197))
-    palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
-    
-    # Link colors
-    palette.setColor(QPalette.Link, QColor(42, 130, 218))
-    palette.setColor(QPalette.LinkVisited, QColor(147, 112, 219))
-    
-    # Disabled colors
-    palette.setColor(QPalette.Disabled, QPalette.WindowText, QColor(127, 127, 127))
-    palette.setColor(QPalette.Disabled, QPalette.Text, QColor(127, 127, 127))
-    palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(127, 127, 127))
-    
-    # Group/Tab colors
-    palette.setColor(QPalette.Light, QColor(76, 76, 76))
-    palette.setColor(QPalette.Midlight, QColor(66, 66, 66))
-    palette.setColor(QPalette.Mid, QColor(56, 56, 56))
-    palette.setColor(QPalette.Dark, QColor(46, 46, 46))
-    palette.setColor(QPalette.Shadow, QColor(26, 26, 26))
-    
-    # Apply the palette
-    widget.setPalette(palette)
-    
-    # Apply to application if this is the main window
-    if widget.isWindow():
-        QApplication.instance().setPalette(palette)
+    Args:
+        theme_name: The theme name ('dark' or 'light')
         
-        # Apply font size
-        set_font_size(font_size)
-        
-        # Apply additional styling
-        _apply_additional_styling(widget, "dark")
-
-def _apply_light_theme(widget, font_size="medium"):
-    """Apply the light theme palette"""
-    palette = QPalette()
-    
-    # Base colors
-    palette.setColor(QPalette.Window, QColor(240, 240, 240))
-    palette.setColor(QPalette.WindowText, QColor(0, 0, 0))
-    palette.setColor(QPalette.Base, QColor(255, 255, 255))
-    palette.setColor(QPalette.AlternateBase, QColor(233, 233, 233))
-    palette.setColor(QPalette.Text, QColor(0, 0, 0))
-    palette.setColor(QPalette.Button, QColor(240, 240, 240))
-    palette.setColor(QPalette.ButtonText, QColor(0, 0, 0))
-    
-    # Highlight colors
-    palette.setColor(QPalette.Highlight, QColor(57, 123, 209))
-    palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
-    
-    # Link colors
-    palette.setColor(QPalette.Link, QColor(41, 128, 185))
-    palette.setColor(QPalette.LinkVisited, QColor(127, 80, 160))
-    
-    # Disabled colors
-    palette.setColor(QPalette.Disabled, QPalette.WindowText, QColor(120, 120, 120))
-    palette.setColor(QPalette.Disabled, QPalette.Text, QColor(120, 120, 120))
-    palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(120, 120, 120))
-    
-    # Group/Tab colors
-    palette.setColor(QPalette.Light, QColor(255, 255, 255))
-    palette.setColor(QPalette.Midlight, QColor(226, 226, 226))
-    palette.setColor(QPalette.Mid, QColor(200, 200, 200))
-    palette.setColor(QPalette.Dark, QColor(170, 170, 170))
-    palette.setColor(QPalette.Shadow, QColor(130, 130, 130))
-    
-    # Apply the palette
-    widget.setPalette(palette)
-    
-    # Apply to application if this is the main window
-    if widget.isWindow():
-        QApplication.instance().setPalette(palette)
-        
-        # Apply font size
-        set_font_size(font_size)
-        
-        # Apply additional styling
-        _apply_additional_styling(widget, "light")
-
-def _apply_additional_styling(widget, theme):
-    """Apply additional styling to specific components"""
-    # Style sheet for common widgets in each theme
-    if theme == "dark":
-        style = """
-            QTabWidget::pane {
-                border: 1px solid #666;
-                background-color: #333;
+    Returns:
+        str: The CSS stylesheet
+    """
+    if theme_name == "light":
+        return """
+            QMainWindow {
+                background-color: #F0F0F0;
+                color: #303030;
             }
-            QTabBar::tab {
-                background-color: #444;
-                color: #ccc;
-                padding: 6px 10px;
-                border: 1px solid #666;
-                border-bottom: none;
-                border-top-left-radius: 4px;
-                border-top-right-radius: 4px;
-            }
-            QTabBar::tab:selected, QTabBar::tab:hover {
-                background-color: #555;
-                color: #fff;
-            }
-            QTabBar::tab:selected {
-                border-bottom-color: #444;
-            }
-            QStatusBar {
-                background-color: #333;
-                color: #ccc;
+            QWidget {
+                background-color: #F5F5F5;
+                color: #303030;
             }
             QMenu {
-                background-color: #333;
-                color: #fff;
-                border: 1px solid #555;
+                background-color: #FAFAFA;
+                color: #303030;
+                border: 1px solid #CCCCCC;
             }
-            QMenu::item:selected {
-                background-color: #4466aa;
+            QMenuBar {
+                background-color: #E5E5E5;
+                color: #303030;
             }
             QToolBar {
-                background-color: #444;
-                border: none;
-                padding: 2px;
+                background-color: #E5E5E5;
+                color: #303030;
                 spacing: 3px;
-            }
-            QToolBar QLabel {
-                color: #aaa;
-                font-weight: bold;
-                margin-left: 5px;
-            }
-            QToolButton {
-                background-color: #555;
-                color: #fff;
-                border: 1px solid #666;
-                border-radius: 3px;
-                padding: 2px;
-            }
-            QToolButton:hover {
-                background-color: #666;
-            }
-            QToolButton:pressed {
-                background-color: #444;
-            }
-        """
-    else:  # Light theme
-        style = """
-            QTabWidget::pane {
-                border: 1px solid #bbb;
-                background-color: #f5f5f5;
-            }
-            QTabBar::tab {
-                background-color: #e0e0e0;
-                color: #333;
-                padding: 6px 10px;
-                border: 1px solid #bbb;
-                border-bottom: none;
-                border-top-left-radius: 4px;
-                border-top-right-radius: 4px;
-            }
-            QTabBar::tab:selected, QTabBar::tab:hover {
-                background-color: #f5f5f5;
-                color: #000;
-            }
-            QTabBar::tab:selected {
-                border-bottom-color: #f5f5f5;
+                border: 0px;
             }
             QStatusBar {
-                background-color: #e0e0e0;
-                color: #333;
+                background-color: #E5E5E5;
+                color: #303030;
             }
-            QMenu {
-                background-color: #f5f5f5;
-                color: #333;
-                border: 1px solid #ccc;
+            QTabWidget::pane {
+                border: 1px solid #CCCCCC;
             }
-            QMenu::item:selected {
-                background-color: #cce6ff;
+            QTabBar::tab {
+                background-color: #E0E0E0;
+                color: #505050;
+                border: 1px solid #CCCCCC;
+                padding: 5px 10px;
+                margin-right: 2px;
             }
-            QToolBar {
-                background-color: #e5e5e5;
-                border: none;
-                padding: 2px;
-                spacing: 3px;
-            }
-            QToolBar QLabel {
-                color: #666;
-                font-weight: bold;
-                margin-left: 5px;
+            QTabBar::tab:selected {
+                background-color: #F5F5F5;
+                color: #303030;
+                border-bottom-color: #F5F5F5;
             }
             QToolButton {
-                background-color: #eee;
-                color: #333;
-                border: 1px solid #ccc;
-                border-radius: 3px;
-                padding: 2px;
+                background-color: #E5E5E5;
+                color: #303030;
+                border: 1px solid #CCCCCC;
+                border-radius: 4px;
+                padding: 3px;
             }
             QToolButton:hover {
-                background-color: #f5f5f5;
+                background-color: #D0D0D0;
             }
             QToolButton:pressed {
-                background-color: #ddd;
+                background-color: #C0C0C0;
+            }
+            QPushButton {
+                background-color: #E5E5E5;
+                color: #303030;
+                border: 1px solid #CCCCCC;
+                border-radius: 4px;
+                padding: 5px 10px;
+            }
+            QPushButton:hover {
+                background-color: #D0D0D0;
+            }
+            QPushButton:pressed {
+                background-color: #C0C0C0;
+            }
+            QLineEdit, QTextEdit, QPlainTextEdit {
+                background-color: #FFFFFF;
+                color: #303030;
+                border: 1px solid #CCCCCC;
+                border-radius: 3px;
+                padding: 3px;
+            }
+            QComboBox {
+                background-color: #FFFFFF;
+                color: #303030;
+                border: 1px solid #CCCCCC;
+                border-radius: 3px;
+                padding: 2px 10px 2px 5px;
+            }
+            QSpinBox, QDoubleSpinBox {
+                background-color: #FFFFFF;
+                color: #303030;
+                border: 1px solid #CCCCCC;
+                border-radius: 3px;
+                padding: 2px 3px;
+            }
+            QScrollBar {
+                background-color: #F5F5F5;
+                border: 1px solid #CCCCCC;
+            }
+            QScrollBar::handle {
+                background-color: #CCCCCC;
+                border-radius: 3px;
+            }
+            QScrollBar::handle:hover {
+                background-color: #BBBBBB;
             }
         """
-    
-    # Apply the stylesheet to the application
-    QApplication.instance().setStyleSheet(style)
+    else:  # Dark theme (default)
+        return """
+            QMainWindow {
+                background-color: #2D2D2D;
+                color: #EEEEEE;
+            }
+            QWidget {
+                background-color: #303030;
+                color: #EEEEEE;
+            }
+            QMenu {
+                background-color: #3A3A3A;
+                color: #EEEEEE;
+                border: 1px solid #555555;
+            }
+            QMenuBar {
+                background-color: #2A2A2A;
+                color: #EEEEEE;
+            }
+            QToolBar {
+                background-color: #2A2A2A;
+                color: #EEEEEE;
+                spacing: 3px;
+                border: 0px;
+            }
+            QStatusBar {
+                background-color: #2A2A2A;
+                color: #EEEEEE;
+            }
+            QTabWidget::pane {
+                border: 1px solid #555555;
+            }
+            QTabBar::tab {
+                background-color: #404040;
+                color: #BBBBBB;
+                border: 1px solid #555555;
+                padding: 5px 10px;
+                margin-right: 2px;
+            }
+            QTabBar::tab:selected {
+                background-color: #303030;
+                color: #EEEEEE;
+                border-bottom-color: #303030;
+            }
+            QToolButton {
+                background-color: #404040;
+                color: #EEEEEE;
+                border: 1px solid #555555;
+                border-radius: 4px;
+                padding: 3px;
+            }
+            QToolButton:hover {
+                background-color: #4A4A4A;
+            }
+            QToolButton:pressed {
+                background-color: #555555;
+            }
+            QPushButton {
+                background-color: #404040;
+                color: #EEEEEE;
+                border: 1px solid #555555;
+                border-radius: 4px;
+                padding: 5px 10px;
+            }
+            QPushButton:hover {
+                background-color: #4A4A4A;
+            }
+            QPushButton:pressed {
+                background-color: #555555;
+            }
+            QLineEdit, QTextEdit, QPlainTextEdit {
+                background-color: #404040;
+                color: #EEEEEE;
+                border: 1px solid #555555;
+                border-radius: 3px;
+                padding: 3px;
+            }
+            QComboBox {
+                background-color: #404040;
+                color: #EEEEEE;
+                border: 1px solid #555555;
+                border-radius: 3px;
+                padding: 2px 10px 2px 5px;
+            }
+            QSpinBox, QDoubleSpinBox {
+                background-color: #404040;
+                color: #EEEEEE;
+                border: 1px solid #555555;
+                border-radius: 3px;
+                padding: 2px 3px;
+            }
+            QScrollBar {
+                background-color: #303030;
+                border: 1px solid #555555;
+            }
+            QScrollBar::handle {
+                background-color: #555555;
+                border-radius: 3px;
+            }
+            QScrollBar::handle:hover {
+                background-color: #666666;
+            }
+        """

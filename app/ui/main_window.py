@@ -19,6 +19,7 @@ from app.ui.theme_manager import apply_theme, set_font_size
 from app.ui.panels.panel_category import PanelCategory
 from app.ui.layout_name_dialog import LayoutNameDialog
 from app.ui.layout_select_dialog import LayoutSelectDialog
+from app.ui.panel_settings_dialog import PanelSettingsDialog
 
 # Import the panels we need to connect
 from app.ui.panels.monster_panel import MonsterPanel
@@ -79,191 +80,211 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(None)
     
     def _create_menus(self):
-        """Create application menu structure"""
+        """Create the main application menus"""
+        # Create menu bar
+        menu_bar = self.menuBar()
+        
         # File menu
-        file_menu = self.menuBar().addMenu("&File")
+        file_menu = menu_bar.addMenu("&File")
         
-        new_action = file_menu.addAction("&New Session")
-        new_action.setShortcut("Ctrl+Shift+N")
-        new_action.triggered.connect(self._new_session)
+        new_session_action = QAction("New Session", self)
+        new_session_action.setShortcut(QKeySequence.New)
+        new_session_action.triggered.connect(self._new_session)
+        file_menu.addAction(new_session_action)
         
-        open_action = file_menu.addAction("&Open Session")
-        open_action.setShortcut("Ctrl+O")
-        open_action.triggered.connect(self._open_session)
+        # Layout submenu in File menu
+        layout_menu = file_menu.addMenu("Layouts")
         
-        save_action = file_menu.addAction("&Save Session")
-        save_action.setShortcut("Ctrl+Shift+S")
-        save_action.triggered.connect(self._save_session)
+        save_layout_action = QAction("Save Current Layout", self)
+        save_layout_action.setShortcut(QKeySequence("Ctrl+S"))
+        save_layout_action.triggered.connect(self._save_layout)
+        layout_menu.addAction(save_layout_action)
+        
+        load_layout_action = QAction("Load Layout", self)
+        load_layout_action.setShortcut(QKeySequence("Ctrl+L"))
+        load_layout_action.triggered.connect(self._load_layout)
+        layout_menu.addAction(load_layout_action)
+        
+        layout_menu.addSeparator()
+        
+        manage_layouts_action = QAction("Manage Layouts", self)
+        manage_layouts_action.triggered.connect(self._manage_layouts)
+        layout_menu.addAction(manage_layouts_action)
         
         file_menu.addSeparator()
         
-        exit_action = file_menu.addAction("E&xit")
-        exit_action.setShortcut("Alt+F4")
+        exit_action = QAction("Exit", self)
+        exit_action.setShortcut(QKeySequence.Quit)
         exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
         
         # View menu
-        view_menu = self.menuBar().addMenu("&View")
+        view_menu = menu_bar.addMenu("&View")
         
-        layout_menu = view_menu.addMenu("&Layouts")
-        save_layout_action = layout_menu.addAction("&Save Current Layout")
-        save_layout_action.setShortcut("Ctrl+Alt+S")
-        save_layout_action.triggered.connect(self._save_layout)
-        
-        save_layout_as_action = layout_menu.addAction("Save Layout &As...")
-        save_layout_as_action.triggered.connect(self._save_layout_as)
-        
-        layout_menu.addSeparator()
-        
-        load_layout_action = layout_menu.addAction("&Load Layout")
-        load_layout_action.setShortcut("Ctrl+Alt+L")
-        load_layout_action.triggered.connect(self._load_layout)
-        
-        manage_layouts_action = layout_menu.addAction("&Manage Layouts")
-        manage_layouts_action.triggered.connect(self._manage_layouts)
-        
-        layout_menu.addSeparator()
-        
-        # Add layout presets submenu
-        self.preset_layouts_menu = layout_menu.addMenu("Preset Layouts")
-        self._populate_preset_layouts_menu()
-        
-        # Add Smart Organize action
-        smart_organize_action = view_menu.addAction("Smart &Organize Panels")
-        smart_organize_action.setShortcut("Ctrl+Alt+O")
-        smart_organize_action.triggered.connect(self._smart_organize_panels)
+        # Welcome panel
+        welcome_action = QAction("Welcome Panel", self)
+        welcome_action.setShortcut(QKeySequence("Ctrl+H"))
+        welcome_action.triggered.connect(self._toggle_welcome_panel)
+        view_menu.addAction(welcome_action)
         
         view_menu.addSeparator()
         
-        theme_menu = view_menu.addMenu("&Theme")
-        dark_theme_action = theme_menu.addAction("&Dark")
-        dark_theme_action.setShortcut("Ctrl+Alt+D")
-        dark_theme_action.triggered.connect(lambda: self._change_theme("dark"))
+        # Theme submenu
+        theme_menu = view_menu.addMenu("Theme")
         
-        light_theme_action = theme_menu.addAction("&Light")
-        light_theme_action.setShortcut("Ctrl+Alt+T")
-        light_theme_action.triggered.connect(lambda: self._change_theme("light"))
+        dark_theme_action = QAction("Dark Theme", self)
+        dark_theme_action.triggered.connect(lambda: self._set_theme("dark"))
+        theme_menu.addAction(dark_theme_action)
         
-        # Add Font Size menu
-        font_size_menu = view_menu.addMenu("Font &Size")
+        light_theme_action = QAction("Light Theme", self)
+        light_theme_action.triggered.connect(lambda: self._set_theme("light"))
+        theme_menu.addAction(light_theme_action)
         
-        small_font_action = font_size_menu.addAction("&Small")
-        small_font_action.triggered.connect(lambda: self._change_font_size("small"))
+        # Font size submenu
+        font_menu = view_menu.addMenu("Font Size")
         
-        medium_font_action = font_size_menu.addAction("&Medium")
-        medium_font_action.triggered.connect(lambda: self._change_font_size("medium"))
+        for size in [10, 12, 14, 16, 18]:
+            size_action = QAction(f"{size}pt", self)
+            size_action.triggered.connect(lambda checked, s=size: self._set_font_size(s))
+            font_menu.addAction(size_action)
+            
+        view_menu.addSeparator()
         
-        large_font_action = font_size_menu.addAction("&Large")
-        large_font_action.triggered.connect(lambda: self._change_font_size("large"))
+        # Panel Display Settings
+        panel_settings_action = QAction("Panel Display Settings", self)
+        panel_settings_action.triggered.connect(self._show_panel_settings)
+        view_menu.addAction(panel_settings_action)
         
-        xlarge_font_action = font_size_menu.addAction("&X-Large")
-        xlarge_font_action.triggered.connect(lambda: self._change_font_size("x-large"))
+        view_menu.addSeparator()
+        
+        # Organize panels action
+        organize_action = QAction("Smart Organize Panels", self)
+        organize_action.setShortcut(QKeySequence("Ctrl+O"))
+        organize_action.triggered.connect(self._smart_organize_panels)
+        view_menu.addAction(organize_action)
         
         # Panels menu
-        panels_menu = self.menuBar().addMenu("&Panels")
+        panels_menu = menu_bar.addMenu("&Panels")
         
         # Combat panels
         combat_menu = panels_menu.addMenu("&Combat Tools")
-        combat_tracker_action = combat_menu.addAction("Combat Tracker")
+        combat_tracker_action = QAction("Combat Tracker", self)
         combat_tracker_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("combat_tracker"))
+        combat_menu.addAction(combat_tracker_action)
         self.panel_actions["combat_tracker"] = combat_tracker_action
         
-        dice_roller_action = combat_menu.addAction("Dice Roller")
+        dice_roller_action = QAction("Dice Roller", self)
         dice_roller_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("dice_roller"))
+        combat_menu.addAction(dice_roller_action)
         self.panel_actions["dice_roller"] = dice_roller_action
         
-        combat_log_action = combat_menu.addAction("Combat Log")
+        combat_log_action = QAction("Combat Log", self)
         combat_log_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("combat_log"))
+        combat_menu.addAction(combat_log_action)
         self.panel_actions["combat_log"] = combat_log_action
         
         # Reference panels
         reference_menu = panels_menu.addMenu("&Reference")
-        rules_action = reference_menu.addAction("Rules Reference")
+        rules_action = QAction("Rules Reference", self)
         rules_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("rules_reference"))
+        reference_menu.addAction(rules_action)
         self.panel_actions["rules_reference"] = rules_action
         
-        conditions_action = reference_menu.addAction("Conditions")
+        conditions_action = QAction("Conditions", self)
         conditions_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("conditions"))
+        reference_menu.addAction(conditions_action)
         self.panel_actions["conditions"] = conditions_action
         
-        monster_action = reference_menu.addAction("Monsters")
+        monster_action = QAction("Monsters", self)
         monster_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("monster"))
+        reference_menu.addAction(monster_action)
         self.panel_actions["monster"] = monster_action
         
-        spell_action = reference_menu.addAction("Spells")
+        spell_action = QAction("Spells", self)
         spell_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("spell_reference"))
+        reference_menu.addAction(spell_action)
         self.panel_actions["spell_reference"] = spell_action
         
-        rules_clarification_action = reference_menu.addAction("Rules Clarification")
+        rules_clarification_action = QAction("Rules Clarification", self)
         rules_clarification_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("rules_clarification"))
+        reference_menu.addAction(rules_clarification_action)
         self.panel_actions["rules_clarification"] = rules_clarification_action
         
-        llm_action = reference_menu.addAction("AI Assistant")
+        llm_action = QAction("AI Assistant", self)
         llm_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("llm"))
+        reference_menu.addAction(llm_action)
         self.panel_actions["llm"] = llm_action
             
         # Campaign Management panels
         campaign_menu = panels_menu.addMenu("&Campaign")
-        notes_action = campaign_menu.addAction("Session Notes")
+        notes_action = QAction("Session Notes", self)
         notes_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("session_notes"))
+        campaign_menu.addAction(notes_action)
         self.panel_actions["session_notes"] = notes_action
         
-        player_chars_action = campaign_menu.addAction("Player Characters")
+        player_chars_action = QAction("Player Characters", self)
         player_chars_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("player_character"))
+        campaign_menu.addAction(player_chars_action)
         self.panel_actions["player_character"] = player_chars_action
         
-        npc_generator_action = campaign_menu.addAction("NPC Generator")
+        npc_generator_action = QAction("NPC Generator", self)
         npc_generator_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("npc_generator"))
+        campaign_menu.addAction(npc_generator_action)
         self.panel_actions["npc_generator"] = npc_generator_action
         
-        location_generator_action = campaign_menu.addAction("Location Generator")
+        location_generator_action = QAction("Location Generator", self)
         location_generator_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("location_generator"))
+        campaign_menu.addAction(location_generator_action)
         self.panel_actions["location_generator"] = location_generator_action
         
-        treasure_generator_action = campaign_menu.addAction("Treasure Generator")
+        treasure_generator_action = QAction("Treasure Generator", self)
         treasure_generator_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("treasure_generator"))
+        campaign_menu.addAction(treasure_generator_action)
         self.panel_actions["treasure_generator"] = treasure_generator_action
         
-        encounter_generator_action = campaign_menu.addAction("Encounter Generator")
+        encounter_generator_action = QAction("Encounter Generator", self)
         encounter_generator_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("encounter_generator"))
+        campaign_menu.addAction(encounter_generator_action)
         self.panel_actions["encounter_generator"] = encounter_generator_action
         
         # Utility panels
         utility_menu = panels_menu.addMenu("&Utilities")
-        weather_action = utility_menu.addAction("Weather Generator")
+        weather_action = QAction("Weather Generator", self)
         weather_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("weather"))
+        utility_menu.addAction(weather_action)
         self.panel_actions["weather"] = weather_action
         
-        time_action = utility_menu.addAction("Time Tracker")
+        time_action = QAction("Time Tracker", self)
         time_action.triggered.connect(
             lambda: self.panel_manager.toggle_panel("time_tracker"))
+        utility_menu.addAction(time_action)
         self.panel_actions["time_tracker"] = time_action
         
+        # Tools menu
+        tools_menu = menu_bar.addMenu("&Tools")
+        
         # Help menu
-        help_menu = self.menuBar().addMenu("&Help")
+        help_menu = menu_bar.addMenu("&Help")
         
-        # Add welcome panel action
-        welcome_action = help_menu.addAction("Show &Welcome Panel")
-        welcome_action.setShortcut("F1")
-        welcome_action.triggered.connect(self._toggle_welcome_panel)
-        
-        help_menu.addSeparator()
-        help_menu.addAction("&About").triggered.connect(self._show_about)
+        about_action = QAction("About", self)
+        about_action.triggered.connect(self._show_about)
+        help_menu.addAction(about_action)
     
     def _populate_preset_layouts_menu(self):
         """Populate the preset layouts menu with available layouts"""
@@ -387,7 +408,7 @@ class MainWindow(QMainWindow):
         panel_categories = [
             {
                 "title": "Combat",
-                "panels": ["combat_tracker", "dice_roller"]
+                "panels": ["combat_tracker", "dice_roller", "combat_log"]
             },
             {
                 "title": "Reference",
@@ -412,29 +433,28 @@ class MainWindow(QMainWindow):
             
             # Add buttons for panels in this category
             for panel_id in category['panels']:
-                if panel_id in self.panel_actions:
-                    action = self.panel_actions[panel_id]
-                    panel_name = panel_id.replace('_', ' ').title()
-                    
-                    # Create the button with a more descriptive name
-                    panel_button = toolbar.addAction(panel_name)
-                    
-                    # Create detailed tooltip with shortcut info if available
-                    tooltip = panel_info.get(panel_id, {})
-                    desc = tooltip.get("description", f"Toggle {panel_name} Panel")
-                    shortcut = tooltip.get("shortcut", "")
-                    tooltip_text = f"{desc}"
-                    if shortcut:
-                        tooltip_text += f" ({shortcut})"
-                        
-                        # Set the actual keyboard shortcut
-                        panel_button.setShortcut(shortcut)
-                    
-                    panel_button.setToolTip(tooltip_text)
-                    panel_button.triggered.connect(lambda checked=False, p=panel_id: self.panel_manager.toggle_panel(p))
-                    
-                    # Store the action for state updates
-                    self.panel_actions[f"{panel_id}_toolbar"] = panel_button
+                panel_name = panel_id.replace('_', ' ').title()
+                
+                # Create button action
+                button_action = QAction(panel_name, self)
+                
+                # Create detailed tooltip with shortcut info if available
+                tooltip = panel_info.get(panel_id, {})
+                desc = tooltip.get("description", f"Toggle {panel_name} Panel")
+                shortcut = tooltip.get("shortcut", "")
+                tooltip_text = f"{desc}"
+                if shortcut:
+                    tooltip_text += f" ({shortcut})"
+                    button_action.setShortcut(shortcut)
+                
+                button_action.setToolTip(tooltip_text)
+                button_action.triggered.connect(lambda checked=False, p=panel_id: self.panel_manager.toggle_panel(p))
+                
+                # Add button to toolbar
+                toolbar.addAction(button_action)
+                
+                # Store the action for state updates
+                self.panel_actions[f"{panel_id}_toolbar"] = button_action
             
             # Add separator between categories (except after the last one)
             if category != panel_categories[-1]:
@@ -445,11 +465,16 @@ class MainWindow(QMainWindow):
         spacer_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         toolbar.addWidget(spacer_label)
         
+        # Create layout selector action
+        layout_button = QAction("Select Layout", self)
+        layout_button.setToolTip("Choose, save, or manage panel layouts")
+        
         # Initialize layout selector as a QMenu
         self.layout_selector = QMenu("Layouts")
-        layout_button = toolbar.addAction("Select Layout")
-        layout_button.setToolTip("Choose, save, or manage panel layouts")
         layout_button.setMenu(self.layout_selector)
+        
+        # Add button to toolbar
+        toolbar.addAction(layout_button)
 
         # Populate layout selector
         self._update_layout_selector()
@@ -510,8 +535,24 @@ class MainWindow(QMainWindow):
     
     def _update_panel_action_states(self):
         """Update the state of all panel-related UI elements"""
-        # First, update menu items
+        # Update state for menu actions
         for panel_id, action in self.panel_actions.items():
+            # Skip toolbar actions
+            if "_toolbar" in panel_id:
+                continue
+                
+            # Set checkable for checkbox-like behavior
+            action.setCheckable(True)
+            
+            # Set checked state based on panel visibility
+            action.setChecked(self.panel_manager.is_panel_visible(panel_id))
+        
+        # Update state for toolbar buttons
+        for panel_id, action in self.panel_actions.items():
+            # Only process toolbar actions
+            if not "_toolbar" in panel_id:
+                continue
+                
             # Extract the base panel id from toolbar items
             base_panel_id = panel_id.split('_toolbar')[0]
             
@@ -519,15 +560,14 @@ class MainWindow(QMainWindow):
             action.setCheckable(True)
             
             # Set checked state based on panel visibility
-            if action.isCheckable():
-                action.setChecked(self.panel_manager.is_panel_visible(base_panel_id))
+            action.setChecked(self.panel_manager.is_panel_visible(base_panel_id))
         
         # Apply visual styling to toolbar buttons
         self._style_toolbar_buttons()
     
     def _style_toolbar_buttons(self):
         """Apply styling to toolbar buttons based on panel states and categories"""
-        toolbar = self.findChild(QToolBar)
+        toolbar = self.findChild(QToolBar, "MainToolbar")
         if not toolbar:
             return
             
@@ -539,60 +579,62 @@ class MainWindow(QMainWindow):
             # Find the corresponding panel if any
             panel_id = None
             for key, act in self.panel_actions.items():
-                if act == action:
-                    panel_id = key.split('_toolbar')[0] if '_toolbar' in key else key
+                if "_toolbar" in key and act == action:
+                    panel_id = key.split('_toolbar')[0]
                     break
             
-            if panel_id:
-                # Get the panel's category
-                category = PanelCategory.get_category(panel_id)
-                colors = PanelCategory.get_colors(panel_id, self.current_theme)
+            if not panel_id:
+                continue
                 
-                toolbar_btn = toolbar.widgetForAction(action)
-                if not toolbar_btn:
-                    continue
+            # Get the panel's category
+            category = PanelCategory.get_category(panel_id)
+            colors = PanelCategory.get_colors(panel_id, self.current_theme)
+            
+            toolbar_btn = toolbar.widgetForAction(action)
+            if not toolbar_btn:
+                continue
+            
+            is_visible = self.panel_manager.is_panel_visible(panel_id)
                 
-                is_visible = self.panel_manager.is_panel_visible(panel_id)
-                    
-                if is_visible and colors:
-                    # Style the active button
+            if is_visible and colors:
+                # Style the active button
+                toolbar_btn.setStyleSheet(f"""
+                    background-color: {colors['title_bg'].name()};
+                    color: {colors['title_text'].name()};
+                    font-weight: bold;
+                    border: 1px solid {colors['border'].name()};
+                    border-radius: 4px;
+                    padding: 4px 8px;
+                    margin: 2px 3px;
+                """)
+            else:
+                # Inactive button style - lighter and less prominent
+                light_text = "#E0E0E0" if self.current_theme == "dark" else "#505050"
+                light_bg = "#424242" if self.current_theme == "dark" else "#F0F0F0"
+                border_color = "#555555" if self.current_theme == "dark" else "#CCCCCC"
+                
+                # Apply category hint color to inactive buttons
+                if colors:
+                    hint_color = colors['title_bg'].name()
+                    # Make the color more subtle for inactive state
                     toolbar_btn.setStyleSheet(f"""
-                        background-color: {colors['title_bg'].name()};
-                        color: {colors['title_text'].name()};
-                        font-weight: bold;
-                        border: 1px solid {colors['border'].name()};
+                        background-color: {light_bg};
+                        color: {light_text};
+                        border: 1px solid {border_color};
+                        border-left: 3px solid {hint_color};
                         border-radius: 4px;
                         padding: 4px 8px;
                         margin: 2px 3px;
                     """)
                 else:
-                    # Inactive button style - lighter and less prominent
-                    light_text = "#E0E0E0" if self.current_theme == "dark" else "#505050"
-                    light_bg = "#424242" if self.current_theme == "dark" else "#F0F0F0"
-                    border_color = "#555555" if self.current_theme == "dark" else "#CCCCCC"
-                    
-                    # Apply category hint color to inactive buttons
-                    if colors:
-                        hint_color = colors['title_bg'].name()
-                        # Make the color more subtle for inactive state
-                        toolbar_btn.setStyleSheet(f"""
-                            background-color: {light_bg};
-                            color: {light_text};
-                            border: 1px solid {border_color};
-                            border-left: 3px solid {hint_color};
-                            border-radius: 4px;
-                            padding: 4px 8px;
-                            margin: 2px 3px;
-                        """)
-                    else:
-                        toolbar_btn.setStyleSheet(f"""
-                            background-color: {light_bg};
-                            color: {light_text};
-                            border: 1px solid {border_color};
-                            border-radius: 4px;
-                            padding: 4px 8px;
-                            margin: 2px 3px;
-                        """)
+                    toolbar_btn.setStyleSheet(f"""
+                        background-color: {light_bg};
+                        color: {light_text};
+                        border: 1px solid {border_color};
+                        border-radius: 4px;
+                        padding: 4px 8px;
+                        margin: 2px 3px;
+                    """)
     
     def _create_status_bar(self):
         """Create the status bar"""
@@ -877,37 +919,40 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(message)
         self._update_panel_action_states()
     
-    def _change_theme(self, theme_name):
-        """Change the application theme"""
-        # Get current font size
-        current_font_size = self.app_state.get_setting("font_size", "medium")
+    def _set_theme(self, theme_name):
+        """Set the application theme
         
-        # Apply the theme with current font size
-        apply_theme(self, theme_name, current_font_size)
+        Args:
+            theme_name (str): Name of the theme to apply ('dark' or 'light')
+        """
+        # Apply the theme
+        apply_theme(self, theme_name)
         
-        # Store the theme selection
+        # Update the panel manager theme
+        self.panel_manager.update_theme(theme_name)
+        
+        # Store the current theme
         self.current_theme = theme_name
         self.app_state.set_setting("theme", theme_name)
         
-        # Update UI elements
-        self.statusBar().showMessage(f"Theme changed to {theme_name}", 3000)
-        
-        # Trigger update of toolbar icon styles
+        # Update UI
+        self.statusBar().showMessage(f"Theme changed to {theme_name}")
         self._style_toolbar_buttons()
     
-    def _change_font_size(self, size_name):
-        """Change the application font size"""
+    def _set_font_size(self, size):
+        """Set the application font size
+        
+        Args:
+            size (int): Font size in points
+        """
         # Apply the font size
-        set_font_size(size_name)
+        set_font_size(self, size)
         
-        # Store the font size selection
-        self.app_state.set_setting("font_size", size_name)
+        # Store the setting
+        self.app_state.set_setting("font_size", size)
         
-        # Update UI elements
-        self.statusBar().showMessage(f"Font size changed to {size_name}", 3000)
-        
-        # Re-apply theme to ensure consistent appearance
-        apply_theme(self, self.current_theme, size_name)
+        # Update UI
+        self.statusBar().showMessage(f"Font size changed to {size}pt")
     
     def _show_about(self):
         """Show about dialog"""
@@ -1045,3 +1090,10 @@ class MainWindow(QMainWindow):
             import traceback
             traceback.print_exc() # Print full traceback for debugging
             # Consider logging this error more formally
+
+    def _show_panel_settings(self):
+        """Show the panel display settings dialog"""
+        dialog = PanelSettingsDialog(self, self.app_state)
+        if dialog.exec_():
+            # Apply the new settings by reorganizing panels
+            self._smart_organize_panels()

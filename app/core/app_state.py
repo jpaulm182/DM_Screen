@@ -16,6 +16,25 @@ from app.data.llm_data_manager import LLMDataManager
 from app.core.config import get_app_dir
 from app.core.combat_resolver import CombatResolver
 
+# Default application settings
+DEFAULT_SETTINGS = {
+    "theme": "dark",
+    "font_size": 12,
+    "first_launch": True,
+    "visible_panels": ["combat_tracker", "dice_roller"],
+    "auto_save_interval": 5,  # minutes
+    "layout_version": 1,
+    # Panel layout settings
+    "panel_layout": {
+        "tab_threshold": 6,  # Number of panels before forcing tabbing
+        "always_tab_reference": True,  # Always tab reference panels
+        "always_tab_campaign": True,  # Always tab campaign panels
+        "always_tab_utility": True,  # Always tab utility panels
+        "min_panel_width": 300,  # Minimum width for panels
+        "min_panel_height": 200,  # Minimum height for panels
+        "use_percentage_sizing": True  # Use percentage-based sizing instead of fixed
+    }
+}
 
 class AppState:
     """
@@ -314,3 +333,29 @@ class AppState:
             return None
             
         return panel_widget
+
+    def get_panel_layout_setting(self, setting_name, default=None):
+        """Get a specific panel layout setting
+        
+        Args:
+            setting_name: Name of the panel layout setting
+            default: Default value if not found
+            
+        Returns:
+            The value of the setting or default if not found
+        """
+        panel_layout = self.get_setting("panel_layout", {})
+        if default is None and setting_name in DEFAULT_SETTINGS["panel_layout"]:
+            default = DEFAULT_SETTINGS["panel_layout"][setting_name]
+        return panel_layout.get(setting_name, default)
+        
+    def update_panel_layout_setting(self, setting_name, value):
+        """Update a specific panel layout setting
+        
+        Args:
+            setting_name: Name of the panel layout setting
+            value: New value for the setting
+        """
+        panel_layout = self.get_setting("panel_layout", {})
+        panel_layout[setting_name] = value
+        self.update_setting("panel_layout", panel_layout)
