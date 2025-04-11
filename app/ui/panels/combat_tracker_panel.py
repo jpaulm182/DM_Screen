@@ -106,6 +106,38 @@ class HPUpdateDelegate(QStyledItemDelegate):
         # Emit signal for hp changed
         self.hpChanged.emit(index.row(), value)
 
+class InitiativeUpdateDelegate(QStyledItemDelegate):
+    """Delegate to handle initiative updates with auto-sorting"""
+    
+    # Signal to notify initiative changes
+    initChanged = Signal(int, int)  # row, new_initiative
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+    
+    def createEditor(self, parent, option, index):
+        """Create editor for Initiative cell (SpinBox)"""
+        editor = QSpinBox(parent)
+        editor.setMinimum(-20)  # Allow negative initiative
+        editor.setMaximum(30)
+        return editor
+    
+    def setEditorData(self, editor, index):
+        """Set editor data from the model"""
+        try:
+            value = int(index.data(Qt.DisplayRole) or 0)
+            editor.setValue(value)
+        except ValueError:
+            editor.setValue(0)
+    
+    def setModelData(self, editor, model, index):
+        """Set model data from the editor"""
+        value = editor.value()
+        model.setData(index, str(value), Qt.DisplayRole)
+        
+        # Emit signal for initiative changed
+        self.initChanged.emit(index.row(), value)
+
 # --- Dialog Classes --- 
 
 class CombatantDetailsDialog(QDialog):
@@ -851,7 +883,7 @@ class CombatTrackerPanel(BasePanel):
         self.sort_action.setShortcut(sort_shortcut)
         self.sort_action.triggered.connect(self._sort_initiative)
         self.addAction(self.sort_action)
-
+        
         timer_shortcut = QKeySequence(Qt.CTRL | Qt.Key_T)
         self.timer_action = QAction("Toggle Timer", self)
         self.timer_action.setShortcut(timer_shortcut)
@@ -938,8 +970,14 @@ class CombatTrackerPanel(BasePanel):
         self.hp_delegate.hpChanged.connect(self._hp_changed)
         self.initiative_table.setItemDelegateForColumn(2, self.hp_delegate)
         
-        # Connect cell changed signal to handle initiative updates
-        self.initiative_table.cellChanged.connect(self._handle_cell_changed)
+        # Set Initiative column delegate for direct editing
+        self.init_delegate = InitiativeUpdateDelegate(self)
+        self.init_delegate.initChanged.connect(self._initiative_changed)
+        self.initiative_table.setItemDelegateForColumn(1, self.init_delegate)
+        
+        # Set the custom delegate for painting row highlights
+        self.current_turn_delegate = CurrentTurnDelegate(self.initiative_table)
+        self.initiative_table.setItemDelegate(self.current_turn_delegate)
         
         main_layout.addWidget(self.initiative_table)
         
@@ -978,9 +1016,6 @@ class CombatTrackerPanel(BasePanel):
             /* Highlight rule removed - handled by delegate */
             /* QTableWidget::item[is_current_turn="true"] { ... } */
         ''')
-        
-        # Set the custom delegate for painting
-        self.initiative_table.setItemDelegate(CurrentTurnDelegate(self.initiative_table))
         
         # Set minimum sizes
         self.setMinimumSize(800, 400)
@@ -1164,15 +1199,23 @@ class CombatTrackerPanel(BasePanel):
         # Remember current turn
         current_name = ""
         if 0 <= self.current_turn < self.initiative_table.rowCount():
-            current_name = self.initiative_table.item(self.current_turn, 0).text()
+            current_item = self.initiative_table.item(self.current_turn, 0)
+            if current_item:
+                current_name = current_item.text()
         
         # Create a list of rows with their initiative values
         rows = []
         for row in range(self.initiative_table.rowCount()):
             init_item = self.initiative_table.item(row, 1)
             if init_item:
-                init_value = float(init_item.text())
-                rows.append((row, init_value))
+                try:
+                    # Handle empty strings and convert to float
+                    init_text = init_item.text().strip()
+                    init_value = float(init_text) if init_text else 0
+                    rows.append((row, init_value))
+                except ValueError:
+                    # If conversion fails, use 0 as default
+                    rows.append((row, 0))
         
         # Sort by initiative (highest first)
         rows.sort(key=lambda x: (x[1], random.random()), reverse=True)
@@ -1270,24 +1313,30 @@ class CombatTrackerPanel(BasePanel):
         for row in selected_rows:
             hp_item = self.initiative_table.item(row, 2)
             if hp_item:
-                current_hp = int(hp_item.text())
-                max_hp = hp_item.data(Qt.UserRole)
-                
-                new_hp = max(current_hp - amount, 0)
-                hp_item.setText(str(new_hp))
-                
-                # Check for concentration
-                if amount > 0:
-                    self._check_concentration(row, amount)
+                try:
+                    # Safely get current HP
+                    hp_text = hp_item.text().strip()
+                    current_hp = int(hp_text) if hp_text else 0
+                    max_hp = hp_item.data(Qt.UserRole) or current_hp
                     
-                # Check for death saves if 0 HP
-                if new_hp == 0:
-                    name = self.initiative_table.item(row, 0).text()
-                    QMessageBox.information(
-                        self,
-                        "HP Reduced to 0",
-                        f"{name} is down! Remember to track death saves."
-                    )
+                    new_hp = max(current_hp - amount, 0)
+                    hp_item.setText(str(new_hp))
+                    
+                    # Check for concentration
+                    if amount > 0:
+                        self._check_concentration(row, amount)
+                        
+                    # Check for death saves if 0 HP
+                    if new_hp == 0:
+                        name = self.initiative_table.item(row, 0).text()
+                        QMessageBox.information(
+                            self,
+                            "HP Reduced to 0",
+                            f"{name} is down! Remember to track death saves."
+                        )
+                except ValueError:
+                    # Handle invalid HP value
+                    pass
     
     def _quick_heal(self, amount):
         """Apply quick healing to selected combatants"""
@@ -1308,11 +1357,17 @@ class CombatTrackerPanel(BasePanel):
         for row in selected_rows:
             hp_item = self.initiative_table.item(row, 2)
             if hp_item:
-                current_hp = int(hp_item.text())
-                max_hp = hp_item.data(Qt.UserRole)
-                
-                new_hp = min(current_hp + amount, max_hp)
-                hp_item.setText(str(new_hp))
+                try:
+                    # Safely get current HP
+                    hp_text = hp_item.text().strip()
+                    current_hp = int(hp_text) if hp_text else 0
+                    max_hp = hp_item.data(Qt.UserRole) or 999
+                    
+                    new_hp = min(current_hp + amount, max_hp)
+                    hp_item.setText(str(new_hp))
+                except ValueError:
+                    # Handle invalid HP value
+                    pass
     
     def _hp_changed(self, row, new_hp):
         """Handle HP changes from delegate editing"""
@@ -1329,13 +1384,26 @@ class CombatTrackerPanel(BasePanel):
                         f"{name} is down! Remember to track death saves."
                     )
     
+    def _initiative_changed(self, row, new_initiative):
+        """Handle initiative changes from delegate editing"""
+        if 0 <= row < self.initiative_table.rowCount():
+            # Log the initiative change
+            name = self.initiative_table.item(row, 0).text() if self.initiative_table.item(row, 0) else "Unknown"
+            print(f"[CombatTracker] Initiative changed: {name} now has initiative {new_initiative}")
+            self._log_combat_action("Initiative", name, "changed initiative", result=f"New value: {new_initiative}")
+            
+            # Auto-sort the initiative table
+            self._sort_initiative()
+    
     def _handle_cell_changed(self, row, column):
         """Handle cell value changes in the initiative table"""
+        # This method is kept for reference but is no longer used
         # Check if initiative column was changed
         if column == 1:  # Initiative column
             # Log the initiative change
             name = self.initiative_table.item(row, 0).text() if self.initiative_table.item(row, 0) else "Unknown"
             init_value = self.initiative_table.item(row, 1).text() if self.initiative_table.item(row, 1) else "0"
+            print(f"[CombatTracker] Cell changed detected: {name} initiative to {init_value}")
             self._log_combat_action("Initiative", name, "changed initiative", result=f"New value: {init_value}")
             
             # Auto-sort the initiative table
@@ -1471,9 +1539,18 @@ class CombatTrackerPanel(BasePanel):
         
         menu.addSeparator()
         
-        # Death saves
+        # Death saves - check for 0 HP safely
         hp_item = self.initiative_table.item(row, 2)
-        if hp_item and int(hp_item.text()) <= 0:
+        hp_value = 0
+        if hp_item:
+            try:
+                hp_text = hp_item.text().strip()
+                if hp_text:  # Only try to convert if not empty
+                    hp_value = int(hp_text)
+            except ValueError:
+                hp_value = 0  # Default to 0 if conversion fails
+        
+        if hp_value <= 0:
             death_saves = QAction("Death Saves...", self)
             death_saves.triggered.connect(lambda: self._manage_death_saves(row))
             menu.addAction(death_saves)
@@ -1520,7 +1597,9 @@ class CombatTrackerPanel(BasePanel):
                 combatant_name = name_item.text()
                 
                 try:
-                    current_hp = int(hp_item.text() or "0")
+                    # Safely get current HP
+                    hp_text = hp_item.text().strip()
+                    current_hp = int(hp_text) if hp_text else 0
                     
                     if is_healing:
                         new_hp = current_hp + amount
@@ -2530,3 +2609,12 @@ class CombatTrackerPanel(BasePanel):
                     return panel_dock.widget()
         # If not found, use the BasePanel's get_panel method from parent class
         return super().get_panel(panel_id)
+    
+    def closeEvent(self, event):
+        """Handle cleanup when panel is closed"""
+        # Disconnect signals to avoid errors
+        self.hp_delegate.hpChanged.disconnect()
+        self.init_delegate.initChanged.disconnect()
+        
+        # Call parent closeEvent
+        super().closeEvent(event)
