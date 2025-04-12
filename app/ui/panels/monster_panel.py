@@ -604,19 +604,49 @@ class MonsterPanel(BasePanel):
                   self._update_button_states()
 
     def _add_to_combat(self):
-        """Add the current monster to the combat tracker."""
-        if self.current_monster:
-            logger.info(f"Adding monster '{self.current_monster.name}' to combat.")
-            try:
-                # Emit the monster data as a dictionary
-                monster_dict = self.current_monster.to_dict()
-                self.add_to_combat.emit(monster_dict)
-                logger.debug("add_to_combat signal emitted.")
-            except Exception as e:
-                logger.error(f"Error emitting add_to_combat signal: {e}", exc_info=True)
-                QMessageBox.critical(self, "Error", f"Could not add monster to combat: {e}")
+        """Add the currently selected monster to the combat tracker"""
+        print("[MonsterPanel] _add_to_combat ENTRY")
+        
+        if not self.current_monster:
+            print("[MonsterPanel] No monster selected, cannot add to combat")
+            QMessageBox.warning(self, "Error", "Please select a monster first.")
+            return
+        
+        # Log that we're adding a monster
+        print(f"[MonsterPanel] Adding monster '{self.current_monster.name}' to combat.")
+        
+        # Prepare monster data as a dictionary for serialization
+        monster_dict = {}
+        
+        # For standard monsters, initialize from model dictionary representation
+        if hasattr(self.current_monster, "to_dict"):
+            monster_dict = self.current_monster.to_dict()
+            print(f"[MonsterPanel] Converted monster to dictionary with {len(monster_dict)} keys")
         else:
-             logger.warning("Add to combat called with no monster selected.")
+            # Fallback: convert object attributes to dictionary manually
+            for attr_name in dir(self.current_monster):
+                if attr_name.startswith('_'):
+                    continue
+                try:
+                    value = getattr(self.current_monster, attr_name)
+                    if not callable(value):
+                        monster_dict[attr_name] = value
+                except:
+                    pass
+            print(f"[MonsterPanel] Manually converted monster to dictionary with {len(monster_dict)} keys")
+                
+        # Emit the signal with the monster data
+        print(f"[MonsterPanel] Emitting add_to_combat signal with monster data, keys: {list(monster_dict.keys())}")
+        self.add_to_combat.emit(monster_dict)
+        print("[MonsterPanel] add_to_combat signal emitted")
+        
+        # Show a confirmation message
+        QMessageBox.information(
+            self,
+            "Monster Added",
+            f"{self.current_monster.name} has been added to combat tracker. "
+            "Check the Combat Tracker panel to manage the encounter."
+        )
 
     def _create_monster(self):
         """Open the monster creation/edit dialog for a new monster."""

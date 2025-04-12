@@ -22,7 +22,8 @@ from PySide6.QtWidgets import (
     QLineEdit, QSpinBox, QHBoxLayout, QVBoxLayout, QComboBox,
     QLabel, QCheckBox, QMenu, QMessageBox, QDialog, QDialogButtonBox,
     QGroupBox, QWidget, QStyledItemDelegate, QStyle, QToolButton,
-    QTabWidget, QScrollArea, QFormLayout, QFrame, QSplitter
+    QTabWidget, QScrollArea, QFormLayout, QFrame, QSplitter, QApplication,
+    QSizePolicy
 )
 from PySide6.QtCore import Qt, QTimer, Signal, Slot, QSize
 from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QBrush, QPalette
@@ -843,55 +844,121 @@ class CombatTrackerPanel(BasePanel):
     # Carries the result dict and error string (one will be None)
     resolution_complete = Signal(dict, str)
     
+    @property
+    def current_turn(self):
+        """Get the current turn index"""
+        return getattr(self, '_current_turn', -1)
+    
+    @current_turn.setter
+    def current_turn(self, value):
+        """Set the current turn index"""
+        self._current_turn = value
+
     def __init__(self, app_state):
         """Initialize the combat tracker panel"""
-        try:
-            print(f"[Combat Tracker] Starting initialization with app_state: {app_state}")
+        # Store app state and get services
+        self.app_state = app_state
+        self.db = app_state.db_manager
+        self.llm_service = app_state.llm_service
+        
+        # Combat state tracking
+        self._current_turn = -1  # Index of current turn in initiative table
+        self.current_round = 1
+        self.combat_started = False
+        self.timer_running = False
+        self.combat_seconds = 0
+        self.previous_turn = -1
+        self.last_round_end_time = None  # For logging time between rounds
+        self.game_elapsed_seconds = 0
+        self.game_elapsed_minutes = 0
+        
+        # Combatant tracking
+        self.combatants = {}  # Maps row index to full data structure (for monsters/characters)
+        self.concentrating = set()  # Set of row indices that are concentrating
+        self.death_saves = {}  # Maps row index to dict of {success: count, failure: count}
+        self.show_details_pane = False  # Whether to show the details pane
+        self.current_details_combatant = None  # Current combatant for details
+        self.current_details_type = None  # Type of current combatant for details
+        
+        # Initialize timers
+        self.timer = QTimer()
+        self.timer.timeout.connect(self._update_timer)
+        self.timer.setInterval(1000)  # 1 second interval
+        self.combat_log = []  # List of combat log entries
+        
+        # Initialize base panel (calls _setup_ui)
+        super().__init__(app_state, "Combat Tracker")
+        
+        print("[CombatTracker] Basic attributes initialized")
+        
+        # Set up our custom delegates after the table is created
+        self._setup_delegates()
+        
+        # Ensure table is ready for display
+        self._ensure_table_ready()
+        
+        # After state is restored, fix missing types
+        QTimer.singleShot(500, self._fix_missing_types)
+        
+        print("[CombatTracker] Initialization completed successfully")
+        
+    def _ensure_table_ready(self):
+        """Make sure the initiative table is ready for display and properly configured"""
+        # First check if table exists
+        if not hasattr(self, 'initiative_table'):
+            print("[CombatTracker] ERROR: initiative_table not found during initialization")
+            return
             
-            # Initialize panel attributes before calling super().__init__()
-            self.app_state = app_state
-            self.db = app_state.db_manager if hasattr(app_state, 'db_manager') else None
-            print(f"[Combat Tracker] DB manager obtained: {self.db is not None}")
+        # Ensure the vertical header is hidden (row numbers)
+        self.initiative_table.verticalHeader().setVisible(False)
+        
+        # Make sure horizontal headers are visible
+        self.initiative_table.horizontalHeader().setVisible(True)
+        
+        # Adjust column widths for better display
+        self.initiative_table.resizeColumnsToContents()
+        
+        # Add test combatant if table is empty and we're in development
+        if self.initiative_table.rowCount() == 0:
+            # Restore state first if available
+            state = self.app_state.get_setting("combat_tracker_state", None)
+            if state:
+                print("[CombatTracker] Restoring combat tracker state from settings")
+                self.restore_state(state)
+                # Force a table update after restoring state
+                self.initiative_table.viewport().update()
+                self.initiative_table.update()
             
-            self.current_round = 1
-            self.current_turn = 0
-            self.combat_time = 0
-            self.initiative_order = []
-            self.timer_running = False
-            self.in_combat = False
-            self.status_conditions = {}  # Track status conditions by row
-            self.concentrating = {}  # Track who is concentrating (row: spell)
-            self.death_saves = {}  # Track death saving throws
-            self.used_slots = {}  # Track used spell slots
-            self.game_time = app_state.game_time if hasattr(app_state, 'game_time') else None
-            print(f"[Combat Tracker] Basic attributes initialized")
-            
-            # Variables for the details pane
-            self.show_details_pane = False
-            self.current_details_combatant = None
-            self.current_details_type = None
-            
-            # Initialize combat state
-            self.combat_started = False
-            self.previous_turn = -1
-            
-            # Initialize combatants dictionary
-            self.combatants = {}
-            
-            # Initialize the base class after setting up our attributes
-            # This will call _setup_ui() which uses the attributes we just set
-            super().__init__(app_state, "Combat Tracker")
-            
-            # Create the combat timer after super().__init__() has been called
-            self.combat_timer = QTimer(self)
-            
-            print(f"[Combat Tracker] Initialization completed successfully")
-        except Exception as e:
-            import traceback
-            print(f"[Combat Tracker] INITIALIZATION ERROR: {str(e)}")
-            print(f"[Combat Tracker] Error Traceback: {traceback.format_exc()}")
-            # Re-raise the exception to be caught by the panel manager
-            raise
+            # If still empty after restore attempt, add placeholder
+            if self.initiative_table.rowCount() == 0:
+                # Add a demo player character if table is still empty
+                print("[CombatTracker] Adding placeholder character to empty table for visibility")
+                self._add_combatant("Add your party here!", 20, 30, 15, "character")
+        
+        # Ensure viewport is updated
+        self.initiative_table.viewport().update()
+        
+        # Force application to process events
+        QApplication.processEvents()
+    
+    def _setup_delegates(self):
+        """Set up custom delegates for the initiative table"""
+        # Set custom delegates for initiative and HP columns
+        self.init_delegate = InitiativeUpdateDelegate(self)
+        self.init_delegate.initChanged.connect(self._initiative_changed)
+        self.initiative_table.setItemDelegateForColumn(1, self.init_delegate)
+        
+        self.hp_delegate = HPUpdateDelegate(self)
+        self.hp_delegate.hpChanged.connect(self._hp_changed)
+        self.initiative_table.setItemDelegateForColumn(2, self.hp_delegate)
+        
+        # Set delegate for highlighting current turn
+        self.current_turn_delegate = CurrentTurnDelegate()
+        for col in range(7):  # Apply to all columns
+            self.initiative_table.setItemDelegateForColumn(col, self.current_turn_delegate)
+        
+        # When cell content changes, update internal data
+        self.initiative_table.cellChanged.connect(self._handle_cell_changed)
     
     def _setup_ui(self):
         """Set up the combat tracker panel UI"""
@@ -914,36 +981,47 @@ class CombatTrackerPanel(BasePanel):
         
         # --- Initiative Table ---
         self.initiative_table = QTableWidget()
+        
+        # Set table properties to ensure proper visibility
+        self.initiative_table.setAlternatingRowColors(True)
+        self.initiative_table.setShowGrid(True)
+        self.initiative_table.setGridStyle(Qt.SolidLine)
+        
+        # Make sure the table expands to fill available space
+        self.initiative_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        
+        # Set column count and headers
         self.initiative_table.setColumnCount(7)
         self.initiative_table.setHorizontalHeaderLabels([
-            "Name", "Initiative", "HP", "AC", "Status", "Notes", "Type"
+            "Name", "Init", "HP", "AC", "Status", "Conc", "Type"
         ])
-        self.initiative_table.verticalHeader().setVisible(False)
-        self.initiative_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.initiative_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.initiative_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.initiative_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Interactive)
-        self.initiative_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Interactive)
+        
+        # Configure header and column properties
+        header = self.initiative_table.horizontalHeader()
+        header.setVisible(True)  # Ensure header is always visible
+        header.setSectionResizeMode(0, QHeaderView.Stretch)  # Name stretches
+        
+        # Set reasonable default column widths
+        default_widths = [150, 40, 50, 40, 100, 40, 60]
+        for col, width in enumerate(default_widths):
+            self.initiative_table.setColumnWidth(col, width)
+            
+        # Set other header sections to resize to content
+        for col in range(1, 7):
+            header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+        
+        # Configure selection behavior
         self.initiative_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.initiative_table.setSelectionMode(QTableWidget.SingleSelection)
+        
+        # Enable sorting
+        self.initiative_table.setSortingEnabled(False)  # We'll handle sorting manually
+        
+        # Connect signals
+        self.initiative_table.cellChanged.connect(self._handle_cell_changed)
+        self.initiative_table.cellDoubleClicked.connect(self._view_combatant_details)
         self.initiative_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.initiative_table.customContextMenuRequested.connect(self._show_context_menu)
-        
-        # Set custom delegates for initiative and HP columns
-        self.init_delegate = InitiativeUpdateDelegate(self)
-        self.init_delegate.initChanged.connect(self._initiative_changed)
-        self.initiative_table.setItemDelegateForColumn(1, self.init_delegate)
-        
-        self.hp_delegate = HPUpdateDelegate(self)
-        self.hp_delegate.hpChanged.connect(self._hp_changed)
-        self.initiative_table.setItemDelegateForColumn(2, self.hp_delegate)
-        
-        # Set delegate for highlighting current turn
-        self.current_turn_delegate = CurrentTurnDelegate()
-        for col in range(7):  # Apply to all columns
-            self.initiative_table.setItemDelegateForColumn(col, self.current_turn_delegate)
-        
-        # When cell content changes, update internal data
-        self.initiative_table.cellChanged.connect(self._handle_cell_changed)
         
         combat_layout.addWidget(self.initiative_table)
         
@@ -1199,166 +1277,295 @@ class CombatTrackerPanel(BasePanel):
         self.init_mod_input.setValue(0)
         add_layout.addWidget(self.init_mod_input)
         
-        add_button = QPushButton("Add")
-        add_button.clicked.connect(self._add_combatant)
+        # Create Add button with new connection approach
+        add_button = QPushButton("Add Manual Combatant")
+        add_button.clicked.connect(self._handle_add_click)
         add_layout.addWidget(add_button)
         
         return add_layout
     
-    def _add_combatant(self, name, initiative, hp, ac):
-        """Add a new combatant to initiative order"""
-        table = self.initiative_table
-        row = table.rowCount()
-        table.insertRow(row)
-        
-        # Name
-        name_item = QTableWidgetItem(name)
-        table.setItem(row, 0, name_item)
-        
-        # Initiative
-        init_item = QTableWidgetItem(str(initiative))
-        init_item.setTextAlignment(Qt.AlignCenter)
-        table.setItem(row, 1, init_item)
-        
-        # HP
-        hp_item = QTableWidgetItem(str(hp))
-        hp_item.setTextAlignment(Qt.AlignCenter)
-        hp_item.setData(Qt.UserRole, hp)  # Store max HP
-        table.setItem(row, 2, hp_item)
-        
-        # AC
-        ac_item = QTableWidgetItem(str(ac))
-        ac_item.setTextAlignment(Qt.AlignCenter)
-        table.setItem(row, 3, ac_item)
-        
-        # Status - empty initially
-        table.setItem(row, 4, QTableWidgetItem(""))
-        
-        # Concentration checkbox
-        conc_item = QTableWidgetItem()
-        conc_item.setCheckState(Qt.Unchecked)
-        conc_item.setTextAlignment(Qt.AlignCenter)
-        table.setItem(row, 5, conc_item)
-        
-        # Empty notes
-        table.setItem(row, 6, QTableWidgetItem(""))
-        
-        # Sort after adding
-        self._sort_initiative()
-        
-        # Return the row where it was inserted after sorting
-        for row in range(table.rowCount()):
-            if table.item(row, 0).text() == name and table.item(row, 1).text() == str(initiative):
+    def _handle_add_click(self):
+        """Handle the Add button click to add a new combatant from form fields"""
+        try:
+            name = self.name_input.text().strip()
+            if not name:
+                # Don't add combatants without a name
+                QMessageBox.warning(self, "Missing Name", "Please enter a name for the combatant.")
+                return
+            
+            # Get values from input fields
+            initiative = self.initiative_input.value()
+            hp = self.hp_input.value()
+            ac = self.ac_input.value()
+            
+            # Add the combatant (no specific type for manual adds)
+            row = self._add_combatant(name, initiative, hp, ac, "manual")
+            
+            # Only reset fields and log if the add was successful
+            if row >= 0:
+                # Reset fields for next entry (except initiative modifier)
+                self.name_input.clear()
+                self.initiative_input.setValue(0)
+                
+                # Log to combat log
+                self._log_combat_action("Setup", "DM", "added manual combatant", name, f"(Initiative: {initiative})")
+                
                 return row
-        
-        return -1  # Not found (shouldn't happen)
+            else:
+                QMessageBox.warning(self, "Add Failed", f"Failed to add {name} to the combat tracker.")
+                return -1
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"An error occurred adding the combatant: {str(e)}")
+            return -1
+    
+    def _add_combatant(self, name, initiative, hp, ac, combatant_type=""):
+        """Add a new combatant to initiative order"""
+        print(f"[CombatTracker] _add_combatant ENTRY: name={name}, init={initiative}, hp={hp}, ac={ac}, type={combatant_type}")
+        try:
+            table = self.initiative_table
+            
+            # Sanity check that we have a valid table
+            if not table:
+                print("[CombatTracker] ERROR: initiative_table is None")
+                return -1
+                
+            print(f"[CombatTracker] Table before insert has {table.rowCount()} rows")
+            
+            # Insert a new row at the end of the table
+            row = table.rowCount()
+            print(f"[CombatTracker] About to insertRow({row})")
+            table.insertRow(row)
+            print(f"[CombatTracker] After insertRow, table now has {table.rowCount()} rows")
+            
+            # Create and set the name item
+            print(f"[CombatTracker] Creating name item: {name}")
+            name_item = QTableWidgetItem(name)
+            print(f"[CombatTracker] Setting item at row={row}, col=0")
+            table.setItem(row, 0, name_item)
+            
+            # Initiative
+            print(f"[CombatTracker] Creating initiative item: {initiative}")
+            init_item = QTableWidgetItem(str(initiative))
+            init_item.setTextAlignment(Qt.AlignCenter)
+            print(f"[CombatTracker] Setting item at row={row}, col=1")
+            table.setItem(row, 1, init_item)
+            
+            # HP
+            print(f"[CombatTracker] Creating HP item: {hp}")
+            hp_item = QTableWidgetItem(str(hp))
+            hp_item.setTextAlignment(Qt.AlignCenter)
+            hp_item.setData(Qt.UserRole, hp)  # Store max HP
+            print(f"[CombatTracker] Setting item at row={row}, col=2")
+            table.setItem(row, 2, hp_item)
+            
+            # AC
+            print(f"[CombatTracker] Creating AC item: {ac}")
+            ac_item = QTableWidgetItem(str(ac))
+            ac_item.setTextAlignment(Qt.AlignCenter)
+            print(f"[CombatTracker] Setting item at row={row}, col=3")
+            table.setItem(row, 3, ac_item)
+            
+            # Status - empty initially
+            print(f"[CombatTracker] Setting empty status at row={row}, col=4")
+            table.setItem(row, 4, QTableWidgetItem(""))
+            
+            # Concentration checkbox
+            print(f"[CombatTracker] Creating concentration item")
+            conc_item = QTableWidgetItem()
+            conc_item.setCheckState(Qt.Unchecked)
+            conc_item.setTextAlignment(Qt.AlignCenter)
+            print(f"[CombatTracker] Setting item at row={row}, col=5")
+            table.setItem(row, 5, conc_item)
+            
+            # Type (monster or character)
+            print(f"[CombatTracker] Setting type item: {combatant_type} at row={row}, col=6")
+            table.setItem(row, 6, QTableWidgetItem(combatant_type))
+            
+            # Verify all items were added
+            for col in range(7):
+                item = table.item(row, col)
+                if not item:
+                    print(f"[CombatTracker] WARNING: Item at row={row}, col={col} is None!")
+                    # Create a placeholder item if missing
+                    table.setItem(row, col, QTableWidgetItem(""))
+            
+            # Ensure row is visible
+            table.scrollToItem(table.item(row, 0))
+            
+            # Store the row where we added the combatant in case sorting fails
+            original_row = row
+            
+            print(f"[CombatTracker] Before sort, table has {table.rowCount()} rows with new row={row}")
+            
+            # Try to sort but don't fail if sorting errors out
+            try:
+                # Sort after adding
+                self._sort_initiative()
+                
+                print(f"[CombatTracker] After sort, table has {table.rowCount()} rows")
+                
+                # Return the row where it was inserted after sorting
+                for row in range(table.rowCount()):
+                    row_name = table.item(row, 0).text() if table.item(row, 0) else None
+                    row_init = table.item(row, 1).text() if table.item(row, 1) else None
+                    print(f"[CombatTracker] Row {row}: name='{row_name}', init='{row_init}'")
+                    
+                    if row_name == name and row_init == str(initiative):
+                        print(f"[CombatTracker] Found inserted row at new position: {row}")
+                        # Force a repaint of the table
+                        table.viewport().update()
+                        # Make sure the row is visible
+                        table.scrollToItem(table.item(row, 0))
+                        return row
+                
+                print(f"[CombatTracker] WARNING: Could not find inserted row after sorting!")
+            except Exception as e:
+                print(f"[CombatTracker] ERROR during sort: {e}, but combatant was added at row {original_row}")
+            
+            # Force UI update
+            table.viewport().update()
+            table.resizeColumnsToContents()
+            table.resizeRowsToContents()
+            
+            # Process pending events to ensure UI updates
+            QApplication.processEvents()
+            
+            # If sort failed or we couldn't find the row, return the original row
+            # since we know the combatant was added there before sorting
+            return original_row
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"[CombatTracker] ERROR in _add_combatant: {e}")
+            return -1
     
     def _sort_initiative(self):
-        """Sort the initiative tracker by initiative value (descending)"""
-        if self.initiative_table.rowCount() <= 1:
-            return
+        """Sort the initiative list in descending order."""
+        print(f"[CombatTracker] _sort_initiative ENTRY with {self.initiative_table.rowCount()} rows")
+        # Block signals to prevent recursive calls during sorting
+        self.initiative_table.blockSignals(True)
         
-        # Get current selection
-        selected_rows = [index.row() for index in self.initiative_table.selectionModel().selectedRows()]
-        selected_names = [self.initiative_table.item(row, 0).text() for row in selected_rows]
-        
-        # Remember current turn
-        current_name = ""
-        if 0 <= self.current_turn < self.initiative_table.rowCount():
-            current_item = self.initiative_table.item(self.current_turn, 0)
-            if current_item:
-                current_name = current_item.text()
-        
-        # Create a list of rows with their initiative values
-        rows = []
-        for row in range(self.initiative_table.rowCount()):
-            init_item = self.initiative_table.item(row, 1)
-            if init_item:
-                try:
-                    # Handle empty strings and convert to float
-                    init_text = init_item.text().strip()
-                    init_value = float(init_text) if init_text else 0
-                    rows.append((row, init_value))
-                except ValueError:
-                    # If conversion fails, use 0 as default
-                    rows.append((row, 0))
-        
-        # Sort by initiative (highest first)
-        rows.sort(key=lambda x: (x[1], random.random()), reverse=True)
-        
-        # Save combatant data keyed by row before reordering
-        old_combatants = self.combatants.copy()
-        
-        # Remember items to restore
-        items = []
-        # Track the mapping of old_row to new_row
-        row_map = {}
-        
-        for i, (old_row, _) in enumerate(rows):
-            row_items = []
-            for col in range(self.initiative_table.columnCount()):
-                item = self.initiative_table.takeItem(old_row, col)
-                # Clone item to avoid issues
-                new_item = QTableWidgetItem()
-                new_item.setText(item.text())
-                if hasattr(item, 'checkState'):
-                    new_item.setCheckState(item.checkState())
-                for role in [Qt.UserRole, Qt.UserRole + 1]:
-                    if item.data(role) is not None:
-                        new_item.setData(role, item.data(role))
-                new_item.setTextAlignment(item.textAlignment())
-                row_items.append(new_item)
-            items.append(row_items)
+        try:
+            # Get the number of rows
+            row_count = self.initiative_table.rowCount()
+            if row_count <= 1:
+                # Nothing to sort if there's 0 or 1 row
+                print("[CombatTracker] _sort_initiative: Nothing to sort (≤1 row)")
+                return
             
-            # Record the mapping of old_row to its new position
-            row_map[old_row] = i
+            # Store all row data before clearing
+            rows_data = []
+            initiative_values = []
+            
+            # Collect all the data from the table first
+            print(f"[CombatTracker] Collecting data from {row_count} rows")
+            for row in range(row_count):
+                # Get the initiative value and row number
+                initiative_item = self.initiative_table.item(row, 1)
+                if initiative_item and initiative_item.text():
+                    try:
+                        initiative = int(initiative_item.text())
+                    except (ValueError, TypeError):
+                        initiative = 0
+                else:
+                    initiative = 0
+                    
+                # Gather all row data
+                row_data = {}
+                for col in range(self.initiative_table.columnCount()):
+                    item = self.initiative_table.item(row, col)
+                    if item:
+                        row_data[col] = {
+                            'text': item.text(),
+                            'flags': item.flags()
+                        }
+                        # Safely capture checkState if available
+                        if hasattr(item, 'checkState'):
+                            try:
+                                row_data[col]['checkState'] = item.checkState()
+                            except RecursionError:
+                                # Handle recursion issue gracefully
+                                row_data[col]['checkState'] = None
+                        
+                # Add this row's data to our collection
+                rows_data.append(row_data)
+                initiative_values.append((initiative, row))
+                print(f"[CombatTracker] Row {row}: initiative={initiative}")
+            
+            # Sort the initiative values in descending order
+            initiative_values.sort(key=lambda x: x[0], reverse=True)
+            print(f"[CombatTracker] Sorted initiatives: {initiative_values}")
+            
+            # Remap original rows to their new position after sorting
+            row_map = {old_row: new_row for new_row, (_, old_row) in enumerate(initiative_values)}
+            print(f"[CombatTracker] Row mapping: {row_map}")
+            
+            # Remember the current selection and turn
+            current_row = self.initiative_table.currentRow()
+            current_turn = self._current_turn if hasattr(self, '_current_turn') else None
+            print(f"[CombatTracker] Before sort: current_row={current_row}, current_turn={current_turn}")
+            
+            # Clear the table (but don't update combat stats yet)
+            print("[CombatTracker] Clearing table and rebuilding with sorted data")
+            self.initiative_table.setRowCount(0)
+            self.initiative_table.setRowCount(row_count)
+            
+            # Add the sorted rows back to the table
+            for old_row, new_row in row_map.items():
+                row_data = rows_data[old_row]
+                print(f"[CombatTracker] Moving row {old_row} to position {new_row}")
+                for col, item_data in row_data.items():
+                    new_item = QTableWidgetItem()
+                    new_item.setText(item_data['text'])
+                    
+                    # Safely set flags
+                    try:
+                        new_item.setFlags(item_data['flags'])
+                    except Exception as e:
+                        # Default flags if there's an issue
+                        print(f"[CombatTracker] Error setting flags for item at row={new_row}, col={col}: {e}")
+                    
+                    # Safely set checkState if it exists
+                    if 'checkState' in item_data and item_data['checkState'] is not None:
+                        try:
+                            new_item.setCheckState(item_data['checkState'])
+                        except Exception as e:
+                            # Skip if checkState can't be set
+                            print(f"[CombatTracker] Error setting checkState for item at row={new_row}, col={col}: {e}")
+                    
+                    self.initiative_table.setItem(new_row, col, new_item)
+            
+            # Update current selection and turn if needed
+            if current_row >= 0 and current_row < row_count:
+                new_current_row = row_map.get(current_row, 0)
+                print(f"[CombatTracker] Setting current cell: {new_current_row}")
+                self.initiative_table.setCurrentCell(new_current_row, 0)
+            
+            
+            if current_turn is not None and current_turn >= 0 and current_turn < row_count:
+                self._current_turn = row_map.get(current_turn, 0)
+                print(f"[CombatTracker] Setting current turn to: {self._current_turn}")
+            
+            # Force a UI update - IMPORTANT
+            self.initiative_table.viewport().update()
+            self.update()  # Update the whole combat tracker panel
         
-        # Clear the table and add items back in sorted order
-        self.initiative_table.setRowCount(0)
-        for row_items in items:
-            row = self.initiative_table.rowCount()
-            self.initiative_table.insertRow(row)
-            for col, item in enumerate(row_items):
-                self.initiative_table.setItem(row, col, item)
+        except Exception as e:
+            print(f"[CombatTracker] ERROR in _sort_initiative: {e}")
+            import traceback
+            traceback.print_exc()
         
-        # Remap the combatants dictionary based on new row order
-        new_combatants = {}
-        for old_row, combatant in old_combatants.items():
-            if old_row in row_map:
-                new_row = row_map[old_row]
-                new_combatants[new_row] = combatant
-        self.combatants = new_combatants
-        
-        # Remap tracking sets as well
-        new_concentrating = set()
-        for old_row in self.concentrating:
-            if old_row in row_map:
-                new_concentrating.add(row_map[old_row])
-        self.concentrating = new_concentrating
-        
-        new_death_saves = {}
-        for old_row, saves in self.death_saves.items():
-            if old_row in row_map:
-                new_death_saves[row_map[old_row]] = saves
-        self.death_saves = new_death_saves
-        
-        # Restore selection
-        if selected_names:
-            self.initiative_table.clearSelection()
-            for row in range(self.initiative_table.rowCount()):
-                name = self.initiative_table.item(row, 0).text()
-                if name in selected_names:
-                    self.initiative_table.selectRow(row)
-        
-        # Update current turn index if combat has started
-        if current_name and self.combat_started:
-            for row in range(self.initiative_table.rowCount()):
-                if self.initiative_table.item(row, 0).text() == current_name:
-                    self.current_turn = row
-                    break
-        
-        # Update the highlighting
-        self._update_highlight()
+        finally:
+            # Always unblock signals
+            print("[CombatTracker] Unblocking table signals")
+            self.initiative_table.blockSignals(False)
+            print("[CombatTracker] _sort_initiative completed")
+            
+            # Force the UI to update one more time
+            QApplication.processEvents()  # Process pending events to ensure UI updates
     
     def _quick_damage(self, amount):
         """Apply quick damage to selected combatants"""
@@ -1462,18 +1669,82 @@ class CombatTrackerPanel(BasePanel):
             self._sort_initiative()
     
     def _handle_cell_changed(self, row, column):
-        """Handle cell value changes in the initiative table"""
-        # This method is kept for reference but is no longer used
-        # Check if initiative column was changed
-        if column == 1:  # Initiative column
-            # Log the initiative change
-            name = self.initiative_table.item(row, 0).text() if self.initiative_table.item(row, 0) else "Unknown"
-            init_value = self.initiative_table.item(row, 1).text() if self.initiative_table.item(row, 1) else "0"
-            print(f"[CombatTracker] Cell changed detected: {name} initiative to {init_value}")
-            self._log_combat_action("Initiative", name, "changed initiative", result=f"New value: {init_value}")
+        """Handle when a cell in the initiative table is changed."""
+        # Prevent handling during program-initiated changes
+        if self.initiative_table.signalsBlocked():
+            return
             
-            # Auto-sort the initiative table
-            self._sort_initiative()
+        # Prevent recursive calls
+        self.initiative_table.blockSignals(True)
+        
+        try:
+            # Get the updated item
+            item = self.initiative_table.item(row, column)
+            if not item:
+                return
+                
+            # Handle initiative changes (column 1)
+            if column == 1:  # Initiative column
+                # Check if the initiative was actually changed
+                try:
+                    # Convert to int (ignore if not a valid number)
+                    new_initiative = int(item.text()) if item.text() else 0
+                    
+                    # Only sort if we have more than one combatant
+                    if self.initiative_table.rowCount() > 1:
+                        self._sort_initiative()
+                except (ValueError, TypeError):
+                    # Not a valid number, reset to 0
+                    item.setText("0")
+            
+            # Update combatant data if we have a combat data dictionary
+            if row in self.combatants:
+                # Just update the HP and status to match what's shown in the table
+                self._update_combatant_hp_and_status(row)
+        
+        finally:
+            # Always restore signals
+            self.initiative_table.blockSignals(False)
+    
+    def _update_combatant_hp_and_status(self, row):
+        """Update the HP and status of a combatant in the data dictionary based on the table"""
+        if row not in self.combatants:
+            return
+            
+        # Get HP from table
+        hp_item = self.initiative_table.item(row, 2)
+        if hp_item:
+            hp_text = hp_item.text().strip()
+            try:
+                hp = int(hp_text) if hp_text else 0
+                
+                # Update the hp in the combatant data if it's a dictionary
+                if isinstance(self.combatants[row], dict):
+                    self.combatants[row]['current_hp'] = hp
+                elif hasattr(self.combatants[row], 'current_hp'):
+                    self.combatants[row].current_hp = hp
+            except (ValueError, TypeError):
+                # Ignore if not a valid number
+                pass
+                
+        # Get status from table
+        status_item = self.initiative_table.item(row, 4)
+        if status_item:
+            status = status_item.text()
+            
+            # Update the status in the combatant data if it's a dictionary
+            if isinstance(self.combatants[row], dict):
+                if 'conditions' not in self.combatants[row]:
+                    self.combatants[row]['conditions'] = []
+                if status and status not in self.combatants[row]['conditions']:
+                    self.combatants[row]['conditions'].append(status)
+                elif not status and self.combatants[row]['conditions']:
+                    self.combatants[row]['conditions'] = []
+            elif hasattr(self.combatants[row], 'conditions'):
+                if status and status not in self.combatants[row].conditions:
+                    self.combatants[row].conditions.append(status)
+                elif not status and self.combatants[row].conditions:
+                    self.combatants[row].conditions = []
     
     def _next_turn(self):
         """Move to the next combatant's turn"""
@@ -1722,6 +1993,7 @@ class CombatTrackerPanel(BasePanel):
                                     "Unconscious"
                                 )
                         
+                        
                         # Check if player character (has max HP) for death saves
                         max_hp = hp_item.data(Qt.UserRole)
                         if max_hp:
@@ -1871,11 +2143,11 @@ class CombatTrackerPanel(BasePanel):
     
     def _toggle_timer(self):
         """Toggle the combat timer"""
-        if self.combat_timer.isActive():
-            self.combat_timer.stop()
+        if self.timer.isActive():
+            self.timer.stop()
             self.timer_button.setText("Start")
         else:
-            self.combat_timer.start(1000)  # Update every second
+            self.timer.start()  # Update every second
             self.timer_button.setText("Stop")
     
     def _update_timer(self):
@@ -1953,8 +2225,8 @@ class CombatTrackerPanel(BasePanel):
             
             # Reset UI elements
             self.round_spin.setValue(self.current_round)
-            if self.combat_timer.isActive():
-                self.combat_timer.stop()
+            if self.timer.isActive():
+                self.timer.stop()
             self.timer_label.setText("00:00:00")
             self.timer_button.setText("Start")
             self._update_game_time()
@@ -1993,8 +2265,8 @@ class CombatTrackerPanel(BasePanel):
             
             # Reset UI elements
             self.round_spin.setValue(self.current_round)
-            if self.combat_timer.isActive():
-                self.combat_timer.stop()
+            if self.timer.isActive():
+                self.timer.stop()
             self.timer_label.setText("00:00:00")
             self.timer_button.setText("Start")
             self._update_game_time()
@@ -2244,7 +2516,7 @@ class CombatTrackerPanel(BasePanel):
         # Save all combatants
         for row in range(self.initiative_table.rowCount()):
             combatant = {}
-            for col, key in enumerate(["name", "initiative", "hp", "ac", "status", "concentration", "notes"]):
+            for col, key in enumerate(["name", "initiative", "hp", "ac", "status", "concentration"]):
                 item = self.initiative_table.item(row, col)
                 if col == 5:  # Concentration
                     combatant[key] = item.checkState() == Qt.Checked if item else False
@@ -2254,6 +2526,15 @@ class CombatTrackerPanel(BasePanel):
                 # Save max HP
                 if col == 2 and item:
                     combatant["max_hp"] = item.data(Qt.UserRole)
+            
+            # Save type from column 6
+            type_item = self.initiative_table.item(row, 6)
+            if type_item:
+                combatant["type"] = type_item.text()
+            
+            # Save any associated combatant data
+            if row in self.combatants:
+                combatant["data"] = self.combatants[row]
             
             state["combatants"].append(combatant)
         
@@ -2268,6 +2549,7 @@ class CombatTrackerPanel(BasePanel):
         self.initiative_table.setRowCount(0)
         self.death_saves.clear()
         self.concentrating.clear()
+        self.combatants.clear()
         
         # Restore round and turn
         self.current_round = state.get("round", 1)
@@ -2282,14 +2564,33 @@ class CombatTrackerPanel(BasePanel):
         self.concentrating = set(state.get("concentrating", []))
         
         # Restore combatants
-        for combatant in state.get("combatants", []):
+        for idx, combatant in enumerate(state.get("combatants", [])):
             row = self.initiative_table.rowCount()
             self.initiative_table.insertRow(row)
             
+            # Store combatant data in combatants dictionary if available
+            if "data" in combatant:
+                self.combatants[row] = combatant["data"]
+            
+            # Figure out combatant type
+            combatant_type = ""
+            if "type" in combatant:
+                # Explicit type is provided
+                combatant_type = combatant["type"]
+            elif "data" in combatant:
+                # Try to determine type from data
+                data = combatant["data"]
+                if isinstance(data, dict):
+                    if "monster_id" in data or "size" in data or "challenge_rating" in data:
+                        combatant_type = "monster"
+                    elif "character_class" in data or "level" in data:
+                        combatant_type = "character"
+            
             # Restore each field
-            for col, key in enumerate(["name", "initiative", "hp", "ac", "status", "concentration", "notes"]):
+            for col, key in enumerate(["name", "initiative", "hp", "ac", "status", "concentration"]):
                 value = combatant.get(key, "")
                 item = QTableWidgetItem()
+                
                 
                 if col == 5:  # Concentration
                     item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
@@ -2302,6 +2603,12 @@ class CombatTrackerPanel(BasePanel):
                     item.setData(Qt.UserRole, combatant.get("max_hp", value))
                 
                 self.initiative_table.setItem(row, col, item)
+            
+            # Set type in column 6
+            type_item = QTableWidgetItem(combatant_type)
+            self.initiative_table.setItem(row, 6, type_item)
+            
+            print(f"[CombatTracker] Restored combatant {combatant.get('name', 'Unknown')} with type: {combatant_type}")
         
         # Highlight current turn
         self._update_highlight()
@@ -2318,8 +2625,14 @@ class CombatTrackerPanel(BasePanel):
         added_count = 0
         for monster_data in monster_dicts:
             try:
-                self.add_monster(monster_data)
-                added_count += 1
+                row = self.add_monster(monster_data)
+                if row >= 0:
+                    added_count += 1
+                    # Double-check that the type is set properly
+                    type_item = self.initiative_table.item(row, 6)
+                    if type_item and not type_item.text():
+                        type_item.setText("monster")
+                        print(f"[CombatTracker] Fixed missing type for row {row}")
             except Exception as e:
                 import traceback
                 name = monster_data.get("name", "Unknown") if isinstance(monster_data, dict) else getattr(monster_data, "name", "Unknown")
@@ -2334,13 +2647,20 @@ class CombatTrackerPanel(BasePanel):
 
     def add_monster(self, monster_data):
         """Add a monster from monster panel to the tracker"""
+        # Debug: Print a very clear message at the start
+        print(f"[CombatTracker] START add_monster method, received data: {type(monster_data)}")
+        
         if not monster_data:
-            return
+            print("[CombatTracker] ERROR: monster_data is None or empty")
+            return -1
         
         # Debug: Print the monster data structure to understand the format
         print(f"[CombatTracker] Adding monster: {type(monster_data)}")
         if isinstance(monster_data, dict):
             print(f"[CombatTracker] Monster keys: {list(monster_data.keys())}")
+            print(f"[CombatTracker] Monster name: {monster_data.get('name', 'UNKNOWN')}")
+        else:
+            print(f"[CombatTracker] Monster data is not a dict: {monster_data}")
         
         # Helper function to get attribute from either dict or object
         def get_attr(obj, attr, default=None, alt_attrs=None):
@@ -2379,6 +2699,7 @@ class CombatTrackerPanel(BasePanel):
             return default
         
         name = get_attr(monster_data, "name", "Unknown Monster")
+        print(f"[CombatTracker] Extracted name: {name}")
         
         # Extract challenge rating to calculate approximate initiative bonus
         cr = get_attr(monster_data, "challenge_rating", "0", ["cr"])
@@ -2396,24 +2717,28 @@ class CombatTrackerPanel(BasePanel):
                 dex = int(dex)
             dex_mod = (dex - 10) // 2
             
-            
             # Initiative bonus based on DEX, +0-3 based on CR
             initiative_bonus = dex_mod + min(3, int(cr_value / 5))
-        except (ValueError, TypeError):
+            print(f"[CombatTracker] Calculated initiative bonus: {initiative_bonus} (DEX:{dex}, CR:{cr})")
+        except (ValueError, TypeError) as e:
             # Default to +0 if any calculation errors
+            print(f"[CombatTracker] Error calculating initiative bonus: {e}, defaulting to 0")
             initiative_bonus = 0
         
         # Roll initiative with the bonus
         initiative_roll = random.randint(1, 20) + initiative_bonus
+        print(f"[CombatTracker] Rolled initiative: {initiative_roll} (1d20 + {initiative_bonus})")
         
         # Extract hit points
         hp_text = str(get_attr(monster_data, "hit_points", "10", ["hp"]))
         try:
             # Handle formats like "45 (7d8+14)" or just "45"
             hp = int(hp_text.split(' ')[0]) if ' ' in hp_text else int(hp_text)
-        except (ValueError, TypeError, IndexError):
+            print(f"[CombatTracker] Extracted HP: {hp} from '{hp_text}'")
+        except (ValueError, TypeError, IndexError) as e:
             # Default to 10 HP if any extraction errors
             hp = 10
+            print(f"[CombatTracker] Error extracting HP: {e}, defaulting to {hp}")
         
         # Get AC with special handling for various formats
         ac = get_attr(monster_data, "armor_class", 10, ["ac", "AC"])
@@ -2443,16 +2768,56 @@ class CombatTrackerPanel(BasePanel):
         ac = int(ac)
         print(f"[CombatTracker] Processed AC for {name}: {ac}")
         
-        # Add to tracker
-        row = self._add_combatant(name, initiative_roll, hp, ac)
+        # Verify the initiative table exists
+        if not hasattr(self, 'initiative_table'):
+            print("[CombatTracker] ERROR: initiative_table does not exist!")
+            return -1
+            
+        print(f"[CombatTracker] BEFORE _add_combatant, table has {self.initiative_table.rowCount()} rows")
         
-        # Store monster data for future reference
+        # Add to tracker - CRITICAL STEP
+        row = self._add_combatant(name, initiative_roll, hp, ac, "monster")
+        
+        print(f"[CombatTracker] AFTER _add_combatant, table has {self.initiative_table.rowCount()} rows")
+        print(f"[CombatTracker] _add_combatant returned row: {row}")
+        
+        # Make sure the row is visible by ensuring the table is updated
         if row >= 0:
-            self.combatants[row] = monster_data
+            try:
+                # Store monster data for future reference
+                self.combatants[row] = monster_data
+                
+                # Log to combat log
+                self._log_combat_action("Setup", "DM", "added monster", name, f"(Initiative: {initiative_roll})")
+                
+                # ENHANCED TABLE REFRESH - Force multiple update mechanisms
+                # 1. Force a repaint of the viewport
+                self.initiative_table.viewport().update()
+                
+                # 2. Resize columns to content
+                self.initiative_table.resizeColumnsToContents()
+                
+                # 3. Explicitly resize rows
+                self.initiative_table.resizeRowsToContents()
+                
+                # 4. Force a full redraw cycle by making a visible change
+                if self.initiative_table.rowCount() > 0:
+                    # Set selection to the newly added row
+                    self.initiative_table.selectRow(row)
+                
+                # 5. Force the entire table to repaint
+                self.initiative_table.update()
+                
+                # 6. Process pending events to ensure UI updates
+                QApplication.processEvents()
+                
+                print(f"[CombatTracker] Successfully added monster '{name}' at row {row}")
+            except Exception as e:
+                print(f"[CombatTracker] Warning during finalization: {e}, but monster was added")
+        else:
+            print(f"[CombatTracker] Failed to add monster '{name}' to tracker")
         
-        # Log to combat log
-        self._log_combat_action("Setup", "DM", "added monster", name, f"(Initiative: {initiative_roll})")
-        
+        # Return the row where the monster was added
         return row
 
     def add_character(self, character):
@@ -2460,32 +2825,56 @@ class CombatTrackerPanel(BasePanel):
         if not character:
             return
             
+        # Helper function to get attribute from either dict or object
+        def get_attr(obj, attr, default=None, alt_attrs=None):
+            """Get attribute from object or dict, trying alternate attribute names if specified"""
+            alt_attrs = alt_attrs or []
+            
+            if isinstance(obj, dict):
+                # Try the main attribute name first
+                if attr in obj:
+                    return obj[attr]
+                
+                # Try alternative attribute names
+                for alt_attr in alt_attrs:
+                    if alt_attr in obj:
+                        return obj[alt_attr]
+                
+                return default
+            
+            # Try getattr for object access
+            if hasattr(obj, attr):
+                return getattr(obj, attr)
+            
+            # Try alternative attributes for objects
+            for alt_attr in alt_attrs:
+                if hasattr(obj, alt_attr):
+                    return getattr(obj, alt_attr)
+            
+            return default
+            
+        # Get character name
+        name = get_attr(character, "name", "Unknown Character")
+        
         # Get initiative bonus
-        initiative_bonus = getattr(character, 'initiative_bonus', 0)
+        initiative_bonus = get_attr(character, "initiative_bonus", 0)
         
         # Roll initiative with the bonus
         initiative_roll = random.randint(1, 20) + initiative_bonus
         
         # Get HP and AC
-        hp = getattr(character, 'current_hp', 10)
-        ac = getattr(character, 'armor_class', 10)
+        hp = get_attr(character, "current_hp", 10)
+        ac = get_attr(character, "armor_class", 10)
         
         # Add to tracker
-        row = self._add_combatant(character.name, initiative_roll, hp, ac)
+        row = self._add_combatant(name, initiative_roll, hp, ac, "character")
         
         # Store character data for future reference
         if row >= 0:
             self.combatants[row] = character
             
-            # Ensure we store ability scores correctly
-            if hasattr(character, 'ability_scores') and isinstance(character.ability_scores, dict):
-                # Make sure we have a proper copy of the ability scores
-                if character.ability_scores and isinstance(character.ability_scores, dict):
-                    # Already stored in the character object
-                    pass
-            
         # Log to combat log
-        self._log_combat_action("Setup", "DM", "added character", character.name, f"(Initiative: {initiative_roll})")
+        self._log_combat_action("Setup", "DM", "added character", name, f"(Initiative: {initiative_roll})")
         
         return row
 
@@ -2582,12 +2971,17 @@ class CombatTrackerPanel(BasePanel):
             return
         
         # Get entity type (monster, character, or unknown)
-        type_item = self.initiative_table.item(row, 6) # Type column
+        type_item = self.initiative_table.item(row, 6)  # Type column is 6
+        combatant_name = self.initiative_table.item(row, 0).text()  # Name column is 0
+        
+        print(f"[Combat Tracker] Viewing details for row {row}: {combatant_name}")
+        
         if not type_item:
+            print(f"[Combat Tracker] Type item is missing for {combatant_name}")
             return
             
         combatant_type = type_item.text().lower()
-        combatant_name = self.initiative_table.item(row, 0).text()
+        print(f"[Combat Tracker] Combatant type is: '{combatant_type}'")
         
         # Look up the full details
         combatant_data = None
@@ -2595,7 +2989,7 @@ class CombatTrackerPanel(BasePanel):
         if combatant_type == "monster":
             # Look up monster data from database
             print(f"[Combat Tracker] Looking up monster '{combatant_name}'")
-            combatant_data = self.db.find_monster_by_name(combatant_name)
+            combatant_data = self.db.get_monster_by_name(combatant_name)
             if combatant_data:
                 print(f"[Combat Tracker] Found monster: {combatant_data.name}")
             else:
@@ -2612,10 +3006,12 @@ class CombatTrackerPanel(BasePanel):
                     print(f"[Combat Tracker] Found character: {combatant_data.name}")
                 else:
                     print(f"[Combat Tracker] Character '{combatant_name}' not found")
+            else:
+                print(f"[Combat Tracker] Player character panel not found")
         
         else:
             # Unknown combatant type
-            print(f"[Combat Tracker] Unknown combatant type: {combatant_type}")
+            print(f"[Combat Tracker] Unknown combatant type: '{combatant_type}'")
         
         if not combatant_data:
             # If we couldn't find details, just show what we know
@@ -2901,3 +3297,57 @@ class CombatTrackerPanel(BasePanel):
         
         # Call parent closeEvent
         super().closeEvent(event)
+
+    def _fix_missing_types(self):
+        """Fix any missing combatant types for existing entries"""
+        # Check if we need to fix any missing types
+        fix_count = 0
+        
+        for row in range(self.initiative_table.rowCount()):
+            # Get the current type
+            type_item = self.initiative_table.item(row, 6)
+            if not type_item or not type_item.text():
+                name_item = self.initiative_table.item(row, 0)
+                name = name_item.text() if name_item else "Unknown"
+                
+                # Try to infer type
+                inferred_type = ""
+                
+                # First, check if we have combatant data
+                if row in self.combatants:
+                    data = self.combatants[row]
+                    if isinstance(data, dict):
+                        if any(k in data for k in ["monster_id", "size", "challenge_rating", "hit_points"]):
+                            inferred_type = "monster"
+                        elif any(k in data for k in ["character_class", "level", "race"]):
+                            inferred_type = "character"
+                
+                # If still unknown, use name-based heuristics
+                if not inferred_type:
+                    monster_names = ["goblin", "ogre", "dragon", "troll", "zombie", "skeleton", 
+                                    "ghoul", "ghast", "ghost", "demon", "devil", "elemental"]
+                    lower_name = name.lower()
+                    
+                    # Check for common monster names
+                    if any(monster in lower_name for monster in monster_names):
+                        inferred_type = "monster"
+                    # Check for NPC tag
+                    elif "(npc)" in lower_name:
+                        inferred_type = "character"
+                    else:
+                        # Default to monster if other heuristics fail
+                        inferred_type = "monster"
+                
+                # Set the inferred type
+                if not type_item:
+                    type_item = QTableWidgetItem()
+                    self.initiative_table.setItem(row, 6, type_item)
+                
+                type_item.setText(inferred_type)
+                fix_count += 1
+                print(f"[CombatTracker] Fixed missing type for '{name}' - set to '{inferred_type}'")
+        
+        if fix_count > 0:
+            print(f"[CombatTracker] Fixed types for {fix_count} combatants")
+        
+        return fix_count

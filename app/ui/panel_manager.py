@@ -266,25 +266,47 @@ class PanelManager(QObject):
             )
     
     def _connect_panel_signals(self):
-        """Connect signals between panels"""
+        """Connect signals between panels for inter-panel communication"""
+        print("[PanelManager] Attempting to connect panel signals...")
+        
         try:
             # Connect monster panel to combat tracker
             monster_panel = self.panels["monster"].widget()
             combat_tracker = self.panels["combat_tracker"].widget()
             
             if monster_panel and combat_tracker:
+                print(f"[PanelManager] Found both monster_panel ({type(monster_panel).__name__}) and combat_tracker ({type(combat_tracker).__name__})")
+                
                 if hasattr(monster_panel, "add_to_combat"):
-                    monster_panel.add_to_combat.connect(combat_tracker.add_monster)
+                    print("[PanelManager] monster_panel has add_to_combat signal")
+                    
+                    if hasattr(combat_tracker, "add_monster"):
+                        print("[PanelManager] combat_tracker has add_monster method")
+                        monster_panel.add_to_combat.connect(combat_tracker.add_monster)
+                        print("[PanelManager] CONNECTED: monster_panel.add_to_combat -> combat_tracker.add_monster")
+                    else:
+                        print("[PanelManager] ERROR: combat_tracker does not have add_monster method!")
+                else:
+                    print("[PanelManager] ERROR: monster_panel does not have add_to_combat signal!")
+            else:
+                missing = []
+                if not monster_panel:
+                    missing.append("monster_panel")
+                if not combat_tracker:
+                    missing.append("combat_tracker")
+                print(f"[PanelManager] ERROR: Missing panels: {', '.join(missing)}")
             
             # Connect conditions panel to combat tracker
             conditions_panel = self.panels["conditions"].widget()
             if conditions_panel and hasattr(conditions_panel, "apply_condition"):
                 conditions_panel.apply_condition.connect(combat_tracker.apply_condition)
+                print("[PanelManager] Connected conditions_panel.apply_condition to combat_tracker.apply_condition")
             
             # Connect player character panel to combat tracker
             player_character_panel = self.panels["player_character"].widget()
             if player_character_panel and hasattr(player_character_panel, "add_to_combat"):
                 player_character_panel.add_to_combat.connect(combat_tracker.add_character)
+                print("[PanelManager] Connected player_character_panel.add_to_combat to combat_tracker.add_character")
             
             # Connect Encounter Generator to Combat Tracker
             encounter_panel_dock = self.panels.get("encounter_generator")
@@ -333,7 +355,12 @@ class PanelManager(QObject):
             # if encounter_panel and combat_tracker and hasattr(encounter_panel, 'add_group_to_combat'):
             #     encounter_panel.add_group_to_combat.connect(combat_tracker.add_combatant_group) # Assuming combat_tracker has this method
             
+            print("[PanelManager] Successfully connected panel signals")
+            
         except Exception as e:
+            print(f"[PanelManager] ERROR connecting panel signals: {e}")
+            import traceback
+            traceback.print_exc()
             QMessageBox.warning(
                 self.main_window,
                 "Signal Connection Error",
