@@ -760,6 +760,60 @@ class MonsterPanel(BasePanel):
         self.delete_monster_btn.setEnabled(is_custom_selected)
         self.generate_image_btn.setEnabled(has_selection)
 
+    def search_and_select_monster(self, monster_name):
+        """
+        Search for a monster by name and select it in the list.
+        Used by the combat tracker to show monster details when requested.
+        
+        Args:
+            monster_name (str): Name of the monster to search for
+            
+        Returns:
+            bool: True if monster was found and selected, False otherwise
+        """
+        logger.info(f"Searching for monster: '{monster_name}'")
+        
+        # Clear any existing search filters
+        self.search_input.setText("")
+        self.cr_filter.setCurrentText("All CRs")
+        self.type_filter.setCurrentText("All Types")
+        
+        # Refresh the list
+        self._populate_monster_list()
+        
+        # Find the monster in the list (case-insensitive match)
+        monster_name_lower = monster_name.lower()
+        for i in range(self.monster_list.count()):
+            item = self.monster_list.item(i)
+            if item.text().lower() == monster_name_lower:
+                # Select this monster
+                self.monster_list.setCurrentItem(item)
+                # Ensure it's visible
+                self.monster_list.scrollToItem(item)
+                # Process events to ensure UI updates
+                QApplication.processEvents()
+                return True
+        
+        # If not found in the list, try to find it in the database
+        monster = self.db_manager.get_monster_by_name(monster_name)
+        if monster:
+            # Monster found in database but not in our list, add it
+            self.monsters.append(monster)
+            self._populate_monster_list()
+            
+            # Now select it
+            for i in range(self.monster_list.count()):
+                item = self.monster_list.item(i)
+                if item.text().lower() == monster_name_lower:
+                    self.monster_list.setCurrentItem(item)
+                    self.monster_list.scrollToItem(item)
+                    # Process events to ensure UI updates
+                    QApplication.processEvents()
+                    return True
+        
+        logger.warning(f"Monster '{monster_name}' not found")
+        return False
+        
     # Helper to update internal list after create/edit
     def _add_or_update_monster_in_list(self, updated_monster: Monster):
         """Adds or updates a monster in the internal self.monsters list."""

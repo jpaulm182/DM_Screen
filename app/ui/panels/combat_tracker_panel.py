@@ -1321,126 +1321,44 @@ class CombatTrackerPanel(BasePanel):
             return -1
     
     def _add_combatant(self, name, initiative, hp, ac, combatant_type=""):
-        """Add a new combatant to initiative order"""
-        print(f"[CombatTracker] _add_combatant ENTRY: name={name}, init={initiative}, hp={hp}, ac={ac}, type={combatant_type}")
-        try:
-            table = self.initiative_table
-            
-            # Sanity check that we have a valid table
-            if not table:
-                print("[CombatTracker] ERROR: initiative_table is None")
-                return -1
-                
-            print(f"[CombatTracker] Table before insert has {table.rowCount()} rows")
-            
-            # Insert a new row at the end of the table
-            row = table.rowCount()
-            print(f"[CombatTracker] About to insertRow({row})")
-            table.insertRow(row)
-            print(f"[CombatTracker] After insertRow, table now has {table.rowCount()} rows")
-            
-            # Create and set the name item
-            print(f"[CombatTracker] Creating name item: {name}")
-            name_item = QTableWidgetItem(name)
-            print(f"[CombatTracker] Setting item at row={row}, col=0")
-            table.setItem(row, 0, name_item)
-            
-            # Initiative
-            print(f"[CombatTracker] Creating initiative item: {initiative}")
-            init_item = QTableWidgetItem(str(initiative))
-            init_item.setTextAlignment(Qt.AlignCenter)
-            print(f"[CombatTracker] Setting item at row={row}, col=1")
-            table.setItem(row, 1, init_item)
-            
-            # HP
-            print(f"[CombatTracker] Creating HP item: {hp}")
-            hp_item = QTableWidgetItem(str(hp))
-            hp_item.setTextAlignment(Qt.AlignCenter)
-            hp_item.setData(Qt.UserRole, hp)  # Store max HP
-            print(f"[CombatTracker] Setting item at row={row}, col=2")
-            table.setItem(row, 2, hp_item)
-            
-            # AC
-            print(f"[CombatTracker] Creating AC item: {ac}")
-            ac_item = QTableWidgetItem(str(ac))
-            ac_item.setTextAlignment(Qt.AlignCenter)
-            print(f"[CombatTracker] Setting item at row={row}, col=3")
-            table.setItem(row, 3, ac_item)
-            
-            # Status - empty initially
-            print(f"[CombatTracker] Setting empty status at row={row}, col=4")
-            table.setItem(row, 4, QTableWidgetItem(""))
-            
-            # Concentration checkbox
-            print(f"[CombatTracker] Creating concentration item")
-            conc_item = QTableWidgetItem()
-            conc_item.setCheckState(Qt.Unchecked)
-            conc_item.setTextAlignment(Qt.AlignCenter)
-            print(f"[CombatTracker] Setting item at row={row}, col=5")
-            table.setItem(row, 5, conc_item)
-            
-            # Type (monster or character)
-            print(f"[CombatTracker] Setting type item: {combatant_type} at row={row}, col=6")
-            table.setItem(row, 6, QTableWidgetItem(combatant_type))
-            
-            # Verify all items were added
-            for col in range(7):
-                item = table.item(row, col)
-                if not item:
-                    print(f"[CombatTracker] WARNING: Item at row={row}, col={col} is None!")
-                    # Create a placeholder item if missing
-                    table.setItem(row, col, QTableWidgetItem(""))
-            
-            # Ensure row is visible
-            table.scrollToItem(table.item(row, 0))
-            
-            # Store the row where we added the combatant in case sorting fails
-            original_row = row
-            
-            print(f"[CombatTracker] Before sort, table has {table.rowCount()} rows with new row={row}")
-            
-            # Try to sort but don't fail if sorting errors out
-            try:
-                # Sort after adding
-                self._sort_initiative()
-                
-                print(f"[CombatTracker] After sort, table has {table.rowCount()} rows")
-                
-                # Return the row where it was inserted after sorting
-                for row in range(table.rowCount()):
-                    row_name = table.item(row, 0).text() if table.item(row, 0) else None
-                    row_init = table.item(row, 1).text() if table.item(row, 1) else None
-                    print(f"[CombatTracker] Row {row}: name='{row_name}', init='{row_init}'")
-                    
-                    if row_name == name and row_init == str(initiative):
-                        print(f"[CombatTracker] Found inserted row at new position: {row}")
-                        # Force a repaint of the table
-                        table.viewport().update()
-                        # Make sure the row is visible
-                        table.scrollToItem(table.item(row, 0))
-                        return row
-                
-                print(f"[CombatTracker] WARNING: Could not find inserted row after sorting!")
-            except Exception as e:
-                print(f"[CombatTracker] ERROR during sort: {e}, but combatant was added at row {original_row}")
-            
-            # Force UI update
-            table.viewport().update()
-            table.resizeColumnsToContents()
-            table.resizeRowsToContents()
-            
-            # Process pending events to ensure UI updates
-            QApplication.processEvents()
-            
-            # If sort failed or we couldn't find the row, return the original row
-            # since we know the combatant was added there before sorting
-            return original_row
-            
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            print(f"[CombatTracker] ERROR in _add_combatant: {e}")
-            return -1
+        """Add a combatant to the initiative table"""
+        # Get current row count
+        row = self.initiative_table.rowCount()
+        self.initiative_table.insertRow(row)
+        
+        # Create name item with combatant type stored in user role
+        name_item = QTableWidgetItem(name)
+        name_item.setData(Qt.UserRole, combatant_type)  # Store type with the name item
+        self.initiative_table.setItem(row, 0, name_item)
+        
+        # Set initiative
+        init_item = QTableWidgetItem(str(initiative))
+        init_item.setData(Qt.DisplayRole, initiative)  # For sorting
+        self.initiative_table.setItem(row, 1, init_item)
+        
+        # Set HP
+        hp_item = QTableWidgetItem(str(hp))
+        self.initiative_table.setItem(row, 2, hp_item)
+        
+        # Set AC
+        ac_item = QTableWidgetItem(str(ac))
+        self.initiative_table.setItem(row, 3, ac_item)
+        
+        # Set status as empty initially
+        self.initiative_table.setItem(row, 4, QTableWidgetItem(""))
+        
+        # Set notes as empty initially
+        self.initiative_table.setItem(row, 5, QTableWidgetItem(""))
+        
+        # Set type (monster, character, etc.) for filtering
+        type_item = QTableWidgetItem(combatant_type)
+        self.initiative_table.setItem(row, 6, type_item)
+        
+        # Sort the initiative order
+        self._sort_initiative()
+        
+        # Return the row where the combatant was added
+        return row
     
     def _sort_initiative(self):
         """Sort the initiative list in descending order."""
@@ -2647,21 +2565,9 @@ class CombatTrackerPanel(BasePanel):
 
     def add_monster(self, monster_data):
         """Add a monster from monster panel to the tracker"""
-        # Debug: Print a very clear message at the start
-        print(f"[CombatTracker] START add_monster method, received data: {type(monster_data)}")
-        
         if not monster_data:
-            print("[CombatTracker] ERROR: monster_data is None or empty")
             return -1
-        
-        # Debug: Print the monster data structure to understand the format
-        print(f"[CombatTracker] Adding monster: {type(monster_data)}")
-        if isinstance(monster_data, dict):
-            print(f"[CombatTracker] Monster keys: {list(monster_data.keys())}")
-            print(f"[CombatTracker] Monster name: {monster_data.get('name', 'UNKNOWN')}")
-        else:
-            print(f"[CombatTracker] Monster data is not a dict: {monster_data}")
-        
+            
         # Helper function to get attribute from either dict or object
         def get_attr(obj, attr, default=None, alt_attrs=None):
             """Get attribute from object or dict, trying alternate attribute names if specified"""
@@ -2677,14 +2583,6 @@ class CombatTrackerPanel(BasePanel):
                     if alt_attr in obj:
                         return obj[alt_attr]
                 
-                # Check if stats are nested in a 'stats' dictionary
-                if 'stats' in obj and isinstance(obj['stats'], dict):
-                    if attr in obj['stats']:
-                        return obj['stats'][attr]
-                    for alt_attr in alt_attrs:
-                        if alt_attr in obj['stats']:
-                            return obj['stats'][alt_attr]
-                
                 return default
             
             # Try getattr for object access
@@ -2697,127 +2595,35 @@ class CombatTrackerPanel(BasePanel):
                     return getattr(obj, alt_attr)
             
             return default
-        
+            
+        # Get monster name
         name = get_attr(monster_data, "name", "Unknown Monster")
-        print(f"[CombatTracker] Extracted name: {name}")
         
-        # Extract challenge rating to calculate approximate initiative bonus
-        cr = get_attr(monster_data, "challenge_rating", "0", ["cr"])
-        try:
-            # Handle fractional CR values
-            if isinstance(cr, str) and '/' in cr:
-                num, denom = cr.split('/')
-                cr_value = float(num) / float(denom)
-            else:
-                cr_value = float(cr)
-                
-            # Calculate a plausible initiative bonus based on DEX and CR
-            dex = get_attr(monster_data, "dexterity", 10, ["dex"])
-            if isinstance(dex, str):
-                dex = int(dex)
-            dex_mod = (dex - 10) // 2
-            
-            # Initiative bonus based on DEX, +0-3 based on CR
-            initiative_bonus = dex_mod + min(3, int(cr_value / 5))
-            print(f"[CombatTracker] Calculated initiative bonus: {initiative_bonus} (DEX:{dex}, CR:{cr})")
-        except (ValueError, TypeError) as e:
-            # Default to +0 if any calculation errors
-            print(f"[CombatTracker] Error calculating initiative bonus: {e}, defaulting to 0")
-            initiative_bonus = 0
+        # Get a reasonable initiative modifier from DEX
+        dex = get_attr(monster_data, "dexterity", 10, ["dex", "DEX"])
+        init_mod = (dex - 10) // 2
         
-        # Roll initiative with the bonus
-        initiative_roll = random.randint(1, 20) + initiative_bonus
-        print(f"[CombatTracker] Rolled initiative: {initiative_roll} (1d20 + {initiative_bonus})")
+        # Roll initiative
+        initiative_roll = random.randint(1, 20) + init_mod
         
-        # Extract hit points
-        hp_text = str(get_attr(monster_data, "hit_points", "10", ["hp"]))
-        try:
-            # Handle formats like "45 (7d8+14)" or just "45"
-            hp = int(hp_text.split(' ')[0]) if ' ' in hp_text else int(hp_text)
-            print(f"[CombatTracker] Extracted HP: {hp} from '{hp_text}'")
-        except (ValueError, TypeError, IndexError) as e:
-            # Default to 10 HP if any extraction errors
-            hp = 10
-            print(f"[CombatTracker] Error extracting HP: {e}, defaulting to {hp}")
+        # Get monster HP and AC
+        hp = get_attr(monster_data, "hp", 10, ["hit_points", "hitPoints"])
+        ac = get_attr(monster_data, "ac", 10, ["armor_class", "armorClass"])
         
-        # Get AC with special handling for various formats
-        ac = get_attr(monster_data, "armor_class", 10, ["ac", "AC"])
-        print(f"[CombatTracker] Raw AC value for {name}: {ac}")
-        
-        # Handle different AC formats (string, int, or nested dictionary)
-        if isinstance(ac, dict):
-            # Some formats store AC in a dict with a 'value' key
-            ac_value = ac.get('value', 10)
-            if isinstance(ac_value, str):
-                try:
-                    ac = int(ac_value.split(' ')[0])
-                except (ValueError, IndexError):
-                    ac = 10
-            else:
-                ac = int(ac_value) if isinstance(ac_value, (int, float)) else 10
-        elif isinstance(ac, str):
-            try:
-                ac = int(ac.split(' ')[0])
-            except (ValueError, IndexError):
-                ac = 10
-        elif not isinstance(ac, (int, float)):
-            # If it's not a recognized format, default to 10
-            ac = 10
-        
-        # Convert to int if it's a float
-        ac = int(ac)
-        print(f"[CombatTracker] Processed AC for {name}: {ac}")
-        
-        # Verify the initiative table exists
-        if not hasattr(self, 'initiative_table'):
-            print("[CombatTracker] ERROR: initiative_table does not exist!")
-            return -1
-            
-        print(f"[CombatTracker] BEFORE _add_combatant, table has {self.initiative_table.rowCount()} rows")
-        
-        # Add to tracker - CRITICAL STEP
+        # Add to tracker
         row = self._add_combatant(name, initiative_roll, hp, ac, "monster")
         
-        print(f"[CombatTracker] AFTER _add_combatant, table has {self.initiative_table.rowCount()} rows")
-        print(f"[CombatTracker] _add_combatant returned row: {row}")
+        # Ensure row is valid, default to -1 if None
+        if row is None:
+            row = -1
         
-        # Make sure the row is visible by ensuring the table is updated
+        # Store monster data for future reference
         if row >= 0:
-            try:
-                # Store monster data for future reference
-                self.combatants[row] = monster_data
-                
-                # Log to combat log
-                self._log_combat_action("Setup", "DM", "added monster", name, f"(Initiative: {initiative_roll})")
-                
-                # ENHANCED TABLE REFRESH - Force multiple update mechanisms
-                # 1. Force a repaint of the viewport
-                self.initiative_table.viewport().update()
-                
-                # 2. Resize columns to content
-                self.initiative_table.resizeColumnsToContents()
-                
-                # 3. Explicitly resize rows
-                self.initiative_table.resizeRowsToContents()
-                
-                # 4. Force a full redraw cycle by making a visible change
-                if self.initiative_table.rowCount() > 0:
-                    # Set selection to the newly added row
-                    self.initiative_table.selectRow(row)
-                
-                # 5. Force the entire table to repaint
-                self.initiative_table.update()
-                
-                # 6. Process pending events to ensure UI updates
-                QApplication.processEvents()
-                
-                print(f"[CombatTracker] Successfully added monster '{name}' at row {row}")
-            except Exception as e:
-                print(f"[CombatTracker] Warning during finalization: {e}, but monster was added")
-        else:
-            print(f"[CombatTracker] Failed to add monster '{name}' to tracker")
+            self.combatants[row] = monster_data
+            
+        # Log to combat log
+        self._log_combat_action("Setup", "DM", "added monster", name, f"(Initiative: {initiative_roll})")
         
-        # Return the row where the monster was added
         return row
 
     def add_character(self, character):
@@ -2966,76 +2772,98 @@ class CombatTrackerPanel(BasePanel):
         self.death_saves = new_death_saves
 
     def _view_combatant_details(self, row):
-        """Open a dialog with full details of the combatant at the given row"""
-        if row < 0 or row >= self.initiative_table.rowCount():
-            return
-        
-        # Get entity type (monster, character, or unknown)
-        type_item = self.initiative_table.item(row, 6)  # Type column is 6
-        combatant_name = self.initiative_table.item(row, 0).text()  # Name column is 0
-        
-        print(f"[Combat Tracker] Viewing details for row {row}: {combatant_name}")
-        
-        if not type_item:
-            print(f"[Combat Tracker] Type item is missing for {combatant_name}")
+        """Show the details for the combatant at the given row"""
+        if not self.initiative_table.item(row, 0):
             return
             
-        combatant_type = type_item.text().lower()
-        print(f"[Combat Tracker] Combatant type is: '{combatant_type}'")
+        name_item = self.initiative_table.item(row, 0)
+        combatant_name = name_item.text()
+        combatant_type = name_item.data(Qt.UserRole)
         
-        # Look up the full details
-        combatant_data = None
+        # If type is None or empty, try to get it from the type column (index 6)
+        if not combatant_type and self.initiative_table.item(row, 6):
+            combatant_type = self.initiative_table.item(row, 6).text().lower()
+            # Store it back in the name item for future use
+            name_item.setData(Qt.UserRole, combatant_type)
+            
+        # If still None, default to custom
+        if not combatant_type:
+            combatant_type = "custom"
+            
+        print(f"[Combat Tracker] Viewing details for {combatant_type} '{combatant_name}'")
         
+        # Redirect to appropriate panel based on combatant type
         if combatant_type == "monster":
-            # Look up monster data from database
-            print(f"[Combat Tracker] Looking up monster '{combatant_name}'")
-            combatant_data = self.db.get_monster_by_name(combatant_name)
-            if combatant_data:
-                print(f"[Combat Tracker] Found monster: {combatant_data.name}")
-            else:
-                print(f"[Combat Tracker] Monster '{combatant_name}' not found in database")
-        
-        elif combatant_type == "character":
-            # Look up character data from character panel or app state
-            print(f"[Combat Tracker] Looking up character '{combatant_name}'")
-            # Try to find the character panel and get character data
-            player_character_panel = self.get_panel("player_character")
-            if player_character_panel:
-                combatant_data = player_character_panel.find_character_by_name(combatant_name)
-                if combatant_data:
-                    print(f"[Combat Tracker] Found character: {combatant_data.name}")
+            # Get the monster panel and view the monster
+            monster_panel = self.get_panel("monster")
+            if monster_panel:
+                # Use the panel manager to show the panel
+                if hasattr(self.app_state, 'panel_manager'):
+                    panel_manager = self.app_state.panel_manager
+                    panel_manager.show_panel("monster")
+                    
+                    # Now search and select the monster
+                    result = monster_panel.search_and_select_monster(combatant_name)
+                    if not result:
+                        # If monster not found, show a message and use the dialog fallback
+                        print(f"[Combat Tracker] Monster '{combatant_name}' not found in monster browser")
+                        self._show_combatant_dialog(row, combatant_name, combatant_type)
                 else:
-                    print(f"[Combat Tracker] Character '{combatant_name}' not found")
+                    print("[Combat Tracker] No panel_manager found in app_state")
+                    self._show_combatant_dialog(row, combatant_name, combatant_type)
             else:
-                print(f"[Combat Tracker] Player character panel not found")
-        
+                # Fallback to dialog if panel not found
+                self._show_combatant_dialog(row, combatant_name, combatant_type)
+        elif combatant_type == "character":
+            # Get the character panel and view the character
+            character_panel = self.get_panel("player_character")
+            if character_panel:
+                # Use the panel manager to show the panel
+                if hasattr(self.app_state, 'panel_manager'):
+                    panel_manager = self.app_state.panel_manager
+                    panel_manager.show_panel("player_character")
+                    
+                    # Now search and select the character
+                    result = character_panel.select_character_by_name(combatant_name)
+                    if not result:
+                        # If character not found, show a message and use the dialog fallback
+                        print(f"[Combat Tracker] Character '{combatant_name}' not found in character panel")
+                        self._show_combatant_dialog(row, combatant_name, combatant_type)
+                else:
+                    print("[Combat Tracker] No panel_manager found in app_state")
+                    self._show_combatant_dialog(row, combatant_name, combatant_type)
+            else:
+                # Fallback to dialog if panel not found
+                self._show_combatant_dialog(row, combatant_name, combatant_type)
         else:
-            # Unknown combatant type
-            print(f"[Combat Tracker] Unknown combatant type: '{combatant_type}'")
+            # For custom entries, use the dialog approach
+            self._show_combatant_dialog(row, combatant_name, combatant_type)
+            
+    def _show_combatant_dialog(self, row, combatant_name, combatant_type):
+        """Show a dialog with combatant details when we can't redirect to another panel"""
+        print(f"[Combat Tracker] Showing dialog for {combatant_type} '{combatant_name}'")
         
-        if not combatant_data:
-            # If we couldn't find details, just show what we know
-            QMessageBox.information(
-                self,
-                "Combatant Details",
-                f"No detailed information found for {combatant_name}."
-            )
-            return
+        # Get basic data from the initiative table
+        combatant_data = {
+            "name": combatant_name,
+            "initiative": int(self.initiative_table.item(row, 1).text()) if self.initiative_table.item(row, 1) else 0,
+            "hp": int(self.initiative_table.item(row, 2).text()) if self.initiative_table.item(row, 2) else 0,
+            "ac": int(self.initiative_table.item(row, 3).text()) if self.initiative_table.item(row, 3) else 0,
+            "status": self.initiative_table.item(row, 4).text() if self.initiative_table.item(row, 4) else ""
+        }
         
-        # Store the selected combatant for details pane
-        self.current_details_combatant = combatant_data
-        self.current_details_type = combatant_type
+        # For monsters, try to get the full data from the stored combatants dictionary
+        if combatant_type == "monster":
+            for combatant_row, stored_data in self.combatants.items():
+                if hasattr(stored_data, 'name') and stored_data.name == combatant_name:
+                    combatant_data = stored_data
+                    break
+                elif isinstance(stored_data, dict) and stored_data.get('name') == combatant_name:
+                    combatant_data = stored_data
+                    break
         
-        # Update the details pane with this combatant
-        self._update_details_pane()
-        
-        # Make sure details pane is visible
-        if not self.show_details_pane:
-            self.toggle_details_btn.setChecked(True)
-            self._toggle_details_pane()
-        else:
-            # Just ensure it's visible
-            self.details_widget.show()
+        dialog = CombatantDetailsDialog(self, combatant_data, combatant_type)
+        dialog.exec()
 
     def _toggle_details_pane(self):
         """Toggle the visibility of the details pane"""
@@ -3239,6 +3067,17 @@ class CombatTrackerPanel(BasePanel):
         self.actions_layout.addStretch()
         self.traits_layout.addStretch()
         self.spells_layout.addStretch()
+        
+        # Force tab widget to update and be visible
+        self.actions_tab.setVisible(True)
+        self.actions_tab.show()
+        self.actions_tab.adjustSize()
+        
+        # Make sure the details pane refreshes
+        self.details_content.setWidget(self.stats_widget)
+        self.details_content.adjustSize()
+        self.details_widget.adjustSize()
+        self.details_widget.update()
     
     def _clear_details_layouts(self):
         """Clear action, trait, and spell layouts"""

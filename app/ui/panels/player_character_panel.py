@@ -909,4 +909,28 @@ class PlayerCharacterPanel(BasePanel):
                 return character
                 
         # Not found
-        return None 
+        return None
+        
+    def select_character_by_name(self, character_name):
+        """Find a character by name and select it in the UI.
+        Used by the combat tracker to show character details when requested.
+        
+        Args:
+            character_name (str): Name of the character to find and select
+            
+        Returns:
+            bool: True if character was found and selected, False otherwise
+        """
+        # Normalize the name for case-insensitive comparison
+        character_name_lower = character_name.lower()
+        
+        # Look for the character in our list
+        for i, character in enumerate(self.characters):
+            if character.name.lower() == character_name_lower:
+                # Select this character in the UI
+                self.char_selector.setCurrentIndex(i)
+                # This will trigger _select_character which updates the display
+                return True
+                
+        # Not found
+        return False 
