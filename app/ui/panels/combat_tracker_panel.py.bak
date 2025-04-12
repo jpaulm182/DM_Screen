@@ -845,54 +845,37 @@ class CombatTrackerPanel(BasePanel):
     
     def __init__(self, app_state):
         """Initialize the combat tracker panel"""
-        try:
-            print(f"[Combat Tracker] Starting initialization with app_state: {app_state}")
-            
-            # Initialize panel attributes before calling super().__init__()
-            self.app_state = app_state
-            self.db = app_state.db_manager if hasattr(app_state, 'db_manager') else None
-            print(f"[Combat Tracker] DB manager obtained: {self.db is not None}")
-            
-            self.current_round = 1
-            self.current_turn = 0
-            self.combat_time = 0
-            self.initiative_order = []
-            self.timer_running = False
-            self.in_combat = False
-            self.status_conditions = {}  # Track status conditions by row
-            self.concentrating = {}  # Track who is concentrating (row: spell)
-            self.death_saves = {}  # Track death saving throws
-            self.used_slots = {}  # Track used spell slots
-            self.game_time = app_state.game_time if hasattr(app_state, 'game_time') else None
-            print(f"[Combat Tracker] Basic attributes initialized")
-            
-            # Variables for the details pane
-            self.show_details_pane = False
-            self.current_details_combatant = None
-            self.current_details_type = None
-            
-            # Initialize combat state
-            self.combat_started = False
-            self.previous_turn = -1
-            
-            # Initialize combatants dictionary
-            self.combatants = {}
-            
-            # Initialize the base class after setting up our attributes
-            # This will call _setup_ui() which uses the attributes we just set
-            super().__init__(app_state, "Combat Tracker")
-            
-            # Create the combat timer after super().__init__() has been called
-            self.combat_timer = QTimer(self)
-            
-            print(f"[Combat Tracker] Initialization completed successfully")
-        except Exception as e:
-            import traceback
-            print(f"[Combat Tracker] INITIALIZATION ERROR: {str(e)}")
-            print(f"[Combat Tracker] Error Traceback: {traceback.format_exc()}")
-            # Re-raise the exception to be caught by the panel manager
-            raise
-    
+        # Initialize panel attributes
+        self.app_state = app_state
+        self.db = app_state.db_manager
+        self.current_round = 1
+        self.current_turn = 0
+        self.combat_timer = QTimer(self)
+        self.combat_time = 0
+        self.initiative_order = []
+        self.timer_running = False
+        self.in_combat = False
+        self.status_conditions = {}  # Track status conditions by row
+        self.concentrating = {}  # Track who is concentrating (row: spell)
+        self.death_saves = {}  # Track death saving throws
+        self.used_slots = {}  # Track used spell slots
+        self.combat_log = []
+        self.game_time = app_state.game_time if hasattr(app_state, 'game_time') else None
+        
+        # Variables for the details pane
+        self.show_details_pane = False
+        self.current_details_combatant = None
+        self.current_details_type = None
+        
+        # Initialize combat state
+        self.combat_started = False
+        self.previous_turn = -1
+        
+        # Initialize combatants dictionary
+        self.combatants = {}
+        
+        super().__init__(app_state, "Combat Tracker")
+
     def _setup_ui(self):
         """Set up the combat tracker panel UI"""
         main_layout = QVBoxLayout(self)
@@ -2598,7 +2581,7 @@ class CombatTrackerPanel(BasePanel):
             combatant_data = self.db.find_monster_by_name(combatant_name)
             if combatant_data:
                 print(f"[Combat Tracker] Found monster: {combatant_data.name}")
-            else:
+                        else:
                 print(f"[Combat Tracker] Monster '{combatant_name}' not found in database")
         
         elif combatant_type == "character":
@@ -2610,12 +2593,8 @@ class CombatTrackerPanel(BasePanel):
                 combatant_data = player_character_panel.find_character_by_name(combatant_name)
                 if combatant_data:
                     print(f"[Combat Tracker] Found character: {combatant_data.name}")
-                else:
+                        else:
                     print(f"[Combat Tracker] Character '{combatant_name}' not found")
-        
-        else:
-            # Unknown combatant type
-            print(f"[Combat Tracker] Unknown combatant type: {combatant_type}")
         
         if not combatant_data:
             # If we couldn't find details, just show what we know
@@ -2637,7 +2616,7 @@ class CombatTrackerPanel(BasePanel):
         if not self.show_details_pane:
             self.toggle_details_btn.setChecked(True)
             self._toggle_details_pane()
-        else:
+                    else:
             # Just ensure it's visible
             self.details_widget.show()
 
@@ -2744,14 +2723,8 @@ class CombatTrackerPanel(BasePanel):
                 hp_text = f"{current_hp}/{max_hp}"
                 
                 temp_hp = get_attr(self.current_details_combatant, "temp_hp", 0, ["temporary_hp"])
-                # Check if temp_hp can be converted to int and is positive
-                try:
-                    temp_hp_value = int(temp_hp)
-                    if temp_hp_value > 0:
-                        hp_text += f" (+{temp_hp_value})"
-                except (ValueError, TypeError):
-                    # If temp_hp can't be converted to int, ignore it
-                    pass
+                if temp_hp and int(temp_hp) > 0:
+                    hp_text += f" (+{temp_hp})"
         
         self.hp_details_label.setText(hp_text)
         
