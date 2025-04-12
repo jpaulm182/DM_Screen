@@ -213,17 +213,29 @@ class PanelManager(QObject):
         colors = PanelCategory.get_colors(panel_id, self.current_theme)
         category = PanelCategory.get_category(panel_id)
         
+        # Get border intensity from settings (1-5)
+        border_intensity = self.app_state.get_panel_layout_setting("panel_border_intensity", 3)
+        
+        # Set border width based on intensity
+        border_width = border_intensity
+        
         if colors:
-            # Apply title bar styling
+            # Apply title bar styling with more prominent borders
             title_style = f"""
                 QDockWidget::title {{
                     background-color: {colors['title_bg'].name()};
                     color: {colors['title_text'].name()};
                     font-weight: bold;
                     padding-left: 5px;
+                    font-size: 13px;
                 }}
                 QDockWidget {{
+                    border: {border_width}px solid {colors['border'].name()};
+                    border-radius: 2px;
+                }}
+                QDockWidget > QWidget {{
                     border: 1px solid {colors['border'].name()};
+                    background-color: {self._get_content_bg_color(colors, category).name()};
                 }}
             """
             dock.setStyleSheet(title_style)
@@ -231,6 +243,27 @@ class PanelManager(QObject):
             # Add category prefix to title
             category_name = PanelCategory.get_category_display_name(category)
             dock.setWindowTitle(f"[{category_name}] {dock.windowTitle()}")
+    
+    def _get_content_bg_color(self, colors, category):
+        """Get a subtle background color for panel content based on category"""
+        # Create a very light tint of the category color for the panel background
+        bg_color = colors['title_bg']
+        if self.current_theme == "dark":
+            # For dark theme, create a darker, more subtle version
+            return QColor(
+                min(bg_color.red() + 10, 255), 
+                min(bg_color.green() + 10, 255),
+                min(bg_color.blue() + 10, 255),
+                40  # Very transparent
+            )
+        else:
+            # For light theme, create a very light tint
+            return QColor(
+                min(bg_color.red() + 230, 255),
+                min(bg_color.green() + 230, 255),
+                min(bg_color.blue() + 230, 255),
+                70  # Slightly transparent
+            )
     
     def _connect_panel_signals(self):
         """Connect signals between panels"""
@@ -504,12 +537,12 @@ class PanelManager(QObject):
         effective_width = main_window_geometry.width() 
         
         # Get panel layout settings
-        tab_threshold = self.app_state.get_panel_layout_setting("tab_threshold", 6)
+        tab_threshold = self.app_state.get_panel_layout_setting("tab_threshold", 4)  # Lower threshold to tab earlier
         always_tab_reference = self.app_state.get_panel_layout_setting("always_tab_reference", True)
         always_tab_campaign = self.app_state.get_panel_layout_setting("always_tab_campaign", True)
         always_tab_utility = self.app_state.get_panel_layout_setting("always_tab_utility", True)
-        min_panel_width = self.app_state.get_panel_layout_setting("min_panel_width", 300)
-        min_panel_height = self.app_state.get_panel_layout_setting("min_panel_height", 200)
+        min_panel_width = self.app_state.get_panel_layout_setting("min_panel_width", 350)  # Increased minimum size
+        min_panel_height = self.app_state.get_panel_layout_setting("min_panel_height", 250)  # Increased minimum size
         
         # Force reset dock widget locations to avoid stacking issues
         for panel_id in self.panels:
@@ -550,10 +583,8 @@ class PanelManager(QObject):
         # Determine layout strategy based on number of panels and categories
         total_panels = len(visible_panels)
         
-        # Approach for placing panels:
-        # - If only one category has panels, use a simple grid layout
-        # - If 2-4 categories have panels, use quadrant approach with tabbing within categories
-        # - If many panels overall, aggressively use tabbing
+        # For 4+ panels, we'll use a more aggressive tabbing strategy
+        force_tabbing = total_panels >= tab_threshold
         
         # COMBAT PANELS (Top Left)
         combat_panels = category_panels[PanelCategory.COMBAT]
@@ -566,7 +597,7 @@ class PanelManager(QObject):
             # If we have more than one combat panel
             if len(combat_panels) > 1:
                 # If we have many visible panels overall, tabify all combat panels
-                if total_panels > tab_threshold or (active_categories > 2 and len(combat_panels) > 2):
+                if force_tabbing or (active_categories > 2 and len(combat_panels) > 2):
                     for i in range(1, len(combat_panels)):
                         self.main_window.tabifyDockWidget(
                             self.panels[combat_panels[0]],
@@ -575,7 +606,8 @@ class PanelManager(QObject):
                         self.panels[combat_panels[i]].show()
                 else:
                     # Otherwise try to split them horizontally (side by side)
-                    for i in range(1, min(3, len(combat_panels))):  # Limit to 3 side-by-side
+                    # But limit to 2 side-by-side panels to prevent squishing
+                    for i in range(1, min(2, len(combat_panels))):
                         self.main_window.splitDockWidget(
                             self.panels[combat_panels[0]],
                             self.panels[combat_panels[i]],
@@ -584,9 +616,9 @@ class PanelManager(QObject):
                         self.panels[combat_panels[i]].show()
                     
                     # Tabify any remaining panels with the last visible one
-                    for i in range(3, len(combat_panels)):
+                    for i in range(2, len(combat_panels)):
                         self.main_window.tabifyDockWidget(
-                            self.panels[combat_panels[2]],
+                            self.panels[combat_panels[1]],
                             self.panels[combat_panels[i]]
                         )
                         self.panels[combat_panels[i]].show()
@@ -600,7 +632,7 @@ class PanelManager(QObject):
             self.panels[first_panel].show()
             
             # Check if we should tabify reference panels
-            if always_tab_reference or len(reference_panels) > 2 or total_panels > tab_threshold:
+            if always_tab_reference or len(reference_panels) > 1 or force_tabbing:
                 # Always tabify reference panels since they tend to be content-heavy
                 for i in range(1, len(reference_panels)):
                     self.main_window.tabifyDockWidget(
@@ -608,23 +640,6 @@ class PanelManager(QObject):
                         self.panels[reference_panels[i]]
                     )
                     self.panels[reference_panels[i]].show()
-            else:
-                # Only split the first two panels, then tabify the rest
-                if len(reference_panels) > 1:
-                    self.main_window.splitDockWidget(
-                        self.panels[reference_panels[0]],
-                        self.panels[reference_panels[1]],
-                        Qt.Vertical
-                    )
-                    self.panels[reference_panels[1]].show()
-                    
-                    # Tabify any remaining panels
-                    for i in range(2, len(reference_panels)):
-                        self.main_window.tabifyDockWidget(
-                            self.panels[reference_panels[0]],
-                            self.panels[reference_panels[i]]
-                        )
-                        self.panels[reference_panels[i]].show()
             
             # If we have combat panels, split horizontally with them
             if combat_panels:
@@ -643,7 +658,7 @@ class PanelManager(QObject):
             self.panels[first_panel].show()
             
             # Check if we should tabify campaign panels
-            if always_tab_campaign or len(campaign_panels) > 2 or total_panels > tab_threshold:
+            if always_tab_campaign or len(campaign_panels) > 1 or force_tabbing:
                 # Always tabify campaign panels to save space
                 for i in range(1, len(campaign_panels)):
                     self.main_window.tabifyDockWidget(
@@ -651,23 +666,6 @@ class PanelManager(QObject):
                         self.panels[campaign_panels[i]]
                     )
                     self.panels[campaign_panels[i]].show()
-            else:
-                # Only split the first two panels, then tabify the rest
-                if len(campaign_panels) > 1:
-                    self.main_window.splitDockWidget(
-                        self.panels[campaign_panels[0]],
-                        self.panels[campaign_panels[1]],
-                        Qt.Vertical
-                    )
-                    self.panels[campaign_panels[1]].show()
-                    
-                    # Tabify any remaining panels
-                    for i in range(2, len(campaign_panels)):
-                        self.main_window.tabifyDockWidget(
-                            self.panels[campaign_panels[0]],
-                            self.panels[campaign_panels[i]]
-                        )
-                        self.panels[campaign_panels[i]].show()
             
             # Split vertically with top panels if they exist
             if combat_panels:
@@ -686,7 +684,7 @@ class PanelManager(QObject):
             self.panels[first_panel].show()
             
             # Check if we should tabify utility panels
-            if always_tab_utility or len(utility_panels) > 2 or total_panels > tab_threshold:
+            if always_tab_utility or len(utility_panels) > 1 or force_tabbing:
                 # Always tabify utility panels
                 for i in range(1, len(utility_panels)):
                     self.main_window.tabifyDockWidget(
@@ -694,23 +692,6 @@ class PanelManager(QObject):
                         self.panels[utility_panels[i]]
                     )
                     self.panels[utility_panels[i]].show()
-            else:
-                # Only split the first two panels, then tabify the rest
-                if len(utility_panels) > 1:
-                    self.main_window.splitDockWidget(
-                        self.panels[utility_panels[0]],
-                        self.panels[utility_panels[1]],
-                        Qt.Vertical
-                    )
-                    self.panels[utility_panels[1]].show()
-                    
-                    # Tabify any remaining panels
-                    for i in range(2, len(utility_panels)):
-                        self.main_window.tabifyDockWidget(
-                            self.panels[utility_panels[0]],
-                            self.panels[utility_panels[i]]
-                        )
-                        self.panels[utility_panels[i]].show()
             
             # Split layout based on what other panels exist
             if campaign_panels:
@@ -738,74 +719,53 @@ class PanelManager(QObject):
         # Step 4: Set appropriate panel sizes based on available space
         self._set_panel_sizes(category_panels, active_categories)
         
-        # Step 5: Raise the appropriate panels in each area to make them visible
+        # Step 5: Make sure tabbed panels have the active tab visible
         for category, panel_ids in category_panels.items():
-            for panel_id in panel_ids:
-                if panel_id in visible_panels:
-                    self.panels[panel_id].raise_()
-                    break
-                
+            if len(panel_ids) > 1:
+                # For each set of panels in this category, find the first one and raise it
+                if panel_ids[0] in self.panels and self.panels[panel_ids[0]]:
+                    self.panels[panel_ids[0]].raise_()
+        
+        # Apply a final sizing adjustment to ensure equal space distribution
+        if active_categories >= 2:
+            self._normalize_dock_sizes()
+        
         # Return success message
-        return "Panels have been intelligently organized for optimal use of screen space."
+        return "Panels have been intelligently organized to prevent overlap."
     
-    def _set_panel_sizes(self, category_panels, active_categories):
-        """Set appropriate sizes for panels based on layout"""
+    def _normalize_dock_sizes(self):
+        """Normalize dock sizes to ensure equal space distribution"""
+        # Get all visible dock widgets
+        visible_docks = []
+        for dock in self.panels.values():
+            if dock and dock.isVisible() and not dock.isFloating():
+                visible_docks.append(dock)
+        
+        # Skip if no visible docks
+        if not visible_docks:
+            return
+        
+        # Get main window size
         main_window_geometry = self.main_window.geometry()
         window_width = main_window_geometry.width()
         window_height = main_window_geometry.height()
         
-        # Get panel layout settings
-        use_percentage_sizing = self.app_state.get_panel_layout_setting("use_percentage_sizing", True)
+        # Calculate ideal sizes based on number of visible docks
+        horizontal_count = len(set(dock.x() for dock in visible_docks))
+        vertical_count = len(set(dock.y() for dock in visible_docks))
         
-        # If not using percentage-based sizing, just use default sizes
-        if not use_percentage_sizing:
-            return
-        
-        # Set size multipliers based on the number of active categories
-        width_multiplier = 0.45
-        height_multiplier = 0.45
-        
-        if active_categories == 1:
-            # If only one category is visible, give it more space
-            width_multiplier = 0.9
-            height_multiplier = 0.9
-        elif active_categories == 2:
-            # If two categories are visible, give them half the space each
-            width_multiplier = 0.5
-            height_multiplier = 0.5
-        
-        # Ensure all panels have reasonable sizes
-        for category, panel_ids in category_panels.items():
-            for panel_id in panel_ids:
-                if not self.panels[panel_id]:
-                    continue
-                    
-                dock = self.panels[panel_id]
-                # Set size based on category and available space
-                if category == PanelCategory.COMBAT:
-                    # Combat panels take up more space for maps and tokens
-                    width = min(int(window_width * width_multiplier), 800)
-                    height = min(int(window_height * height_multiplier), 600)
-                    if dock.isFloating():
-                        dock.resize(width, height)
-                elif category == PanelCategory.REFERENCE:
-                    # Reference panels need space for text content
-                    width = min(int(window_width * width_multiplier), 800)
-                    height = min(int(window_height * height_multiplier), 600)
-                    if dock.isFloating():
-                        dock.resize(width, height)
-                elif category == PanelCategory.CAMPAIGN:
-                    # Campaign panels for notes and management
-                    width = min(int(window_width * width_multiplier), 800)
-                    height = min(int(window_height * (height_multiplier * 0.9)), 500)
-                    if dock.isFloating():
-                        dock.resize(width, height)
-                else:  # UTILITY
-                    # Utility panels usually need less space
-                    width = min(int(window_width * (width_multiplier * 0.9)), 700)
-                    height = min(int(window_height * (height_multiplier * 0.9)), 500)
-                    if dock.isFloating():
-                        dock.resize(width, height)
+        if horizontal_count > 0 and vertical_count > 0:
+            ideal_width = window_width / horizontal_count
+            ideal_height = window_height / vertical_count
+            
+            # Apply size constraints
+            for dock in visible_docks:
+                dock_size = dock.size()
+                # Only adjust if panels are too large or too small
+                if dock_size.width() > ideal_width * 1.5 or dock_size.width() < ideal_width * 0.5:
+                    dock.resize(int(ideal_width * 0.95), dock_size.height())
+                if dock_size.height() > ideal_height * 1.5 or dock_size.height() < ideal_height * 0.5:
+                    dock.resize(dock_size.width(), int(ideal_height * 0.95))
 
     def is_panel_visible(self, panel_type):
         """Check if a panel is currently visible"""
@@ -906,3 +866,81 @@ class PanelManager(QObject):
         # Raise the combat tracker initially
         if "combat_tracker" in self.panels and self.panels["combat_tracker"]:
             self.panels["combat_tracker"].raise_()
+
+    def _set_panel_sizes(self, category_panels, active_categories):
+        """Set appropriate sizes for panels based on layout"""
+        main_window_geometry = self.main_window.geometry()
+        window_width = main_window_geometry.width()
+        window_height = main_window_geometry.height()
+        
+        # Get panel layout settings
+        use_percentage_sizing = self.app_state.get_panel_layout_setting("use_percentage_sizing", True)
+        
+        # If not using percentage-based sizing, just use default sizes
+        if not use_percentage_sizing:
+            return
+        
+        # Set size multipliers based on the number of active categories
+        width_multiplier = 0.45
+        height_multiplier = 0.45
+        
+        if active_categories == 1:
+            # If only one category is visible, give it more space
+            width_multiplier = 0.9
+            height_multiplier = 0.9
+        elif active_categories == 2:
+            # If two categories are visible, give them half the space each
+            width_multiplier = 0.5
+            height_multiplier = 0.5
+        
+        # Ensure all panels have reasonable sizes
+        for category, panel_ids in category_panels.items():
+            # Only process the first panel in each category since others may be tabbed
+            if not panel_ids:
+                continue
+                
+            panel_id = panel_ids[0]
+            if not self.panels[panel_id]:
+                continue
+                
+            dock = self.panels[panel_id]
+            
+            # Skip floating panels - they're handled separately
+            if dock.isFloating():
+                continue
+                
+            # Set size based on category and available space
+            if category == PanelCategory.COMBAT:
+                # Combat panels take up more space for maps and tokens
+                width = min(int(window_width * width_multiplier), 800)
+                height = min(int(window_height * height_multiplier), 600)
+                dock.resize(width, height)
+            elif category == PanelCategory.REFERENCE:
+                # Reference panels need space for text content
+                width = min(int(window_width * width_multiplier), 800)
+                height = min(int(window_height * height_multiplier), 600)
+                dock.resize(width, height)
+            elif category == PanelCategory.CAMPAIGN:
+                # Campaign panels for notes and management
+                width = min(int(window_width * width_multiplier), 800)
+                height = min(int(window_height * (height_multiplier * 0.9)), 500)
+                dock.resize(width, height)
+            else:  # UTILITY
+                # Utility panels usually need less space
+                width = min(int(window_width * (width_multiplier * 0.9)), 700)
+                height = min(int(window_height * (height_multiplier * 0.9)), 500)
+                dock.resize(width, height)
+                
+        # Handle floating panels separately
+        for panel_id, dock in self.panels.items():
+            if dock and dock.isVisible() and dock.isFloating():
+                category = PanelCategory.get_category(panel_id)
+                # Set size based on category
+                if category == PanelCategory.COMBAT:
+                    dock.resize(700, 500)
+                elif category == PanelCategory.REFERENCE:
+                    dock.resize(650, 550)
+                elif category == PanelCategory.CAMPAIGN:
+                    dock.resize(600, 450)
+                else:  # UTILITY
+                    dock.resize(500, 400)

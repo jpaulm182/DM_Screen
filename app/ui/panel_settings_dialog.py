@@ -45,11 +45,11 @@ class PanelSettingsDialog(QDialog):
         self.tab_threshold_slider = QSlider(Qt.Horizontal)
         self.tab_threshold_slider.setMinimum(2)
         self.tab_threshold_slider.setMaximum(10)
-        self.tab_threshold_slider.setValue(6)
+        self.tab_threshold_slider.setValue(4)
         self.tab_threshold_slider.setTickPosition(QSlider.TicksBelow)
         self.tab_threshold_slider.setTickInterval(1)
         
-        self.tab_threshold_label = QLabel("6")
+        self.tab_threshold_label = QLabel("4")
         self.tab_threshold_slider.valueChanged.connect(
             lambda v: self.tab_threshold_label.setText(str(v))
         )
@@ -83,7 +83,7 @@ class PanelSettingsDialog(QDialog):
         self.min_panel_width = QSpinBox()
         self.min_panel_width.setMinimum(100)
         self.min_panel_width.setMaximum(800)
-        self.min_panel_width.setValue(300)
+        self.min_panel_width.setValue(350)
         self.min_panel_width.setSingleStep(50)
         size_layout.addRow("Minimum panel width:", self.min_panel_width)
         
@@ -91,7 +91,7 @@ class PanelSettingsDialog(QDialog):
         self.min_panel_height = QSpinBox()
         self.min_panel_height.setMinimum(100)
         self.min_panel_height.setMaximum(600)
-        self.min_panel_height.setValue(200)
+        self.min_panel_height.setValue(250)
         self.min_panel_height.setSingleStep(50)
         size_layout.addRow("Minimum panel height:", self.min_panel_height)
         
@@ -99,6 +99,25 @@ class PanelSettingsDialog(QDialog):
         self.use_percentage_sizing = QCheckBox("Use percentage-based sizing")
         self.use_percentage_sizing.setChecked(True)
         size_layout.addRow("", self.use_percentage_sizing)
+        
+        # Panel color intensity
+        self.panel_border_intensity = QSlider(Qt.Horizontal)
+        self.panel_border_intensity.setMinimum(1)
+        self.panel_border_intensity.setMaximum(5)
+        self.panel_border_intensity.setValue(3)
+        self.panel_border_intensity.setTickPosition(QSlider.TicksBelow)
+        self.panel_border_intensity.setTickInterval(1)
+        
+        self.border_intensity_label = QLabel("3")
+        self.panel_border_intensity.valueChanged.connect(
+            lambda v: self.border_intensity_label.setText(str(v))
+        )
+        
+        border_layout = QHBoxLayout()
+        border_layout.addWidget(self.panel_border_intensity)
+        border_layout.addWidget(self.border_intensity_label)
+        
+        size_layout.addRow("Border intensity:", border_layout)
         
         layout.addWidget(size_group)
         
@@ -129,7 +148,7 @@ class PanelSettingsDialog(QDialog):
         
         # Load panel layout settings
         self.tab_threshold_slider.setValue(
-            self.app_state.get_panel_layout_setting("tab_threshold", 6)
+            self.app_state.get_panel_layout_setting("tab_threshold", 4)
         )
         self.always_tab_reference.setChecked(
             self.app_state.get_panel_layout_setting("always_tab_reference", True)
@@ -141,13 +160,16 @@ class PanelSettingsDialog(QDialog):
             self.app_state.get_panel_layout_setting("always_tab_utility", True)
         )
         self.min_panel_width.setValue(
-            self.app_state.get_panel_layout_setting("min_panel_width", 300)
+            self.app_state.get_panel_layout_setting("min_panel_width", 350)
         )
         self.min_panel_height.setValue(
-            self.app_state.get_panel_layout_setting("min_panel_height", 200)
+            self.app_state.get_panel_layout_setting("min_panel_height", 250)
         )
         self.use_percentage_sizing.setChecked(
             self.app_state.get_panel_layout_setting("use_percentage_sizing", True)
+        )
+        self.panel_border_intensity.setValue(
+            self.app_state.get_panel_layout_setting("panel_border_intensity", 3)
         )
     
     def _save_settings(self):
@@ -178,16 +200,20 @@ class PanelSettingsDialog(QDialog):
         self.app_state.update_panel_layout_setting(
             "use_percentage_sizing", self.use_percentage_sizing.isChecked()
         )
+        self.app_state.update_panel_layout_setting(
+            "panel_border_intensity", self.panel_border_intensity.value()
+        )
         
         self.accept()
     
     def _reset_to_defaults(self):
         """Reset settings to defaults"""
         # Reset to default values
-        self.tab_threshold_slider.setValue(6)
+        self.tab_threshold_slider.setValue(4)
         self.always_tab_reference.setChecked(True)
         self.always_tab_campaign.setChecked(True)
         self.always_tab_utility.setChecked(True)
-        self.min_panel_width.setValue(300)
-        self.min_panel_height.setValue(200)
-        self.use_percentage_sizing.setChecked(True) 
+        self.min_panel_width.setValue(350)
+        self.min_panel_height.setValue(250)
+        self.use_percentage_sizing.setChecked(True)
+        self.panel_border_intensity.setValue(3) 

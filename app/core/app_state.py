@@ -26,13 +26,14 @@ DEFAULT_SETTINGS = {
     "layout_version": 1,
     # Panel layout settings
     "panel_layout": {
-        "tab_threshold": 6,  # Number of panels before forcing tabbing
+        "tab_threshold": 4,  # Number of panels before forcing tabbing
         "always_tab_reference": True,  # Always tab reference panels
         "always_tab_campaign": True,  # Always tab campaign panels
         "always_tab_utility": True,  # Always tab utility panels
-        "min_panel_width": 300,  # Minimum width for panels
-        "min_panel_height": 200,  # Minimum height for panels
-        "use_percentage_sizing": True  # Use percentage-based sizing instead of fixed
+        "min_panel_width": 350,  # Minimum width for panels
+        "min_panel_height": 250,  # Minimum height for panels
+        "use_percentage_sizing": True,  # Use percentage-based sizing instead of fixed
+        "panel_border_intensity": 3  # Border thickness (1-5)
     }
 }
 
@@ -358,4 +359,4 @@ class AppState:
         """
         panel_layout = self.get_setting("panel_layout", {})
         panel_layout[setting_name] = value
-        self.update_setting("panel_layout", panel_layout)
+        self.set_setting("panel_layout", panel_layout)
