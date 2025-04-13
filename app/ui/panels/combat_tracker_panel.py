@@ -1324,6 +1324,8 @@ class CombatTrackerPanel(BasePanel):
     
     def _add_combatant(self, name, initiative, hp, max_hp, ac, combatant_type=""):
         """Add a combatant to the initiative table"""
+        print(f"[CombatTracker] _add_combatant called: name={name}, initiative={initiative}, hp={hp}, max_hp={max_hp}, ac={ac}, type={combatant_type}")
+        
         # Get current row count
         row = self.initiative_table.rowCount()
         self.initiative_table.insertRow(row)
@@ -1341,18 +1343,23 @@ class CombatTrackerPanel(BasePanel):
         init_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
         self.initiative_table.setItem(row, 1, init_item)
         
-        # Set current HP
-        hp_item = QTableWidgetItem(str(hp))
+        # Set current HP - Make extra sure we're dealing with valid values
+        hp_str = str(hp) if hp is not None else "10"
+        print(f"[CombatTracker] Setting HP for {name} to {hp_str}")
+        hp_item = QTableWidgetItem(hp_str)
         hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
         self.initiative_table.setItem(row, 2, hp_item)
         
-        # Set Max HP
-        max_hp_item = QTableWidgetItem(str(max_hp))
+        # Set Max HP - Make extra sure we're dealing with valid values
+        max_hp_str = str(max_hp) if max_hp is not None else "10"
+        print(f"[CombatTracker] Setting Max HP for {name} to {max_hp_str}")
+        max_hp_item = QTableWidgetItem(max_hp_str)
         max_hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
         self.initiative_table.setItem(row, 3, max_hp_item)
         
         # Set AC
-        ac_item = QTableWidgetItem(str(ac))
+        ac_str = str(ac) if ac is not None else "10"
+        ac_item = QTableWidgetItem(ac_str)
         ac_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
         self.initiative_table.setItem(row, 4, ac_item)
         
@@ -1375,6 +1382,12 @@ class CombatTrackerPanel(BasePanel):
         # Sort the initiative order
         self._sort_initiative()
         
+        # Verify the final result
+        final_hp_item = self.initiative_table.item(row, 2)
+        if final_hp_item:
+            final_hp = final_hp_item.text()
+            print(f"[CombatTracker] Final verification - {name} HP after sorting: {final_hp}")
+        
         # Return the row where the combatant was added
         return row
     
@@ -1395,6 +1408,19 @@ class CombatTrackerPanel(BasePanel):
             # Store all row data before clearing
             rows_data = []
             initiative_values = []
+            
+            # Store pre-sort HP and AC data for verification
+            pre_sort_values = {}
+            for row in range(row_count):
+                name_item = self.initiative_table.item(row, 0)
+                hp_item = self.initiative_table.item(row, 2)
+                ac_item = self.initiative_table.item(row, 4)
+                
+                name = name_item.text() if name_item else f"Row {row}"
+                hp = hp_item.text() if hp_item else "?"
+                ac = ac_item.text() if ac_item else "?"
+                
+                pre_sort_values[name] = {"hp": hp, "ac": ac}
             
             # Collect all the data from the table first
             print(f"[CombatTracker] Collecting data from {row_count} rows")
@@ -1424,7 +1450,9 @@ class CombatTrackerPanel(BasePanel):
                 # Add this row's data to our collection
                 rows_data.append(row_data)
                 initiative_values.append((initiative, row))
-                print(f"[CombatTracker] Row {row}: initiative={initiative}")
+                hp_value = row_data.get(2, {}).get('text', '?')
+                ac_value = row_data.get(4, {}).get('text', '?')
+                print(f"[CombatTracker] Row {row}: initiative={initiative}, hp={hp_value}, ac={ac_value}")
             
             # Sort the initiative values in descending order
             initiative_values.sort(key=lambda x: x[0], reverse=True)
@@ -1448,6 +1476,13 @@ class CombatTrackerPanel(BasePanel):
             for old_row, new_row in row_map.items():
                 row_data = rows_data[old_row]
                 print(f"[CombatTracker] Moving row {old_row} to position {new_row}")
+                
+                # Debug HP and AC for this row
+                hp_value = row_data.get(2, {}).get('text', '?')
+                ac_value = row_data.get(4, {}).get('text', '?')
+                print(f"[CombatTracker] Moving HP value: {hp_value} from old_row={old_row} to new_row={new_row}")
+                print(f"[CombatTracker] Moving AC value: {ac_value} from old_row={old_row} to new_row={new_row}")
+                
                 for col, item_data in row_data.items():
                     # Create a new item with the right flags for each column
                     new_item = QTableWidgetItem()
@@ -1499,6 +1534,39 @@ class CombatTrackerPanel(BasePanel):
             if current_turn is not None and current_turn >= 0 and current_turn < row_count:
                 self._current_turn = row_map.get(current_turn, 0)
                 print(f"[CombatTracker] Setting current turn to: {self._current_turn}")
+            
+            # Verify HP and AC values after sorting
+            post_sort_values = {}
+            for row in range(row_count):
+                name_item = self.initiative_table.item(row, 0)
+                hp_item = self.initiative_table.item(row, 2)
+                ac_item = self.initiative_table.item(row, 4)
+                
+                name = name_item.text() if name_item else f"Row {row}"
+                hp = hp_item.text() if hp_item else "?"
+                ac = ac_item.text() if ac_item else "?"
+                
+                post_sort_values[name] = {"hp": hp, "ac": ac}
+            
+            # Compare pre and post sort values
+            for name, pre_values in pre_sort_values.items():
+                post_values = post_sort_values.get(name, {"hp": "MISSING", "ac": "MISSING"})
+                
+                # Check HP
+                pre_hp = pre_values["hp"]
+                post_hp = post_values["hp"]
+                if pre_hp != post_hp:
+                    print(f"[CombatTracker] WARNING: HP changed during sort for {name}: {pre_hp} -> {post_hp}")
+                else:
+                    print(f"[CombatTracker] HP preserved for {name}: {pre_hp}")
+                
+                # Check AC
+                pre_ac = pre_values["ac"]
+                post_ac = post_values["ac"]
+                if pre_ac != post_ac:
+                    print(f"[CombatTracker] WARNING: AC changed during sort for {name}: {pre_ac} -> {post_ac}")
+                else:
+                    print(f"[CombatTracker] AC preserved for {name}: {pre_ac}")
             
             # Force a UI update - IMPORTANT
             self.initiative_table.viewport().update()
@@ -2674,61 +2742,171 @@ class CombatTrackerPanel(BasePanel):
             
         print(f"[CombatTracker] Received group of {len(monster_dicts)} monsters to add.")
         
+        # Sample the first monster to understand the data structure
+        if monster_dicts and len(monster_dicts) > 0:
+            first_monster = monster_dicts[0]
+            print(f"[CombatTracker] First monster type: {type(first_monster)}")
+            if isinstance(first_monster, dict):
+                # Print a few keys to help debug
+                print(f"[CombatTracker] First monster keys: {list(first_monster.keys())[:5]}")
+            elif hasattr(first_monster, '__dict__'):
+                # If it's an object, print some attributes
+                print(f"[CombatTracker] First monster attrs: {list(first_monster.__dict__.keys())[:5]}")
+        
         added_count = 0
+        failed_count = 0
         for monster_data in monster_dicts:
             try:
+                # Debug print monster name if possible
+                monster_name = "Unknown"
+                if isinstance(monster_data, dict) and 'name' in monster_data:
+                    monster_name = monster_data['name']
+                elif hasattr(monster_data, 'name'):
+                    monster_name = monster_data.name
+                print(f"[CombatTracker] Adding monster: {monster_name}")
+                
                 row = self.add_monster(monster_data)
                 if row >= 0:
                     added_count += 1
                     # Double-check that the type is set properly
-                    type_item = self.initiative_table.item(row, 6)
+                    type_item = self.initiative_table.item(row, 7)  # Type is column 7
                     if type_item and not type_item.text():
                         type_item.setText("monster")
                         print(f"[CombatTracker] Fixed missing type for row {row}")
+                else:
+                    failed_count += 1
+                    print(f"[CombatTracker] Failed to add monster '{monster_name}': returned row {row}")
             except Exception as e:
                 import traceback
-                name = monster_data.get("name", "Unknown") if isinstance(monster_data, dict) else getattr(monster_data, "name", "Unknown")
+                failed_count += 1
+                name = "Unknown"
+                if isinstance(monster_data, dict):
+                    name = monster_data.get("name", "Unknown")
+                elif hasattr(monster_data, 'name'):
+                    name = getattr(monster_data, 'name', "Unknown")
+                
                 print(f"[CombatTracker] Error adding monster '{name}' from group: {e}")
                 traceback.print_exc()  # Print the full traceback for debugging
 
         if added_count > 0:
-             print(f"[CombatTracker] Added {added_count} monsters from group.")
-             self._sort_initiative() # Sort after adding group
+            print(f"[CombatTracker] Added {added_count} monsters from group (failed: {failed_count}).")
+            self._sort_initiative() # Sort after adding group
         else:
-             print("[CombatTracker] No monsters were added from the group.")
+            print(f"[CombatTracker] No monsters were added from the group. All {failed_count} failed.")
 
     def add_monster(self, monster_data):
         """Add a monster from monster panel to the tracker"""
         if not monster_data:
             return -1
             
+        # Diagnostic: Log information about this monster
+        monster_name = "Unknown"
+        if isinstance(monster_data, dict) and 'name' in monster_data:
+            monster_name = monster_data['name']
+        elif hasattr(monster_data, 'name'):
+            monster_name = monster_data.name
+            
+        print(f"[CombatTracker] Adding monster '{monster_name}' (type: {type(monster_data)})")
+        
         # Helper function to get attribute from either dict or object
         def get_attr(obj, attr, default=None, alt_attrs=None):
             """Get attribute from object or dict, trying alternate attribute names if specified"""
             alt_attrs = alt_attrs or []
+            result = default
             
-            if isinstance(obj, dict):
-                # Try the main attribute name first
-                if attr in obj:
-                    return obj[attr]
+            try:
+                if isinstance(obj, dict):
+                    # Try the main attribute name first
+                    if attr in obj:
+                        print(f"[CombatTracker] Found '{attr}' directly in dict: {obj[attr]} (type: {type(obj[attr])})")
+                        return obj[attr]
+                    
+                    # Try alternative attribute names
+                    for alt_attr in alt_attrs:
+                        if alt_attr in obj:
+                            print(f"[CombatTracker] Found '{attr}' via alt name '{alt_attr}': {obj[alt_attr]} (type: {type(obj[alt_attr])})")
+                            return obj[alt_attr]
+                    
+                    # Check if stats are nested in a 'stats' or 'attributes' dictionary 
+                    for nested_key in ['stats', 'attributes', 'data']:
+                        if nested_key in obj and isinstance(obj[nested_key], dict):
+                            nested_dict = obj[nested_key]
+                            if attr in nested_dict:
+                                print(f"[CombatTracker] Found '{attr}' in nested '{nested_key}': {nested_dict[attr]} (type: {type(nested_dict[attr])})")
+                                return nested_dict[attr]
+                            # Try alternative attributes in nested dict
+                            for alt_attr in alt_attrs:
+                                if alt_attr in nested_dict:
+                                    print(f"[CombatTracker] Found '{attr}' via alt name '{alt_attr}' in nested '{nested_key}': {nested_dict[alt_attr]} (type: {type(nested_dict[alt_attr])})")
+                                    return nested_dict[alt_attr]
+                    
+                    # Handle special case for ability scores that might be in various formats
+                    if attr in ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma']:
+                        # Try shortened versions (str, dex, etc.)
+                        short_name = attr[:3].lower()
+                        if short_name in obj:
+                            return obj[short_name]
+                        
+                        # Look for ability_scores dict
+                        if 'ability_scores' in obj and isinstance(obj['ability_scores'], dict):
+                            ability_scores = obj['ability_scores']
+                            # Try both long and short names in ability_scores
+                            if attr in ability_scores:
+                                return ability_scores[attr]
+                            if short_name in ability_scores:
+                                return ability_scores[short_name]
+                            # Try uppercase short name
+                            if short_name.upper() in ability_scores:
+                                return ability_scores[short_name.upper()]
+                    
+                    if attr in ['hp', 'hit_points', 'hitPoints']:
+                        print(f"[CombatTracker] WARNING: Could not find HP for '{monster_name}' in dict structure")
+                        print(f"[CombatTracker] Available dict keys: {list(obj.keys())}")
+                    
+                    return default
                 
-                # Try alternative attribute names
+                # Try getattr for object access
+                if hasattr(obj, attr):
+                    attr_value = getattr(obj, attr)
+                    print(f"[CombatTracker] Found '{attr}' as object attribute: {attr_value} (type: {type(attr_value)})")
+                    return attr_value
+                
+                # Try alternative attributes for objects
                 for alt_attr in alt_attrs:
-                    if alt_attr in obj:
-                        return obj[alt_attr]
+                    if hasattr(obj, alt_attr):
+                        attr_value = getattr(obj, alt_attr)
+                        print(f"[CombatTracker] Found '{attr}' via alt attribute '{alt_attr}': {attr_value} (type: {type(attr_value)})")
+                        return attr_value
+                
+                # Handle special case for ability scores in objects
+                if attr in ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma']:
+                    # Try shortened attribute names
+                    short_name = attr[:3].lower()
+                    if hasattr(obj, short_name):
+                        return getattr(obj, short_name)
+                    
+                    # Look for ability_scores attribute
+                    if hasattr(obj, 'ability_scores'):
+                        ability_scores = getattr(obj, 'ability_scores')
+                        if isinstance(ability_scores, dict):
+                            # Try both long and short names
+                            if attr in ability_scores:
+                                return ability_scores[attr]
+                            if short_name in ability_scores:
+                                return ability_scores[short_name]
+                            # Try uppercase short name
+                            if short_name.upper() in ability_scores:
+                                return ability_scores[short_name.upper()]
+                
+                if attr in ['hp', 'hit_points', 'hitPoints']:
+                    print(f"[CombatTracker] WARNING: Could not find HP for '{monster_name}' in object attributes")
+                    if hasattr(obj, '__dict__'):
+                        print(f"[CombatTracker] Available object attributes: {list(obj.__dict__.keys())}")
                 
                 return default
-            
-            # Try getattr for object access
-            if hasattr(obj, attr):
-                return getattr(obj, attr)
-            
-            # Try alternative attributes for objects
-            for alt_attr in alt_attrs:
-                if hasattr(obj, alt_attr):
-                    return getattr(obj, alt_attr)
-            
-            return default
+            except Exception as e:
+                print(f"[CombatTracker] Error in get_attr({attr}): {e}")
+                return default
             
         # Get monster name
         name = get_attr(monster_data, "name", "Unknown Monster")
@@ -2740,11 +2918,14 @@ class CombatTrackerPanel(BasePanel):
         # Roll initiative
         initiative_roll = random.randint(1, 20) + init_mod
         
-        # Get monster HP and AC
-        hp_value = get_attr(monster_data, "hp", 10, ["hit_points", "hitPoints"])
+        # Get monster HP and AC - extend with more alternatives
+        print(f"[CombatTracker] Retrieving HP for monster '{name}'")
+        hp_value = get_attr(monster_data, "hp", 10, ["hit_points", "hitPoints", "hit_points_roll", "hit_dice"])
+        print(f"[CombatTracker] Retrieved HP value: {hp_value} (type: {type(hp_value)})")
         
         # For the HP display, we want the actual numeric value
         hp = self._parse_hit_points(hp_value)
+        print(f"[CombatTracker] Parsed HP: {hp}")
         
         # For Max HP column, store the original value that may include formula
         max_hp = hp
@@ -2753,8 +2934,10 @@ class CombatTrackerPanel(BasePanel):
             match = re.match(r'(\d+)\s*\(', hp_value)
             if match:
                 hp = int(match.group(1))
+                print(f"[CombatTracker] Extracted HP from string formula: {hp}")
         
-        ac = get_attr(monster_data, "ac", 10, ["armor_class", "armorClass"])
+        ac = get_attr(monster_data, "ac", 10, ["armor_class", "armorClass", "AC"])
+        print(f"[CombatTracker] Retrieved AC value: {ac}")
         
         # Add to tracker
         row = self._add_combatant(name, initiative_roll, hp, max_hp, ac, "monster")
@@ -2766,7 +2949,44 @@ class CombatTrackerPanel(BasePanel):
         # Store monster data for future reference
         if row >= 0:
             self.combatants[row] = monster_data
-            
+        
+        # IMPORTANT: Find the actual row after sorting and ensure HP is set directly
+        hp_str = str(hp) if hp is not None else "10"
+        max_hp_str = str(max_hp) if max_hp is not None else "10"
+        ac_str = str(ac) if ac is not None else "10"
+        
+        # Find the monster we just added by name (post-sorting)
+        for check_row in range(self.initiative_table.rowCount()):
+            name_item = self.initiative_table.item(check_row, 0)
+            if name_item and name_item.text() == name:
+                # Directly update the HP in the table after sorting
+                hp_item = self.initiative_table.item(check_row, 2)
+                if not hp_item or not hp_item.text():  # Check if HP is empty
+                    print(f"[CombatTracker] Setting HP for {name} at row {check_row} after sorting")
+                    new_hp_item = QTableWidgetItem(hp_str)
+                    new_hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                    self.initiative_table.setItem(check_row, 2, new_hp_item)
+                
+                # Directly update Max HP as well
+                max_hp_item = self.initiative_table.item(check_row, 3)
+                if not max_hp_item or not max_hp_item.text():  # Check if Max HP is empty
+                    print(f"[CombatTracker] Setting Max HP for {name} at row {check_row} after sorting")
+                    new_max_hp_item = QTableWidgetItem(max_hp_str)
+                    new_max_hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                    self.initiative_table.setItem(check_row, 3, new_max_hp_item)
+                
+                # Directly update AC as well
+                ac_item = self.initiative_table.item(check_row, 4)
+                if not ac_item or not ac_item.text():  # Check if AC is empty
+                    print(f"[CombatTracker] Setting AC for {name} at row {check_row} after sorting")
+                    new_ac_item = QTableWidgetItem(ac_str)
+                    new_ac_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                    self.initiative_table.setItem(check_row, 4, new_ac_item)
+                
+                # Force the table to update - this requires a viewport() or rect arg
+                self.initiative_table.viewport().update()
+                break
+                
         # Log to combat log
         self._log_combat_action("Setup", "DM", "added monster", name, f"(Initiative: {initiative_roll})")
         
@@ -2774,32 +2994,96 @@ class CombatTrackerPanel(BasePanel):
 
     def _parse_hit_points(self, hp_value):
         """
-        Parse a monster's hit points value from formulas like "45 (6d10+12)"
-        and return the actual hit point value.
+        Parse a monster's hit points value from various formats:
+        - Integer values (45)
+        - String with average ("45 (6d10+12)")
+        - String with dice only ("6d10+12")
+        - Dict with 'average' key
+        - Dict with 'hit_dice' key
         
         Args:
-            hp_value: String or integer representing hit points
+            hp_value: String, integer, or dict representing hit points
             
         Returns:
             Integer value of hit points
         """
+        print(f"[CombatTracker] _parse_hit_points called with value: {hp_value} (type: {type(hp_value)})")
+        
+        # Handle integer values directly
         if isinstance(hp_value, int):
+            print(f"[CombatTracker] HP is already an integer: {hp_value}")
             return hp_value
             
+        # Handle dictionary format (for newer monster data models)
+        if isinstance(hp_value, dict):
+            print(f"[CombatTracker] HP is a dictionary with keys: {list(hp_value.keys())}")
+            
+            # Try to get the 'average' field first
+            if 'average' in hp_value:
+                try:
+                    avg_value = int(hp_value['average'])
+                    print(f"[CombatTracker] Found 'average' in HP dict: {avg_value}")
+                    return avg_value
+                except (ValueError, TypeError) as e:
+                    print(f"[CombatTracker] Error converting 'average' to int: {e}")
+                    pass
+                    
+            # Next try 'hit_points' or 'hp' field
+            for field in ['hit_points', 'hp']:
+                if field in hp_value:
+                    # Recursively parse this value
+                    print(f"[CombatTracker] Found '{field}' in HP dict, parsing recursively")
+                    return self._parse_hit_points(hp_value[field])
+            
+            # Try to calculate from hit_dice if available
+            if 'hit_dice' in hp_value:
+                dice_formula = hp_value['hit_dice']
+                print(f"[CombatTracker] Found 'hit_dice' in HP dict: {dice_formula}")
+                dice_match = re.search(r'(\d+)d(\d+)([+-]\d+)?', dice_formula)
+                if dice_match:
+                    try:
+                        # Extract dice components
+                        count = int(dice_match.group(1))
+                        sides = int(dice_match.group(2))
+                        modifier = 0
+                        if dice_match.group(3):
+                            modifier = int(dice_match.group(3))
+                            
+                        # Calculate average
+                        average = int((count * (sides + 1) / 2) + modifier)
+                        print(f"[CombatTracker] Calculated average from hit_dice: {average}")
+                        return max(1, average)  # Ensure at least 1 HP
+                    except (ValueError, TypeError, IndexError) as e:
+                        print(f"[CombatTracker] Error calculating from hit_dice: {e}")
+                        pass
+                else:
+                    print(f"[CombatTracker] Could not parse hit_dice formula: {dice_formula}")
+                        
+            # Last resort for dict - return a default
+            print(f"[CombatTracker] Could not parse HP dict: {hp_value}, using default")
+            return 10
+        
+        # Handle string formats
         if not hp_value or not isinstance(hp_value, str):
+            print(f"[CombatTracker] HP is None or not a string: {hp_value}")
             return 10  # Default fallback
             
         # If it's already just a number, convert and return
         if hp_value.isdigit():
-            return int(hp_value)
+            hp_int = int(hp_value)
+            print(f"[CombatTracker] HP is a digit string: {hp_int}")
+            return hp_int
             
         # Try to extract the average value (number before parentheses)
         # Format is typically "45 (6d10+12)" or sometimes just "6d10+12"
         match = re.match(r'(\d+)\s*\(', hp_value)
         if match:
             try:
-                return int(match.group(1))
-            except (ValueError, TypeError):
+                hp_int = int(match.group(1))
+                print(f"[CombatTracker] Extracted HP from formula format: {hp_int}")
+                return hp_int
+            except (ValueError, TypeError) as e:
+                print(f"[CombatTracker] Error extracting from formula: {e}")
                 pass
                 
         # If no average provided, try to calculate from the dice formula
@@ -2815,14 +3099,16 @@ class CombatTrackerPanel(BasePanel):
                     
                 # Calculate average
                 average = int((count * (sides + 1) / 2) + modifier)
+                print(f"[CombatTracker] Calculated average from dice string: {average}")
                 return max(1, average)  # Ensure at least 1 HP
-            except (ValueError, TypeError, IndexError):
+            except (ValueError, TypeError, IndexError) as e:
+                print(f"[CombatTracker] Error calculating from dice string: {e}")
                 pass
                 
         # If all parsing fails, return a default value
-        print(f"[Combat Tracker] Could not parse HP value: {hp_value}, using default")
+        print(f"[CombatTracker] Could not parse HP value: {hp_value} (type: {type(hp_value)}), using default")
         return 10
-            
+
     def add_character(self, character):
         """Add a player character from character panel to the tracker"""
         if not character:
