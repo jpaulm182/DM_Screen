@@ -955,7 +955,7 @@ class CombatTrackerPanel(BasePanel):
         
         # Set delegate for highlighting current turn
         self.current_turn_delegate = CurrentTurnDelegate()
-        for col in range(7):  # Apply to all columns
+        for col in range(8):  # Apply to all columns (including the new Max HP column)
             self.initiative_table.setItemDelegateForColumn(col, self.current_turn_delegate)
         
         # When cell content changes, update internal data
@@ -991,10 +991,10 @@ class CombatTrackerPanel(BasePanel):
         # Make sure the table expands to fill available space
         self.initiative_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
-        # Set column count and headers
-        self.initiative_table.setColumnCount(7)
+        # Set column count and headers - adding Max HP column
+        self.initiative_table.setColumnCount(8)
         self.initiative_table.setHorizontalHeaderLabels([
-            "Name", "Init", "HP", "AC", "Status", "Conc", "Type"
+            "Name", "Init", "HP", "Max HP", "AC", "Status", "Conc", "Type"
         ])
         
         # Configure header and column properties
@@ -1003,12 +1003,12 @@ class CombatTrackerPanel(BasePanel):
         header.setSectionResizeMode(0, QHeaderView.Stretch)  # Name stretches
         
         # Set reasonable default column widths
-        default_widths = [150, 40, 50, 40, 100, 40, 60]
+        default_widths = [150, 40, 50, 50, 40, 100, 40, 60]
         for col, width in enumerate(default_widths):
             self.initiative_table.setColumnWidth(col, width)
             
         # Set other header sections to resize to content
-        for col in range(1, 7):
+        for col in range(1, 8):
             header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
         
         # Configure selection behavior
@@ -1297,10 +1297,11 @@ class CombatTrackerPanel(BasePanel):
             # Get values from input fields
             initiative = self.initiative_input.value()
             hp = self.hp_input.value()
+            max_hp = hp  # Set max_hp to same as current hp for manually added combatants
             ac = self.ac_input.value()
             
             # Add the combatant (no specific type for manual adds)
-            row = self._add_combatant(name, initiative, hp, ac, "manual")
+            row = self._add_combatant(name, initiative, hp, max_hp, ac, "manual")
             
             # Only reset fields and log if the add was successful
             if row >= 0:
@@ -1321,7 +1322,7 @@ class CombatTrackerPanel(BasePanel):
             QMessageBox.critical(self, "Error", f"An error occurred adding the combatant: {str(e)}")
             return -1
     
-    def _add_combatant(self, name, initiative, hp, ac, combatant_type=""):
+    def _add_combatant(self, name, initiative, hp, max_hp, ac, combatant_type=""):
         """Add a combatant to the initiative table"""
         # Get current row count
         row = self.initiative_table.rowCount()
@@ -1330,7 +1331,7 @@ class CombatTrackerPanel(BasePanel):
         # Create name item with combatant type stored in user role
         name_item = QTableWidgetItem(name)
         name_item.setData(Qt.UserRole, combatant_type)  # Store type with the name item
-        # Ensure only standard flags (no checkbox)
+        # Ensure no checkbox
         name_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
         self.initiative_table.setItem(row, 0, name_item)
         
@@ -1340,31 +1341,36 @@ class CombatTrackerPanel(BasePanel):
         init_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
         self.initiative_table.setItem(row, 1, init_item)
         
-        # Set HP
+        # Set current HP
         hp_item = QTableWidgetItem(str(hp))
         hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
         self.initiative_table.setItem(row, 2, hp_item)
         
+        # Set Max HP
+        max_hp_item = QTableWidgetItem(str(max_hp))
+        max_hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+        self.initiative_table.setItem(row, 3, max_hp_item)
+        
         # Set AC
         ac_item = QTableWidgetItem(str(ac))
         ac_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
-        self.initiative_table.setItem(row, 3, ac_item)
+        self.initiative_table.setItem(row, 4, ac_item)
         
         # Set status as empty initially
         status_item = QTableWidgetItem("")
         status_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
-        self.initiative_table.setItem(row, 4, status_item)
+        self.initiative_table.setItem(row, 5, status_item)
         
-        # Set concentration as unchecked initially
-        conc_item = QTableWidgetItem("")
-        conc_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
+        # Set concentration as unchecked initially - only column with checkbox
+        conc_item = QTableWidgetItem()
+        conc_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
         conc_item.setCheckState(Qt.Unchecked)
-        self.initiative_table.setItem(row, 5, conc_item)
+        self.initiative_table.setItem(row, 6, conc_item)
         
         # Set type (monster, character, etc.) for filtering
         type_item = QTableWidgetItem(combatant_type)
         type_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
-        self.initiative_table.setItem(row, 6, type_item)
+        self.initiative_table.setItem(row, 7, type_item)
         
         # Sort the initiative order
         self._sort_initiative()
@@ -1410,15 +1416,10 @@ class CombatTrackerPanel(BasePanel):
                     if item:
                         row_data[col] = {
                             'text': item.text(),
-                            'flags': item.flags()
+                            'data': item.data(Qt.UserRole),
+                            'checkState': item.checkState() if col == 6 else None,  # Only save checkState for concentration column
+                            'currentTurn': item.data(Qt.UserRole + 1)
                         }
-                        # Safely capture checkState if available
-                        if hasattr(item, 'checkState'):
-                            try:
-                                row_data[col]['checkState'] = item.checkState()
-                            except RecursionError:
-                                # Handle recursion issue gracefully
-                                row_data[col]['checkState'] = None
                         
                 # Add this row's data to our collection
                 rows_data.append(row_data)
@@ -1448,24 +1449,44 @@ class CombatTrackerPanel(BasePanel):
                 row_data = rows_data[old_row]
                 print(f"[CombatTracker] Moving row {old_row} to position {new_row}")
                 for col, item_data in row_data.items():
+                    # Create a new item with the right flags for each column
                     new_item = QTableWidgetItem()
-                    new_item.setText(item_data['text'])
                     
-                    # Safely set flags
-                    try:
-                        new_item.setFlags(item_data['flags'])
-                    except Exception as e:
-                        # Default flags if there's an issue
-                        print(f"[CombatTracker] Error setting flags for item at row={new_row}, col={col}: {e}")
+                    # Set text data
+                    if 'text' in item_data:
+                        new_item.setText(item_data['text'])
                     
-                    # Safely set checkState if it exists
-                    if 'checkState' in item_data and item_data['checkState'] is not None:
-                        try:
+                    # Set appropriate flags based on column - ENSURE ONLY CONCENTRATION HAS CHECKBOXES
+                    if col == 6:  # Concentration column - the only one with checkboxes
+                        new_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+                        if 'checkState' in item_data and item_data['checkState'] is not None:
                             new_item.setCheckState(item_data['checkState'])
-                        except Exception as e:
-                            # Skip if checkState can't be set
-                            print(f"[CombatTracker] Error setting checkState for item at row={new_row}, col={col}: {e}")
+                        else:
+                            new_item.setCheckState(Qt.Unchecked)
+                    elif col == 0:  # Name column - should be editable
+                        new_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                    elif col == 1:  # Initiative column - should be editable
+                        new_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                    elif col == 2:  # HP column - should be editable
+                        new_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                    elif col == 3:  # Max HP column - should be editable
+                        new_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                    elif col == 4:  # AC column - should be editable
+                        new_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                    elif col == 5:  # Status column - should be editable
+                        new_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                    else:  # Any other columns - make selectable but not editable by default
+                        new_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
                     
+                    # Restore UserRole data (like combatant type)
+                    if 'data' in item_data and item_data['data'] is not None:
+                        new_item.setData(Qt.UserRole, item_data['data'])
+                    
+                    # Restore current turn highlight data
+                    if 'currentTurn' in item_data and item_data['currentTurn'] is not None:
+                        new_item.setData(Qt.UserRole + 1, item_data['currentTurn'])
+                    
+                    # Set the item in the table
                     self.initiative_table.setItem(new_row, col, new_item)
             
             # Update current selection and turn if needed
@@ -1514,13 +1535,15 @@ class CombatTrackerPanel(BasePanel):
                 return
                 
         for row in selected_rows:
-            hp_item = self.initiative_table.item(row, 2)
+            hp_item = self.initiative_table.item(row, 2)  # HP is now column 2
+            max_hp_item = self.initiative_table.item(row, 3)  # Max HP is column 3
+            
             if hp_item:
                 try:
                     # Safely get current HP
                     hp_text = hp_item.text().strip()
                     current_hp = int(hp_text) if hp_text else 0
-                    max_hp = hp_item.data(Qt.UserRole) or current_hp
+                    max_hp = int(max_hp_item.text()) if max_hp_item and max_hp_item.text() else current_hp
                     
                     new_hp = max(current_hp - amount, 0)
                     hp_item.setText(str(new_hp))
@@ -1558,13 +1581,18 @@ class CombatTrackerPanel(BasePanel):
                 return
                 
         for row in selected_rows:
-            hp_item = self.initiative_table.item(row, 2)
-            if hp_item:
+            hp_item = self.initiative_table.item(row, 2)  # HP is now column 2
+            max_hp_item = self.initiative_table.item(row, 3)  # Max HP is column 3
+            
+            if hp_item and max_hp_item:
                 try:
                     # Safely get current HP
                     hp_text = hp_item.text().strip()
                     current_hp = int(hp_text) if hp_text else 0
-                    max_hp = hp_item.data(Qt.UserRole) or 999
+                    
+                    # Get max HP from the max HP column
+                    max_hp_text = max_hp_item.text().strip()
+                    max_hp = int(max_hp_text) if max_hp_text else 999
                     
                     new_hp = min(current_hp + amount, max_hp)
                     hp_item.setText(str(new_hp))
@@ -1576,7 +1604,7 @@ class CombatTrackerPanel(BasePanel):
         """Handle HP changes from delegate editing"""
         if 0 <= row < self.initiative_table.rowCount():
             # Get current HP
-            hp_item = self.initiative_table.item(row, 2)
+            hp_item = self.initiative_table.item(row, 2)  # HP is now column 2
             if hp_item:
                 # Already updated via setModelData, check for special cases
                 if new_hp == 0:
@@ -1627,6 +1655,23 @@ class CombatTrackerPanel(BasePanel):
                     # Not a valid number, reset to 0
                     item.setText("0")
             
+            # Handle Max HP changes (column 3)
+            elif column == 3:  # Max HP column
+                # Update current HP if it's higher than max
+                hp_item = self.initiative_table.item(row, 2)
+                max_hp_item = self.initiative_table.item(row, 3)
+                
+                if hp_item and max_hp_item:
+                    try:
+                        current_hp = int(hp_item.text())
+                        max_hp = int(max_hp_item.text())
+                        
+                        # If current HP is higher than max, cap it
+                        if current_hp > max_hp:
+                            hp_item.setText(str(max_hp))
+                    except (ValueError, TypeError):
+                        pass
+            
             # Update combatant data if we have a combat data dictionary
             if row in self.combatants:
                 # Just update the HP and status to match what's shown in the table
@@ -1642,7 +1687,9 @@ class CombatTrackerPanel(BasePanel):
             return
             
         # Get HP from table
-        hp_item = self.initiative_table.item(row, 2)
+        hp_item = self.initiative_table.item(row, 2)  # Current HP
+        max_hp_item = self.initiative_table.item(row, 3)  # Max HP
+        
         if hp_item:
             hp_text = hp_item.text().strip()
             try:
@@ -1656,9 +1703,24 @@ class CombatTrackerPanel(BasePanel):
             except (ValueError, TypeError):
                 # Ignore if not a valid number
                 pass
+        
+        # Update max HP if available
+        if max_hp_item:
+            max_hp_text = max_hp_item.text().strip()
+            try:
+                max_hp = int(max_hp_text) if max_hp_text else 0
+                
+                # Update the max_hp in the combatant data if it's a dictionary
+                if isinstance(self.combatants[row], dict):
+                    self.combatants[row]['max_hp'] = max_hp
+                elif hasattr(self.combatants[row], 'max_hp'):
+                    self.combatants[row].max_hp = max_hp
+            except (ValueError, TypeError):
+                # Ignore if not a valid number
+                pass
                 
         # Get status from table
-        status_item = self.initiative_table.item(row, 4)
+        status_item = self.initiative_table.item(row, 5)  # Status is now column 5
         if status_item:
             status = status_item.text()
             
@@ -1811,7 +1873,7 @@ class CombatTrackerPanel(BasePanel):
         menu.addSeparator()
         
         # Death saves - check for 0 HP safely
-        hp_item = self.initiative_table.item(row, 2)
+        hp_item = self.initiative_table.item(row, 2)  # HP is now column 2
         hp_value = 0
         if hp_item:
             try:
@@ -1835,8 +1897,40 @@ class CombatTrackerPanel(BasePanel):
             action = status_menu.addAction(condition)
             action.triggered.connect(lambda checked, c=condition: self._set_status(c))
         
+        # Concentration toggle
+        conc_item = self.initiative_table.item(row, 6)  # Concentration is now column 6
+        if conc_item:
+            is_concentrating = conc_item.checkState() == Qt.Checked
+            conc_action = QAction("Remove Concentration" if is_concentrating else "Add Concentration", self)
+            conc_action.triggered.connect(lambda: self._toggle_concentration(row))
+            menu.addAction(conc_action)
+        
         # Show the menu
         menu.exec_(self.initiative_table.mapToGlobal(position))
+        
+    def _toggle_concentration(self, row):
+        """Toggle concentration state for a combatant"""
+        conc_item = self.initiative_table.item(row, 6)  # Concentration is now column 6
+        if conc_item:
+            # Toggle check state
+            current_state = conc_item.checkState()
+            new_state = Qt.Unchecked if current_state == Qt.Checked else Qt.Checked
+            conc_item.setCheckState(new_state)
+            
+            # Update tracking set
+            if new_state == Qt.Checked:
+                self.concentrating.add(row)
+            else:
+                self.concentrating.discard(row)
+                
+            # Log concentration change
+            name_item = self.initiative_table.item(row, 0)
+            if name_item:
+                name = name_item.text()
+                if new_state == Qt.Checked:
+                    self._log_combat_action("Status Effect", name, "began concentrating")
+                else:
+                    self._log_combat_action("Status Effect", name, "ended concentration")
     
     def _apply_damage(self, is_healing=False):
         """Apply damage or healing to selected combatants"""
@@ -1857,8 +1951,9 @@ class CombatTrackerPanel(BasePanel):
             
             # Apply to each selected row
             for row in selected_rows:
-                hp_item = self.initiative_table.item(row, 2)
-                if not hp_item:
+                hp_item = self.initiative_table.item(row, 2)  # HP is now column 2
+                max_hp_item = self.initiative_table.item(row, 3)  # Max HP is now column 3
+                if not hp_item or not max_hp_item:
                     continue
                     
                 name_item = self.initiative_table.item(row, 0)
@@ -1872,9 +1967,12 @@ class CombatTrackerPanel(BasePanel):
                     hp_text = hp_item.text().strip()
                     current_hp = int(hp_text) if hp_text else 0
                     
+                    # Get max HP
+                    max_hp_text = max_hp_item.text().strip()
+                    max_hp = int(max_hp_text) if max_hp_text else 999
+                    
                     if is_healing:
                         new_hp = current_hp + amount
-                        max_hp = hp_item.data(Qt.UserRole) or 0
                         if max_hp > 0:  # Don't exceed max HP
                             new_hp = min(new_hp, max_hp)
                         
@@ -1908,7 +2006,7 @@ class CombatTrackerPanel(BasePanel):
                     # Check for unconsciousness/death
                     if new_hp <= 0:
                         # Mark as unconscious
-                        status_item = self.initiative_table.item(row, 4)
+                        status_item = self.initiative_table.item(row, 5)  # Status is now column 5
                         if status_item:
                             old_status = status_item.text()
                             status_item.setText("Unconscious")
@@ -1925,8 +2023,7 @@ class CombatTrackerPanel(BasePanel):
                         
                         
                         # Check if player character (has max HP) for death saves
-                        max_hp = hp_item.data(Qt.UserRole)
-                        if max_hp:
+                        if max_hp > 0:
                             # Set up death saves tracking if not already
                             if row not in self.death_saves:
                                 self.death_saves[row] = {"successes": 0, "failures": 0}
@@ -1935,49 +2032,53 @@ class CombatTrackerPanel(BasePanel):
                     pass
     
     def _check_concentration(self, row, damage):
-        """Check if concentration is maintained after taking damage"""
-        conc_item = self.initiative_table.item(row, 5)
-        if conc_item and conc_item.checkState() == Qt.Checked:
-            dc = max(10, damage // 2)
-            name = self.initiative_table.item(row, 0).text()
+        """Check if a combatant needs to make a concentration save"""
+        if row not in self.concentrating:
+            return
+
+        # Get combatant name
+        name_item = self.initiative_table.item(row, 0)
+        if not name_item:
+            return
+        
+        combatant_name = name_item.text()
             
-            # Roll the concentration check
-            roll = random.randint(1, 20)
-            success = roll >= dc
+        # Calculate DC for concentration check
+        dc = max(10, damage // 2)
+        
+        # Create and show concentration check dialog
+        dialog = ConcentrationDialog(self, combatant_name, dc)
+        if dialog.exec_():
+            save_result = dialog.get_save_result()
+            passed = save_result >= dc
             
-            # Log concentration check
+            # Log result of concentration check
+            outcome = "passed" if passed else "failed"
             self._log_combat_action(
-                "Status Effect", 
-                name, 
-                "rolled concentration check", 
-                result=f"DC {dc}, Roll: {roll}, {'Success' if success else 'Failure'}"
+                "Concentration Check", 
+                combatant_name, 
+                outcome,
+                f"DC {dc} concentration check",
+                f"(rolled {save_result})"
             )
             
-            # If concentration check failed
-            if not success:
-                conc_item.setCheckState(Qt.Unchecked)
-                self.concentrating.discard(row)
+            # If failed, remove concentration
+            if not passed:
+                # Remove concentration
+                concentration_item = self.initiative_table.item(row, 6)  # Concentration is now column 6
+                if concentration_item:
+                    concentration_item.setCheckState(Qt.Unchecked)
                 
-                # Log concentration lost
+                # Remove from concentrating list
+                if row in self.concentrating:
+                    self.concentrating.remove(row)
+                    
+                # Log concentration broken
                 self._log_combat_action(
-                    "Status Effect", 
-                    name, 
-                    "lost concentration", 
-                    result="Failed check"
-                )
-                
-                # Show message
-                QMessageBox.information(
-                    self,
-                    "Concentration Lost",
-                    f"{name} failed DC {dc} concentration check with roll of {roll}."
-                )
-            else:
-                # Show message for successful check
-                QMessageBox.information(
-                    self,
-                    "Concentration Maintained",
-                    f"{name} passed DC {dc} concentration check with roll of {roll}."
+                    "Effect Ended", 
+                    combatant_name, 
+                    "lost concentration",
+                    "", ""
                 )
     
     def _manage_death_saves(self, row):
@@ -2048,7 +2149,7 @@ class CombatTrackerPanel(BasePanel):
         # Apply status to each selected row
         for row in selected_rows:
             if row < self.initiative_table.rowCount():
-                status_item = self.initiative_table.item(row, 4)
+                status_item = self.initiative_table.item(row, 5)  # Status is now column 5
                 if status_item:
                     status_item.setText(status)
                 
@@ -2517,26 +2618,47 @@ class CombatTrackerPanel(BasePanel):
                         combatant_type = "character"
             
             # Restore each field
-            for col, key in enumerate(["name", "initiative", "hp", "ac", "status", "concentration"]):
-                value = combatant.get(key, "")
-                item = QTableWidgetItem()
-                
-                if col == 5:  # Concentration
-                    item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
-                    item.setCheckState(Qt.Checked if value else Qt.Unchecked)
-                else:
-                    item.setText(str(value))
-                    item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
-                
-                # Restore max HP
-                if col == 2:
-                    item.setData(Qt.UserRole, combatant.get("max_hp", value))
-                
-                self.initiative_table.setItem(row, col, item)
+            name_item = QTableWidgetItem(combatant.get("name", ""))
+            name_item.setData(Qt.UserRole, combatant_type)  # Store type with the name item
+            name_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+            self.initiative_table.setItem(row, 0, name_item)
             
-            # Set type in column 6
+            # Initiative
+            init_item = QTableWidgetItem(str(combatant.get("initiative", "")))
+            init_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+            self.initiative_table.setItem(row, 1, init_item)
+            
+            # Current HP
+            hp_item = QTableWidgetItem(str(combatant.get("hp", "")))
+            hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+            self.initiative_table.setItem(row, 2, hp_item)
+            
+            # Max HP (stored in combatant or same as current HP)
+            max_hp = combatant.get("max_hp", combatant.get("hp", ""))
+            max_hp_item = QTableWidgetItem(str(max_hp))
+            max_hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+            self.initiative_table.setItem(row, 3, max_hp_item)
+            
+            # AC
+            ac_item = QTableWidgetItem(str(combatant.get("ac", "")))
+            ac_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+            self.initiative_table.setItem(row, 4, ac_item)
+            
+            # Status
+            status_item = QTableWidgetItem(combatant.get("status", ""))
+            status_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+            self.initiative_table.setItem(row, 5, status_item)
+            
+            # Concentration (checkbox)
+            conc_item = QTableWidgetItem()
+            conc_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            conc_item.setCheckState(Qt.Checked if combatant.get("concentration", False) else Qt.Unchecked)
+            self.initiative_table.setItem(row, 6, conc_item)
+            
+            # Type
             type_item = QTableWidgetItem(combatant_type)
-            self.initiative_table.setItem(row, 6, type_item)
+            type_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+            self.initiative_table.setItem(row, 7, type_item)
             
             print(f"[CombatTracker] Restored combatant {combatant.get('name', 'Unknown')} with type: {combatant_type}")
         
@@ -2620,12 +2742,22 @@ class CombatTrackerPanel(BasePanel):
         
         # Get monster HP and AC
         hp_value = get_attr(monster_data, "hp", 10, ["hit_points", "hitPoints"])
-        # Extract actual HP value from formula if needed
+        
+        # For the HP display, we want the actual numeric value
         hp = self._parse_hit_points(hp_value)
+        
+        # For Max HP column, store the original value that may include formula
+        max_hp = hp
+        if isinstance(hp_value, str) and "(" in hp_value:
+            # Extract the number before the parenthesis for current HP
+            match = re.match(r'(\d+)\s*\(', hp_value)
+            if match:
+                hp = int(match.group(1))
+        
         ac = get_attr(monster_data, "ac", 10, ["armor_class", "armorClass"])
         
         # Add to tracker
-        row = self._add_combatant(name, initiative_roll, hp, ac, "monster")
+        row = self._add_combatant(name, initiative_roll, hp, max_hp, ac, "monster")
         
         # Ensure row is valid, default to -1 if None
         if row is None:
@@ -2734,11 +2866,12 @@ class CombatTrackerPanel(BasePanel):
         initiative_roll = random.randint(1, 20) + initiative_bonus
         
         # Get HP and AC
-        hp = get_attr(character, "current_hp", 10)
+        current_hp = get_attr(character, "current_hp", 10)
+        max_hp = get_attr(character, "max_hp", current_hp)
         ac = get_attr(character, "armor_class", 10)
         
         # Add to tracker
-        row = self._add_combatant(name, initiative_roll, hp, ac, "character")
+        row = self._add_combatant(name, initiative_roll, current_hp, max_hp, ac, "character")
         
         # Store character data for future reference
         if row >= 0:
@@ -2913,8 +3046,9 @@ class CombatTrackerPanel(BasePanel):
             "name": combatant_name,
             "initiative": int(self.initiative_table.item(row, 1).text()) if self.initiative_table.item(row, 1) else 0,
             "hp": int(self.initiative_table.item(row, 2).text()) if self.initiative_table.item(row, 2) else 0,
-            "ac": int(self.initiative_table.item(row, 3).text()) if self.initiative_table.item(row, 3) else 0,
-            "status": self.initiative_table.item(row, 4).text() if self.initiative_table.item(row, 4) else ""
+            "max_hp": int(self.initiative_table.item(row, 3).text()) if self.initiative_table.item(row, 3) else 0,
+            "ac": int(self.initiative_table.item(row, 4).text()) if self.initiative_table.item(row, 4) else 0,
+            "status": self.initiative_table.item(row, 5).text() if self.initiative_table.item(row, 5) else ""
         }
         
         # For monsters, try to get the full data from the stored combatants dictionary
@@ -2927,6 +3061,7 @@ class CombatTrackerPanel(BasePanel):
                     combatant_data = stored_data
                     break
         
+        print(f"[CombatDetailsDialog] Received data for {combatant_type}: {combatant_data}")
         dialog = CombatantDetailsDialog(self, combatant_data, combatant_type)
         dialog.exec()
 
