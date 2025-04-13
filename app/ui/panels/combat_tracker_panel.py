@@ -880,6 +880,7 @@ class CombatTrackerPanel(BasePanel):
         self.show_details_pane = False  # Whether to show the details pane
         self.current_details_combatant = None  # Current combatant for details
         self.current_details_type = None  # Type of current combatant for details
+        self.next_monster_id = 1  # Counter for unique monster IDs
         
         # Initialize timers
         self.timer = QTimer()
@@ -1322,9 +1323,9 @@ class CombatTrackerPanel(BasePanel):
             QMessageBox.critical(self, "Error", f"An error occurred adding the combatant: {str(e)}")
             return -1
     
-    def _add_combatant(self, name, initiative, hp, max_hp, ac, combatant_type=""):
+    def _add_combatant(self, name, initiative, hp, max_hp, ac, combatant_type="", monster_id=None):
         """Add a combatant to the initiative table"""
-        print(f"[CombatTracker] _add_combatant called: name={name}, initiative={initiative}, hp={hp}, max_hp={max_hp}, ac={ac}, type={combatant_type}")
+        print(f"[CombatTracker] _add_combatant called: name={name}, initiative={initiative}, hp={hp}, max_hp={max_hp}, ac={ac}, type={combatant_type}, id={monster_id}")
         
         # Get current row count
         row = self.initiative_table.rowCount()
@@ -1333,6 +1334,12 @@ class CombatTrackerPanel(BasePanel):
         # Create name item with combatant type stored in user role
         name_item = QTableWidgetItem(name)
         name_item.setData(Qt.UserRole, combatant_type)  # Store type with the name item
+        
+        # If this is a monster with ID, store the ID in UserRole+2
+        if monster_id is not None:
+            name_item.setData(Qt.UserRole + 2, monster_id)
+            print(f"[CombatTracker] Set monster ID {monster_id} for {name}")
+        
         # Ensure no checkbox
         name_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
         self.initiative_table.setItem(row, 0, name_item)
@@ -1379,6 +1386,9 @@ class CombatTrackerPanel(BasePanel):
         type_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
         self.initiative_table.setItem(row, 7, type_item)
         
+        # Store current row before sorting
+        current_row = row
+        
         # Sort the initiative order
         self._sort_initiative()
         
@@ -1388,8 +1398,30 @@ class CombatTrackerPanel(BasePanel):
             final_hp = final_hp_item.text()
             print(f"[CombatTracker] Final verification - {name} HP after sorting: {final_hp}")
         
-        # Return the row where the combatant was added
-        return row
+        # After sorting, find this monster's new row by its ID
+        sorted_row = -1
+        if monster_id is not None:
+            sorted_row = self._find_monster_by_id(monster_id)
+            if sorted_row >= 0:
+                print(f"[CombatTracker] After sorting, monster {name} (ID {monster_id}) is at row {sorted_row}")
+            else:
+                print(f"[CombatTracker] WARNING: Could not find monster {name} (ID {monster_id}) after sorting")
+                sorted_row = row  # Fall back to original row
+        
+        # Return the row where the combatant was added (post-sorting if monster with ID)
+        return sorted_row if sorted_row >= 0 else row
+    
+    def _find_monster_by_id(self, monster_id):
+        """Find the row of a monster by its unique ID"""
+        if monster_id is None:
+            return -1
+            
+        for row in range(self.initiative_table.rowCount()):
+            name_item = self.initiative_table.item(row, 0)
+            if name_item and name_item.data(Qt.UserRole + 2) == monster_id:
+                return row
+                
+        return -1
     
     def _sort_initiative(self):
         """Sort the initiative list in descending order."""
@@ -1404,10 +1436,20 @@ class CombatTrackerPanel(BasePanel):
                 # Nothing to sort if there's 0 or 1 row
                 print("[CombatTracker] _sort_initiative: Nothing to sort (≤1 row)")
                 return
-            
-            # Store all row data before clearing
-            rows_data = []
-            initiative_values = []
+                
+            # Save all monsters IDs and stats before sorting
+            monster_stats = {}
+            for row in range(row_count):
+                name_item = self.initiative_table.item(row, 0)
+                if name_item and name_item.data(Qt.UserRole + 2) is not None:
+                    monster_id = name_item.data(Qt.UserRole + 2)
+                    monster_stats[monster_id] = {
+                        "id": monster_id,
+                        "name": name_item.text(),
+                        "hp": self.initiative_table.item(row, 2).text() if self.initiative_table.item(row, 2) else "10",
+                        "max_hp": self.initiative_table.item(row, 3).text() if self.initiative_table.item(row, 3) else "10",
+                        "ac": self.initiative_table.item(row, 4).text() if self.initiative_table.item(row, 4) else "10"
+                    }
             
             # Store pre-sort HP and AC data for verification
             pre_sort_values = {}
@@ -1424,6 +1466,11 @@ class CombatTrackerPanel(BasePanel):
             
             # Collect all the data from the table first
             print(f"[CombatTracker] Collecting data from {row_count} rows")
+            
+            # Store all row data before clearing
+            rows_data = []
+            initiative_values = []
+            
             for row in range(row_count):
                 # Get the initiative value and row number
                 initiative_item = self.initiative_table.item(row, 1)
@@ -1453,29 +1500,25 @@ class CombatTrackerPanel(BasePanel):
                 hp_value = row_data.get(2, {}).get('text', '?')
                 ac_value = row_data.get(4, {}).get('text', '?')
                 print(f"[CombatTracker] Row {row}: initiative={initiative}, hp={hp_value}, ac={ac_value}")
-            
+                
+            # Execute the rest of the original sort code
             # Sort the initiative values in descending order
             initiative_values.sort(key=lambda x: x[0], reverse=True)
-            print(f"[CombatTracker] Sorted initiatives: {initiative_values}")
             
             # Remap original rows to their new position after sorting
             row_map = {old_row: new_row for new_row, (_, old_row) in enumerate(initiative_values)}
-            print(f"[CombatTracker] Row mapping: {row_map}")
             
             # Remember the current selection and turn
             current_row = self.initiative_table.currentRow()
             current_turn = self._current_turn if hasattr(self, '_current_turn') else None
-            print(f"[CombatTracker] Before sort: current_row={current_row}, current_turn={current_turn}")
             
             # Clear the table (but don't update combat stats yet)
-            print("[CombatTracker] Clearing table and rebuilding with sorted data")
             self.initiative_table.setRowCount(0)
             self.initiative_table.setRowCount(row_count)
             
             # Add the sorted rows back to the table
             for old_row, new_row in row_map.items():
                 row_data = rows_data[old_row]
-                print(f"[CombatTracker] Moving row {old_row} to position {new_row}")
                 
                 # Debug HP and AC for this row
                 hp_value = row_data.get(2, {}).get('text', '?')
@@ -1527,13 +1570,10 @@ class CombatTrackerPanel(BasePanel):
             # Update current selection and turn if needed
             if current_row >= 0 and current_row < row_count:
                 new_current_row = row_map.get(current_row, 0)
-                print(f"[CombatTracker] Setting current cell: {new_current_row}")
                 self.initiative_table.setCurrentCell(new_current_row, 0)
-            
             
             if current_turn is not None and current_turn >= 0 and current_turn < row_count:
                 self._current_turn = row_map.get(current_turn, 0)
-                print(f"[CombatTracker] Setting current turn to: {self._current_turn}")
             
             # Verify HP and AC values after sorting
             post_sort_values = {}
@@ -1567,6 +1607,11 @@ class CombatTrackerPanel(BasePanel):
                     print(f"[CombatTracker] WARNING: AC changed during sort for {name}: {pre_ac} -> {post_ac}")
                 else:
                     print(f"[CombatTracker] AC preserved for {name}: {pre_ac}")
+
+            # At the end of the sort function, add the monster stats verification
+            # Schedule verification for all monsters after sorting is complete
+            for monster_id, stats in monster_stats.items():
+                QTimer.singleShot(100, lambda stats=stats: self._verify_monster_stats(stats))
             
             # Force a UI update - IMPORTANT
             self.initiative_table.viewport().update()
@@ -2833,9 +2878,10 @@ class CombatTrackerPanel(BasePanel):
             print(f"[CombatTracker] Found hit_dice in dict: {dice_formula}")
         elif isinstance(hp_value, str):
             # Try to extract formula from string like "45 (6d10+12)"
-            match = re.search(r'\(([0-9d+\-]+)\)', hp_value)
+            match = re.search(r'\(\s*([0-9d+\-\s]+)\s*\)', hp_value)
             if match:
-                dice_formula = match.group(1)
+                # Remove any spaces from the formula before processing
+                dice_formula = re.sub(r'\s+', '', match.group(1))
                 print(f"[CombatTracker] Extracted dice formula from parentheses: {dice_formula}")
             # If the string itself is a dice formula
             elif re.match(r'^\d+d\d+([+-]\d+)?$', hp_value):
@@ -2849,143 +2895,428 @@ class CombatTrackerPanel(BasePanel):
         if not monster_data:
             return -1
             
-        # Diagnostic: Log information about this monster
-        monster_name = "Unknown"
-        if isinstance(monster_data, dict) and 'name' in monster_data:
-            monster_name = monster_data['name']
-        elif hasattr(monster_data, 'name'):
-            monster_name = monster_data.name
-            
-        print(f"[CombatTracker] Adding monster '{monster_name}' (type: {type(monster_data)})")
+        # Block signals to prevent race conditions during adding
+        self.initiative_table.blockSignals(True)
         
-        # Helper function to get attribute from either dict or object
-        def get_attr(obj, attr, default=None, alt_attrs=None):
-            """Get attribute from object or dict, trying alternate attribute names if specified"""
-            alt_attrs = alt_attrs or []
-            result = default
-            
-            try:
-                # Implementation remains the same
-                # Just a helper function to retrieve attributes from different object types
-                if isinstance(obj, dict):
-                    if attr in obj:
-                        return obj[attr]
-                    for alt_attr in alt_attrs:
-                        if alt_attr in obj:
-                            return obj[alt_attr]
-                    # Additional checks for nested structures, etc.
-                    # ...
-                else:
-                    if hasattr(obj, attr):
-                        return getattr(obj, attr)
-                    for alt_attr in alt_attrs:
-                        if hasattr(obj, alt_attr):
-                            return getattr(obj, alt_attr)
-                    # Additional checks for object attributes, etc.
-                    # ...
+        try:
+            # Diagnostic: Log information about this monster
+            monster_name = "Unknown"
+            if isinstance(monster_data, dict) and 'name' in monster_data:
+                monster_name = monster_data['name']
+            elif hasattr(monster_data, 'name'):
+                monster_name = monster_data.name
                 
-                return default
-            except Exception as e:
-                print(f"[CombatTracker] Error in get_attr({attr}): {e}")
-                return default
+            print(f"[CombatTracker] Adding monster '{monster_name}' (type: {type(monster_data)})")
             
-        # Get monster name
-        name = get_attr(monster_data, "name", "Unknown Monster")
-        
-        # Get a reasonable initiative modifier from DEX
-        dex = get_attr(monster_data, "dexterity", 10, ["dex", "DEX"])
-        init_mod = (dex - 10) // 2
-        
-        # Roll initiative
-        initiative_roll = random.randint(1, 20) + init_mod
-        
-        # Get monster HP data and AC in various formats
-        hp_value = get_attr(monster_data, "hp", 10, ["hit_points", "hitPoints", "hit_points_roll", "hit_dice"])
-        print(f"[CombatTracker] Retrieved HP value: {hp_value} (type: {type(hp_value)})")
-        
-        # Calculate average HP (for Max HP display)
-        max_hp = 0
-        if isinstance(hp_value, int):
-            max_hp = hp_value
-        elif isinstance(hp_value, dict) and 'average' in hp_value:
-            max_hp = int(hp_value['average'])
-        elif isinstance(hp_value, str):
-            # Try to extract average value from string like "45 (6d10+12)"
-            match = re.match(r'(\d+)\s*\(', hp_value)
-            if match:
-                max_hp = int(match.group(1))
-            elif hp_value.isdigit():
-                max_hp = int(hp_value)
-        
-        if max_hp <= 0:
-            max_hp = 10
+            # Helper function to get attribute from either dict or object
+            def get_attr(obj, attr, default=None, alt_attrs=None):
+                """Get attribute from object or dict, trying alternate attribute names if specified"""
+                alt_attrs = alt_attrs or []
+                result = default
+                
+                try:
+                    # Implementation remains the same
+                    # Just a helper function to retrieve attributes from different object types
+                    if isinstance(obj, dict):
+                        if attr in obj:
+                            return obj[attr]
+                        for alt_attr in alt_attrs:
+                            if alt_attr in obj:
+                                return obj[alt_attr]
+                        # Additional checks for nested structures, etc.
+                        # ...
+                    else:
+                        if hasattr(obj, attr):
+                            return getattr(obj, attr)
+                        for alt_attr in alt_attrs:
+                            if hasattr(obj, alt_attr):
+                                return getattr(obj, alt_attr)
+                        # Additional checks for object attributes, etc.
+                        # ...
+                    
+                    return default
+                except Exception as e:
+                    print(f"[CombatTracker] Error in get_attr({attr}): {e}")
+                    return default
+                
+            # Get monster name
+            name = get_attr(monster_data, "name", "Unknown Monster")
             
-        print(f"[CombatTracker] Max HP: {max_hp}")
+            # Generate a unique ID for this monster instance
+            monster_id = self.next_monster_id
+            self.next_monster_id += 1
+            
+            # Get a reasonable initiative modifier from DEX
+            dex = get_attr(monster_data, "dexterity", 10, ["dex", "DEX"])
+            init_mod = (dex - 10) // 2
+            
+            # Roll initiative
+            initiative_roll = random.randint(1, 20) + init_mod
+            
+            # Get monster HP data and AC in various formats
+            hp_value = get_attr(monster_data, "hp", 10, ["hit_points", "hitPoints", "hit_points_roll", "hit_dice"])
+            print(f"[CombatTracker] Retrieved HP value: {hp_value} (type: {type(hp_value)})")
+            
+            # Calculate average HP (for Max HP display)
+            max_hp = 0
+            if isinstance(hp_value, int):
+                max_hp = hp_value
+            elif isinstance(hp_value, dict) and 'average' in hp_value:
+                max_hp = int(hp_value['average'])
+            elif isinstance(hp_value, str):
+                # Try to extract average value from string like "45 (6d10+12)"
+                match = re.match(r'(\d+)\s*\(', hp_value)
+                if match:
+                    max_hp = int(match.group(1))
+                elif hp_value.isdigit():
+                    max_hp = int(hp_value)
+            
+            if max_hp <= 0:
+                max_hp = 10
+                
+            print(f"[CombatTracker] Max HP: {max_hp}")
+            
+            # IMPORTANT PART: EXTRACT DICE FORMULA AND ROLL HP
+            dice_formula = self.extract_dice_formula(hp_value)
+            
+            # ALWAYS ROLL RANDOM HP
+            if dice_formula:
+                # Roll random HP using the dice formula
+                hp = self.roll_dice(dice_formula)
+                print(f"[CombatTracker] RANDOM HP ROLL: {hp} using formula {dice_formula}")
+            else:
+                # If no dice formula, create a better one based on monster CR and average HP
+                # For dragons and high-HP monsters, a better approximation would be:
+                # d12 for big monsters, d10 for medium monsters, d8 for small monsters
+                
+                # Determine the creature size based on max HP
+                if max_hp > 200:  # Large/Huge creatures like dragons
+                    die_size = 12
+                    num_dice = max(1, int(max_hp * 0.75 / (die_size/2 + 0.5)))  # Scale dice count to match HP
+                elif max_hp > 100:  # Medium creatures
+                    die_size = 10
+                    num_dice = max(1, int(max_hp * 0.8 / (die_size/2 + 0.5)))
+                else:  # Small creatures
+                    die_size = 8
+                    num_dice = max(1, int(max_hp * 0.85 / (die_size/2 + 0.5)))
+                
+                # Add a small modifier to account for Constitution
+                modifier = int(max_hp * 0.1)
+                estimated_formula = f"{num_dice}d{die_size}+{modifier}"
+                hp = self.roll_dice(estimated_formula)
+                print(f"[CombatTracker] NO FORMULA FOUND - Created estimated formula {estimated_formula} and rolled: {hp}")
+                
+                # Limit HP to a reasonable range (50%-125% of average)
+                min_hp = int(max_hp * 0.5)
+                max_possible_hp = int(max_hp * 1.25)
+                hp = max(min_hp, min(hp, max_possible_hp))
+                print(f"[CombatTracker] Adjusted HP to {hp} (limited to {min_hp}-{max_possible_hp})")
+            
+            ac = get_attr(monster_data, "ac", 10, ["armor_class", "armorClass", "AC"])
+            print(f"[CombatTracker] Retrieved AC value: {ac}")
+            
+            # Save monster stats for later verification
+            monster_stats = {
+                "id": monster_id,
+                "name": name,
+                "hp": hp,
+                "max_hp": max_hp,
+                "ac": ac
+            }
+            
+            # Add to tracker with our randomly rolled HP
+            row = self._add_combatant(name, initiative_roll, hp, max_hp, ac, "monster", monster_id)
+            
+            # Ensure row is valid, default to -1 if None
+            if row is None:
+                row = -1
+            
+            # Store monster data for future reference
+            if row >= 0:
+                self.combatants[row] = monster_data
+                
+            # Force a refresh of the entire table
+            self.initiative_table.viewport().update()
+            QApplication.processEvents()
+                    
+            # Make absolutely sure this monster's values are correctly set (with delay)
+            QTimer.singleShot(50, lambda: self._verify_monster_stats(monster_stats))
+                    
+            # Log to combat log
+            self._log_combat_action("Setup", "DM", "added monster", name, f"(Init: {initiative_roll}, HP: {hp}/{max_hp})")
+            
+            return row
+            
+        finally:
+            # Always unblock signals even if there's an error
+            self.initiative_table.blockSignals(False)
+            
+    def _verify_monster_stats(self, monster_stats):
+        """Double-check that monster stats are properly set after adding and sorting"""
+        monster_id = monster_stats["id"]
+        name = monster_stats["name"]
+        hp = monster_stats["hp"]
+        max_hp = monster_stats["max_hp"]
+        ac = monster_stats["ac"]
         
-        # IMPORTANT PART: EXTRACT DICE FORMULA AND ROLL HP
-        dice_formula = self.extract_dice_formula(hp_value)
+        # Find the current row for this monster
+        row = self._find_monster_by_id(monster_id)
+        if row < 0:
+            print(f"[CombatTracker] Warning: Cannot verify stats for monster {name} (ID {monster_id}) - not found")
+            return
+            
+        # Verify all stats are correctly set
+        hp_item = self.initiative_table.item(row, 2)
+        max_hp_item = self.initiative_table.item(row, 3)
+        ac_item = self.initiative_table.item(row, 4)
         
-        # ALWAYS ROLL RANDOM HP
-        if dice_formula:
-            # Roll random HP using the dice formula
-            hp = self.roll_dice(dice_formula)
-            print(f"[CombatTracker] RANDOM HP ROLL: {hp} using formula {dice_formula}")
-        else:
-            # If no dice formula, create one based on average HP
-            # Use 3d(max_hp/3) as a rough approximation for monsters without formulas
-            estimated_sides = max(4, max_hp // 3)
-            estimated_formula = f"3d{estimated_sides}"
-            hp = self.roll_dice(estimated_formula)
-            print(f"[CombatTracker] NO FORMULA FOUND - Created estimated formula {estimated_formula} and rolled: {hp}")
-        
-        ac = get_attr(monster_data, "ac", 10, ["armor_class", "armorClass", "AC"])
-        print(f"[CombatTracker] Retrieved AC value: {ac}")
-        
-        # Add to tracker with our randomly rolled HP
-        row = self._add_combatant(name, initiative_roll, hp, max_hp, ac, "monster")
-        
-        # Ensure row is valid, default to -1 if None
-        if row is None:
-            row = -1
-        
-        # Store monster data for future reference
-        if row >= 0:
-            self.combatants[row] = monster_data
-        
-        # Force HP value to be set correctly after sorting
+        # Prepare values as strings
         hp_str = str(hp) if hp is not None else "10"
         max_hp_str = str(max_hp) if max_hp is not None else "10"
         ac_str = str(ac) if ac is not None else "10"
         
-        # Double-check that the HP value is correctly set after sorting
-        for check_row in range(self.initiative_table.rowCount()):
-            name_item = self.initiative_table.item(check_row, 0)
-            if name_item and name_item.text() == name:
-                # Force HP value to be set 
-                new_hp_item = QTableWidgetItem(hp_str)
-                new_hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
-                self.initiative_table.setItem(check_row, 2, new_hp_item)
-                
-                # Set Max HP as well
-                new_max_hp_item = QTableWidgetItem(max_hp_str)
-                new_max_hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
-                self.initiative_table.setItem(check_row, 3, new_max_hp_item)
-                
-                # Set AC as well
-                new_ac_item = QTableWidgetItem(ac_str)
-                new_ac_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
-                self.initiative_table.setItem(check_row, 4, new_ac_item)
-                
-                # Force update
-                self.initiative_table.viewport().update()
-                print(f"[CombatTracker] FORCED SET: Hp={hp} (randomly rolled) at row {check_row}")
-                break
-                
-        # Log to combat log
-        self._log_combat_action("Setup", "DM", "added monster", name, f"(Init: {initiative_roll}, HP: {hp}/{max_hp})")
+        # Check and fix values if needed
+        changes_made = False
         
-        return row
+        # Check HP
+        if not hp_item or hp_item.text() != hp_str:
+            print(f"[CombatTracker] Fixing HP for {name} (ID {monster_id}) at row {row}: setting to {hp_str}")
+            new_hp_item = QTableWidgetItem(hp_str)
+            new_hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+            self.initiative_table.setItem(row, 2, new_hp_item)
+            changes_made = True
+            
+        # Check Max HP
+        if not max_hp_item or max_hp_item.text() != max_hp_str:
+            print(f"[CombatTracker] Fixing Max HP for {name} (ID {monster_id}) at row {row}: setting to {max_hp_str}")
+            new_max_hp_item = QTableWidgetItem(max_hp_str)
+            new_max_hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+            self.initiative_table.setItem(row, 3, new_max_hp_item)
+            changes_made = True
+            
+        # Check AC
+        if not ac_item or ac_item.text() != ac_str:
+            print(f"[CombatTracker] Fixing AC for {name} (ID {monster_id}) at row {row}: setting to {ac_str}")
+            new_ac_item = QTableWidgetItem(ac_str)
+            new_ac_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+            self.initiative_table.setItem(row, 4, new_ac_item)
+            changes_made = True
+            
+        # If any changes were made, update the table
+        if changes_made:
+            self.initiative_table.viewport().update()
+            print(f"[CombatTracker] Stats verified and fixed for {name} (ID {monster_id})")
+        else:
+            print(f"[CombatTracker] All stats correct for {name} (ID {monster_id})")
+    
+    def _sort_initiative(self):
+        """Sort the initiative list in descending order."""
+        print(f"[CombatTracker] _sort_initiative ENTRY with {self.initiative_table.rowCount()} rows")
+        # Block signals to prevent recursive calls during sorting
+        self.initiative_table.blockSignals(True)
+        
+        try:
+            # Get the number of rows
+            row_count = self.initiative_table.rowCount()
+            if row_count <= 1:
+                # Nothing to sort if there's 0 or 1 row
+                print("[CombatTracker] _sort_initiative: Nothing to sort (≤1 row)")
+                return
+                
+            # Save all monsters IDs and stats before sorting
+            monster_stats = {}
+            for row in range(row_count):
+                name_item = self.initiative_table.item(row, 0)
+                if name_item and name_item.data(Qt.UserRole + 2) is not None:
+                    monster_id = name_item.data(Qt.UserRole + 2)
+                    monster_stats[monster_id] = {
+                        "id": monster_id,
+                        "name": name_item.text(),
+                        "hp": self.initiative_table.item(row, 2).text() if self.initiative_table.item(row, 2) else "10",
+                        "max_hp": self.initiative_table.item(row, 3).text() if self.initiative_table.item(row, 3) else "10",
+                        "ac": self.initiative_table.item(row, 4).text() if self.initiative_table.item(row, 4) else "10"
+                    }
+            
+            # Store pre-sort HP and AC data for verification
+            pre_sort_values = {}
+            for row in range(row_count):
+                name_item = self.initiative_table.item(row, 0)
+                hp_item = self.initiative_table.item(row, 2)
+                ac_item = self.initiative_table.item(row, 4)
+                
+                name = name_item.text() if name_item else f"Row {row}"
+                hp = hp_item.text() if hp_item else "?"
+                ac = ac_item.text() if ac_item else "?"
+                
+                pre_sort_values[name] = {"hp": hp, "ac": ac}
+            
+            # Collect all the data from the table first
+            print(f"[CombatTracker] Collecting data from {row_count} rows")
+            
+            # Store all row data before clearing
+            rows_data = []
+            initiative_values = []
+            
+            for row in range(row_count):
+                # Get the initiative value and row number
+                initiative_item = self.initiative_table.item(row, 1)
+                if initiative_item and initiative_item.text():
+                    try:
+                        initiative = int(initiative_item.text())
+                    except (ValueError, TypeError):
+                        initiative = 0
+                else:
+                    initiative = 0
+                    
+                # Gather all row data
+                row_data = {}
+                for col in range(self.initiative_table.columnCount()):
+                    item = self.initiative_table.item(row, col)
+                    if item:
+                        row_data[col] = {
+                            'text': item.text(),
+                            'data': item.data(Qt.UserRole),
+                            'checkState': item.checkState() if col == 6 else None,  # Only save checkState for concentration column
+                            'currentTurn': item.data(Qt.UserRole + 1)
+                        }
+                        
+                # Add this row's data to our collection
+                rows_data.append(row_data)
+                initiative_values.append((initiative, row))
+                hp_value = row_data.get(2, {}).get('text', '?')
+                ac_value = row_data.get(4, {}).get('text', '?')
+                print(f"[CombatTracker] Row {row}: initiative={initiative}, hp={hp_value}, ac={ac_value}")
+                
+            # Execute the rest of the original sort code
+            # Sort the initiative values in descending order
+            initiative_values.sort(key=lambda x: x[0], reverse=True)
+            
+            # Remap original rows to their new position after sorting
+            row_map = {old_row: new_row for new_row, (_, old_row) in enumerate(initiative_values)}
+            
+            # Remember the current selection and turn
+            current_row = self.initiative_table.currentRow()
+            current_turn = self._current_turn if hasattr(self, '_current_turn') else None
+            
+            # Clear the table (but don't update combat stats yet)
+            self.initiative_table.setRowCount(0)
+            self.initiative_table.setRowCount(row_count)
+            
+            # Add the sorted rows back to the table
+            for old_row, new_row in row_map.items():
+                row_data = rows_data[old_row]
+                
+                # Debug HP and AC for this row
+                hp_value = row_data.get(2, {}).get('text', '?')
+                ac_value = row_data.get(4, {}).get('text', '?')
+                print(f"[CombatTracker] Moving HP value: {hp_value} from old_row={old_row} to new_row={new_row}")
+                print(f"[CombatTracker] Moving AC value: {ac_value} from old_row={old_row} to new_row={new_row}")
+                
+                for col, item_data in row_data.items():
+                    # Create a new item with the right flags for each column
+                    new_item = QTableWidgetItem()
+                    
+                    # Set text data
+                    if 'text' in item_data:
+                        new_item.setText(item_data['text'])
+                    
+                    # Set appropriate flags based on column - ENSURE ONLY CONCENTRATION HAS CHECKBOXES
+                    if col == 6:  # Concentration column - the only one with checkboxes
+                        new_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+                        if 'checkState' in item_data and item_data['checkState'] is not None:
+                            new_item.setCheckState(item_data['checkState'])
+                        else:
+                            new_item.setCheckState(Qt.Unchecked)
+                    elif col == 0:  # Name column - should be editable
+                        new_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                    elif col == 1:  # Initiative column - should be editable
+                        new_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                    elif col == 2:  # HP column - should be editable
+                        new_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                    elif col == 3:  # Max HP column - should be editable
+                        new_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                    elif col == 4:  # AC column - should be editable
+                        new_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                    elif col == 5:  # Status column - should be editable
+                        new_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                    else:  # Any other columns - make selectable but not editable by default
+                        new_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+                    
+                    # Restore UserRole data (like combatant type)
+                    if 'data' in item_data and item_data['data'] is not None:
+                        new_item.setData(Qt.UserRole, item_data['data'])
+                    
+                    # Restore current turn highlight data
+                    if 'currentTurn' in item_data and item_data['currentTurn'] is not None:
+                        new_item.setData(Qt.UserRole + 1, item_data['currentTurn'])
+                    
+                    # Set the item in the table
+                    self.initiative_table.setItem(new_row, col, new_item)
+            
+            # Update current selection and turn if needed
+            if current_row >= 0 and current_row < row_count:
+                new_current_row = row_map.get(current_row, 0)
+                self.initiative_table.setCurrentCell(new_current_row, 0)
+            
+            if current_turn is not None and current_turn >= 0 and current_turn < row_count:
+                self._current_turn = row_map.get(current_turn, 0)
+            
+            # Verify HP and AC values after sorting
+            post_sort_values = {}
+            for row in range(row_count):
+                name_item = self.initiative_table.item(row, 0)
+                hp_item = self.initiative_table.item(row, 2)
+                ac_item = self.initiative_table.item(row, 4)
+                
+                name = name_item.text() if name_item else f"Row {row}"
+                hp = hp_item.text() if hp_item else "?"
+                ac = ac_item.text() if ac_item else "?"
+                
+                post_sort_values[name] = {"hp": hp, "ac": ac}
+            
+            # Compare pre and post sort values
+            for name, pre_values in pre_sort_values.items():
+                post_values = post_sort_values.get(name, {"hp": "MISSING", "ac": "MISSING"})
+                
+                # Check HP
+                pre_hp = pre_values["hp"]
+                post_hp = post_values["hp"]
+                if pre_hp != post_hp:
+                    print(f"[CombatTracker] WARNING: HP changed during sort for {name}: {pre_hp} -> {post_hp}")
+                else:
+                    print(f"[CombatTracker] HP preserved for {name}: {pre_hp}")
+                
+                # Check AC
+                pre_ac = pre_values["ac"]
+                post_ac = post_values["ac"]
+                if pre_ac != post_ac:
+                    print(f"[CombatTracker] WARNING: AC changed during sort for {name}: {pre_ac} -> {post_ac}")
+                else:
+                    print(f"[CombatTracker] AC preserved for {name}: {pre_ac}")
 
+            # At the end of the sort function, add the monster stats verification
+            # Schedule verification for all monsters after sorting is complete
+            for monster_id, stats in monster_stats.items():
+                QTimer.singleShot(100, lambda stats=stats: self._verify_monster_stats(stats))
+            
+            # Force a UI update - IMPORTANT
+            self.initiative_table.viewport().update()
+            self.update()  # Update the whole combat tracker panel
+        
+        except Exception as e:
+            print(f"[CombatTracker] ERROR in _sort_initiative: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        finally:
+            # Always unblock signals
+            print("[CombatTracker] Unblocking table signals")
+            self.initiative_table.blockSignals(False)
+            print("[CombatTracker] _sort_initiative completed")
+            
+            # Force the UI to update one more time
+            QApplication.processEvents()  # Process pending events to ensure UI updates
+    
     def add_character(self, character):
         """Add a player character from character panel to the tracker"""
         if not character:
@@ -3553,3 +3884,69 @@ class CombatTrackerPanel(BasePanel):
             print(f"[CombatTracker] Fixed types for {fix_count} combatants")
         
         return fix_count
+
+class ConcentrationDialog(QDialog):
+    """Dialog for concentration checks when taking damage"""
+    def __init__(self, parent=None, combatant_name="", dc=10):
+        super().__init__(parent)
+        self.setWindowTitle("Concentration Check")
+        self.combatant_name = combatant_name
+        self.dc = dc
+        self.save_result = 0
+        self._setup_ui()
+    
+    def _setup_ui(self):
+        layout = QVBoxLayout()
+        
+        # Information label
+        info_label = QLabel(f"{self.combatant_name} must make a concentration check (DC {self.dc})")
+        layout.addWidget(info_label)
+        
+        # Save roll input
+        save_layout = QHBoxLayout()
+        save_layout.addWidget(QLabel("Save Roll:"))
+        self.save_spin = QSpinBox()
+        self.save_spin.setRange(1, 30)
+        self.save_spin.setValue(10)
+        save_layout.addWidget(self.save_spin)
+        
+        # Roll button
+        roll_button = QPushButton("Roll")
+        roll_button.clicked.connect(self._roll_save)
+        save_layout.addWidget(roll_button)
+        
+        layout.addLayout(save_layout)
+        
+        # Result display
+        self.result_label = QLabel("")
+        layout.addWidget(self.result_label)
+        
+        # Buttons
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        
+        self.setLayout(layout)
+    
+    def _roll_save(self):
+        """Roll a d20 for the save"""
+        roll = random.randint(1, 20)
+        self.save_spin.setValue(roll)
+        self._update_result()
+    
+    def _update_result(self):
+        """Update the result label"""
+        value = self.save_spin.value()
+        if value >= self.dc:
+            self.result_label.setText(f"Success! ({value} ≥ {self.dc})")
+            self.result_label.setStyleSheet("color: green;")
+        else:
+            self.result_label.setText(f"Failure! ({value} < {self.dc})")
+            self.result_label.setStyleSheet("color: red;")
+    
+    def get_save_result(self):
+        """Get the final save roll result"""
+        return self.save_spin.value()
