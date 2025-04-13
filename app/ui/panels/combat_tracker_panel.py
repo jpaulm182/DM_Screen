@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, Signal, Slot, QSize
 from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QBrush, QPalette
 import random
+import re
 
 from app.ui.panels.base_panel import BasePanel
 from app.ui.panels.panel_category import PanelCategory
@@ -2607,7 +2608,9 @@ class CombatTrackerPanel(BasePanel):
         initiative_roll = random.randint(1, 20) + init_mod
         
         # Get monster HP and AC
-        hp = get_attr(monster_data, "hp", 10, ["hit_points", "hitPoints"])
+        hp_value = get_attr(monster_data, "hp", 10, ["hit_points", "hitPoints"])
+        # Extract actual HP value from formula if needed
+        hp = self._parse_hit_points(hp_value)
         ac = get_attr(monster_data, "ac", 10, ["armor_class", "armorClass"])
         
         # Add to tracker
@@ -2626,6 +2629,57 @@ class CombatTrackerPanel(BasePanel):
         
         return row
 
+    def _parse_hit_points(self, hp_value):
+        """
+        Parse a monster's hit points value from formulas like "45 (6d10+12)"
+        and return the actual hit point value.
+        
+        Args:
+            hp_value: String or integer representing hit points
+            
+        Returns:
+            Integer value of hit points
+        """
+        if isinstance(hp_value, int):
+            return hp_value
+            
+        if not hp_value or not isinstance(hp_value, str):
+            return 10  # Default fallback
+            
+        # If it's already just a number, convert and return
+        if hp_value.isdigit():
+            return int(hp_value)
+            
+        # Try to extract the average value (number before parentheses)
+        # Format is typically "45 (6d10+12)" or sometimes just "6d10+12"
+        match = re.match(r'(\d+)\s*\(', hp_value)
+        if match:
+            try:
+                return int(match.group(1))
+            except (ValueError, TypeError):
+                pass
+                
+        # If no average provided, try to calculate from the dice formula
+        dice_match = re.search(r'(\d+)d(\d+)([+-]\d+)?', hp_value)
+        if dice_match:
+            try:
+                # Extract dice components
+                count = int(dice_match.group(1))
+                sides = int(dice_match.group(2))
+                modifier = 0
+                if dice_match.group(3):
+                    modifier = int(dice_match.group(3))
+                    
+                # Calculate average
+                average = int((count * (sides + 1) / 2) + modifier)
+                return max(1, average)  # Ensure at least 1 HP
+            except (ValueError, TypeError, IndexError):
+                pass
+                
+        # If all parsing fails, return a default value
+        print(f"[Combat Tracker] Could not parse HP value: {hp_value}, using default")
+        return 10
+            
     def add_character(self, character):
         """Add a player character from character panel to the tracker"""
         if not character:
