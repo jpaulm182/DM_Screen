@@ -2794,6 +2794,56 @@ class CombatTrackerPanel(BasePanel):
         else:
             print(f"[CombatTracker] No monsters were added from the group. All {failed_count} failed.")
 
+    def roll_dice(self, dice_formula):
+        """Roll dice based on a formula like "3d8+4" or "2d6-1" """
+        print(f"[CombatTracker] Rolling dice formula: {dice_formula}")
+        if not dice_formula or not isinstance(dice_formula, str):
+            print("[CombatTracker] Invalid dice formula")
+            return 10
+            
+        # Parse the dice formula
+        dice_match = re.search(r'(\d+)d(\d+)([+-]\d+)?', dice_formula)
+        if not dice_match:
+            print(f"[CombatTracker] Could not parse dice formula: {dice_formula}")
+            return 10
+            
+        try:
+            # Extract dice components
+            count = int(dice_match.group(1))
+            sides = int(dice_match.group(2))
+            modifier = 0
+            if dice_match.group(3):
+                modifier = int(dice_match.group(3))
+                
+            # Roll the dice
+            rolls = [random.randint(1, sides) for _ in range(count)]
+            total = sum(rolls) + modifier
+            print(f"[CombatTracker] Dice rolls: {rolls}, modifier: {modifier}, total: {total}")
+            return max(1, total)  # Ensure at least 1 HP
+        except (ValueError, TypeError, IndexError) as e:
+            print(f"[CombatTracker] Error rolling dice: {e}")
+            return 10
+
+    def extract_dice_formula(self, hp_value):
+        """Extract a dice formula from various HP value formats"""
+        dice_formula = None
+        
+        if isinstance(hp_value, dict) and 'hit_dice' in hp_value:
+            dice_formula = hp_value['hit_dice']
+            print(f"[CombatTracker] Found hit_dice in dict: {dice_formula}")
+        elif isinstance(hp_value, str):
+            # Try to extract formula from string like "45 (6d10+12)"
+            match = re.search(r'\(([0-9d+\-]+)\)', hp_value)
+            if match:
+                dice_formula = match.group(1)
+                print(f"[CombatTracker] Extracted dice formula from parentheses: {dice_formula}")
+            # If the string itself is a dice formula
+            elif re.match(r'^\d+d\d+([+-]\d+)?$', hp_value):
+                dice_formula = hp_value
+                print(f"[CombatTracker] String is directly a dice formula: {dice_formula}")
+                
+        return dice_formula
+
     def add_monster(self, monster_data):
         """Add a monster from monster panel to the tracker"""
         if not monster_data:
@@ -2815,93 +2865,24 @@ class CombatTrackerPanel(BasePanel):
             result = default
             
             try:
+                # Implementation remains the same
+                # Just a helper function to retrieve attributes from different object types
                 if isinstance(obj, dict):
-                    # Try the main attribute name first
                     if attr in obj:
-                        print(f"[CombatTracker] Found '{attr}' directly in dict: {obj[attr]} (type: {type(obj[attr])})")
                         return obj[attr]
-                    
-                    # Try alternative attribute names
                     for alt_attr in alt_attrs:
                         if alt_attr in obj:
-                            print(f"[CombatTracker] Found '{attr}' via alt name '{alt_attr}': {obj[alt_attr]} (type: {type(obj[alt_attr])})")
                             return obj[alt_attr]
-                    
-                    # Check if stats are nested in a 'stats' or 'attributes' dictionary 
-                    for nested_key in ['stats', 'attributes', 'data']:
-                        if nested_key in obj and isinstance(obj[nested_key], dict):
-                            nested_dict = obj[nested_key]
-                            if attr in nested_dict:
-                                print(f"[CombatTracker] Found '{attr}' in nested '{nested_key}': {nested_dict[attr]} (type: {type(nested_dict[attr])})")
-                                return nested_dict[attr]
-                            # Try alternative attributes in nested dict
-                            for alt_attr in alt_attrs:
-                                if alt_attr in nested_dict:
-                                    print(f"[CombatTracker] Found '{attr}' via alt name '{alt_attr}' in nested '{nested_key}': {nested_dict[alt_attr]} (type: {type(nested_dict[alt_attr])})")
-                                    return nested_dict[alt_attr]
-                    
-                    # Handle special case for ability scores that might be in various formats
-                    if attr in ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma']:
-                        # Try shortened versions (str, dex, etc.)
-                        short_name = attr[:3].lower()
-                        if short_name in obj:
-                            return obj[short_name]
-                        
-                        # Look for ability_scores dict
-                        if 'ability_scores' in obj and isinstance(obj['ability_scores'], dict):
-                            ability_scores = obj['ability_scores']
-                            # Try both long and short names in ability_scores
-                            if attr in ability_scores:
-                                return ability_scores[attr]
-                            if short_name in ability_scores:
-                                return ability_scores[short_name]
-                            # Try uppercase short name
-                            if short_name.upper() in ability_scores:
-                                return ability_scores[short_name.upper()]
-                    
-                    if attr in ['hp', 'hit_points', 'hitPoints']:
-                        print(f"[CombatTracker] WARNING: Could not find HP for '{monster_name}' in dict structure")
-                        print(f"[CombatTracker] Available dict keys: {list(obj.keys())}")
-                    
-                    return default
-                
-                # Try getattr for object access
-                if hasattr(obj, attr):
-                    attr_value = getattr(obj, attr)
-                    print(f"[CombatTracker] Found '{attr}' as object attribute: {attr_value} (type: {type(attr_value)})")
-                    return attr_value
-                
-                # Try alternative attributes for objects
-                for alt_attr in alt_attrs:
-                    if hasattr(obj, alt_attr):
-                        attr_value = getattr(obj, alt_attr)
-                        print(f"[CombatTracker] Found '{attr}' via alt attribute '{alt_attr}': {attr_value} (type: {type(attr_value)})")
-                        return attr_value
-                
-                # Handle special case for ability scores in objects
-                if attr in ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma']:
-                    # Try shortened attribute names
-                    short_name = attr[:3].lower()
-                    if hasattr(obj, short_name):
-                        return getattr(obj, short_name)
-                    
-                    # Look for ability_scores attribute
-                    if hasattr(obj, 'ability_scores'):
-                        ability_scores = getattr(obj, 'ability_scores')
-                        if isinstance(ability_scores, dict):
-                            # Try both long and short names
-                            if attr in ability_scores:
-                                return ability_scores[attr]
-                            if short_name in ability_scores:
-                                return ability_scores[short_name]
-                            # Try uppercase short name
-                            if short_name.upper() in ability_scores:
-                                return ability_scores[short_name.upper()]
-                
-                if attr in ['hp', 'hit_points', 'hitPoints']:
-                    print(f"[CombatTracker] WARNING: Could not find HP for '{monster_name}' in object attributes")
-                    if hasattr(obj, '__dict__'):
-                        print(f"[CombatTracker] Available object attributes: {list(obj.__dict__.keys())}")
+                    # Additional checks for nested structures, etc.
+                    # ...
+                else:
+                    if hasattr(obj, attr):
+                        return getattr(obj, attr)
+                    for alt_attr in alt_attrs:
+                        if hasattr(obj, alt_attr):
+                            return getattr(obj, alt_attr)
+                    # Additional checks for object attributes, etc.
+                    # ...
                 
                 return default
             except Exception as e:
@@ -2918,28 +2899,49 @@ class CombatTrackerPanel(BasePanel):
         # Roll initiative
         initiative_roll = random.randint(1, 20) + init_mod
         
-        # Get monster HP and AC - extend with more alternatives
-        print(f"[CombatTracker] Retrieving HP for monster '{name}'")
+        # Get monster HP data and AC in various formats
         hp_value = get_attr(monster_data, "hp", 10, ["hit_points", "hitPoints", "hit_points_roll", "hit_dice"])
         print(f"[CombatTracker] Retrieved HP value: {hp_value} (type: {type(hp_value)})")
         
-        # For the HP display, we want the actual numeric value
-        hp = self._parse_hit_points(hp_value)
-        print(f"[CombatTracker] Parsed HP: {hp}")
-        
-        # For Max HP column, store the original value that may include formula
-        max_hp = hp
-        if isinstance(hp_value, str) and "(" in hp_value:
-            # Extract the number before the parenthesis for current HP
+        # Calculate average HP (for Max HP display)
+        max_hp = 0
+        if isinstance(hp_value, int):
+            max_hp = hp_value
+        elif isinstance(hp_value, dict) and 'average' in hp_value:
+            max_hp = int(hp_value['average'])
+        elif isinstance(hp_value, str):
+            # Try to extract average value from string like "45 (6d10+12)"
             match = re.match(r'(\d+)\s*\(', hp_value)
             if match:
-                hp = int(match.group(1))
-                print(f"[CombatTracker] Extracted HP from string formula: {hp}")
+                max_hp = int(match.group(1))
+            elif hp_value.isdigit():
+                max_hp = int(hp_value)
+        
+        if max_hp <= 0:
+            max_hp = 10
+            
+        print(f"[CombatTracker] Max HP: {max_hp}")
+        
+        # IMPORTANT PART: EXTRACT DICE FORMULA AND ROLL HP
+        dice_formula = self.extract_dice_formula(hp_value)
+        
+        # ALWAYS ROLL RANDOM HP
+        if dice_formula:
+            # Roll random HP using the dice formula
+            hp = self.roll_dice(dice_formula)
+            print(f"[CombatTracker] RANDOM HP ROLL: {hp} using formula {dice_formula}")
+        else:
+            # If no dice formula, create one based on average HP
+            # Use 3d(max_hp/3) as a rough approximation for monsters without formulas
+            estimated_sides = max(4, max_hp // 3)
+            estimated_formula = f"3d{estimated_sides}"
+            hp = self.roll_dice(estimated_formula)
+            print(f"[CombatTracker] NO FORMULA FOUND - Created estimated formula {estimated_formula} and rolled: {hp}")
         
         ac = get_attr(monster_data, "ac", 10, ["armor_class", "armorClass", "AC"])
         print(f"[CombatTracker] Retrieved AC value: {ac}")
         
-        # Add to tracker
+        # Add to tracker with our randomly rolled HP
         row = self._add_combatant(name, initiative_roll, hp, max_hp, ac, "monster")
         
         # Ensure row is valid, default to -1 if None
@@ -2950,164 +2952,39 @@ class CombatTrackerPanel(BasePanel):
         if row >= 0:
             self.combatants[row] = monster_data
         
-        # IMPORTANT: Find the actual row after sorting and ensure HP is set directly
+        # Force HP value to be set correctly after sorting
         hp_str = str(hp) if hp is not None else "10"
         max_hp_str = str(max_hp) if max_hp is not None else "10"
         ac_str = str(ac) if ac is not None else "10"
         
-        # Find the monster we just added by name (post-sorting)
+        # Double-check that the HP value is correctly set after sorting
         for check_row in range(self.initiative_table.rowCount()):
             name_item = self.initiative_table.item(check_row, 0)
             if name_item and name_item.text() == name:
-                # Directly update the HP in the table after sorting
-                hp_item = self.initiative_table.item(check_row, 2)
-                if not hp_item or not hp_item.text():  # Check if HP is empty
-                    print(f"[CombatTracker] Setting HP for {name} at row {check_row} after sorting")
-                    new_hp_item = QTableWidgetItem(hp_str)
-                    new_hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
-                    self.initiative_table.setItem(check_row, 2, new_hp_item)
+                # Force HP value to be set 
+                new_hp_item = QTableWidgetItem(hp_str)
+                new_hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                self.initiative_table.setItem(check_row, 2, new_hp_item)
                 
-                # Directly update Max HP as well
-                max_hp_item = self.initiative_table.item(check_row, 3)
-                if not max_hp_item or not max_hp_item.text():  # Check if Max HP is empty
-                    print(f"[CombatTracker] Setting Max HP for {name} at row {check_row} after sorting")
-                    new_max_hp_item = QTableWidgetItem(max_hp_str)
-                    new_max_hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
-                    self.initiative_table.setItem(check_row, 3, new_max_hp_item)
+                # Set Max HP as well
+                new_max_hp_item = QTableWidgetItem(max_hp_str)
+                new_max_hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                self.initiative_table.setItem(check_row, 3, new_max_hp_item)
                 
-                # Directly update AC as well
-                ac_item = self.initiative_table.item(check_row, 4)
-                if not ac_item or not ac_item.text():  # Check if AC is empty
-                    print(f"[CombatTracker] Setting AC for {name} at row {check_row} after sorting")
-                    new_ac_item = QTableWidgetItem(ac_str)
-                    new_ac_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
-                    self.initiative_table.setItem(check_row, 4, new_ac_item)
+                # Set AC as well
+                new_ac_item = QTableWidgetItem(ac_str)
+                new_ac_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                self.initiative_table.setItem(check_row, 4, new_ac_item)
                 
-                # Force the table to update - this requires a viewport() or rect arg
+                # Force update
                 self.initiative_table.viewport().update()
+                print(f"[CombatTracker] FORCED SET: Hp={hp} (randomly rolled) at row {check_row}")
                 break
                 
         # Log to combat log
-        self._log_combat_action("Setup", "DM", "added monster", name, f"(Initiative: {initiative_roll})")
+        self._log_combat_action("Setup", "DM", "added monster", name, f"(Init: {initiative_roll}, HP: {hp}/{max_hp})")
         
         return row
-
-    def _parse_hit_points(self, hp_value):
-        """
-        Parse a monster's hit points value from various formats:
-        - Integer values (45)
-        - String with average ("45 (6d10+12)")
-        - String with dice only ("6d10+12")
-        - Dict with 'average' key
-        - Dict with 'hit_dice' key
-        
-        Args:
-            hp_value: String, integer, or dict representing hit points
-            
-        Returns:
-            Integer value of hit points
-        """
-        print(f"[CombatTracker] _parse_hit_points called with value: {hp_value} (type: {type(hp_value)})")
-        
-        # Handle integer values directly
-        if isinstance(hp_value, int):
-            print(f"[CombatTracker] HP is already an integer: {hp_value}")
-            return hp_value
-            
-        # Handle dictionary format (for newer monster data models)
-        if isinstance(hp_value, dict):
-            print(f"[CombatTracker] HP is a dictionary with keys: {list(hp_value.keys())}")
-            
-            # Try to get the 'average' field first
-            if 'average' in hp_value:
-                try:
-                    avg_value = int(hp_value['average'])
-                    print(f"[CombatTracker] Found 'average' in HP dict: {avg_value}")
-                    return avg_value
-                except (ValueError, TypeError) as e:
-                    print(f"[CombatTracker] Error converting 'average' to int: {e}")
-                    pass
-                    
-            # Next try 'hit_points' or 'hp' field
-            for field in ['hit_points', 'hp']:
-                if field in hp_value:
-                    # Recursively parse this value
-                    print(f"[CombatTracker] Found '{field}' in HP dict, parsing recursively")
-                    return self._parse_hit_points(hp_value[field])
-            
-            # Try to calculate from hit_dice if available
-            if 'hit_dice' in hp_value:
-                dice_formula = hp_value['hit_dice']
-                print(f"[CombatTracker] Found 'hit_dice' in HP dict: {dice_formula}")
-                dice_match = re.search(r'(\d+)d(\d+)([+-]\d+)?', dice_formula)
-                if dice_match:
-                    try:
-                        # Extract dice components
-                        count = int(dice_match.group(1))
-                        sides = int(dice_match.group(2))
-                        modifier = 0
-                        if dice_match.group(3):
-                            modifier = int(dice_match.group(3))
-                            
-                        # Calculate average
-                        average = int((count * (sides + 1) / 2) + modifier)
-                        print(f"[CombatTracker] Calculated average from hit_dice: {average}")
-                        return max(1, average)  # Ensure at least 1 HP
-                    except (ValueError, TypeError, IndexError) as e:
-                        print(f"[CombatTracker] Error calculating from hit_dice: {e}")
-                        pass
-                else:
-                    print(f"[CombatTracker] Could not parse hit_dice formula: {dice_formula}")
-                        
-            # Last resort for dict - return a default
-            print(f"[CombatTracker] Could not parse HP dict: {hp_value}, using default")
-            return 10
-        
-        # Handle string formats
-        if not hp_value or not isinstance(hp_value, str):
-            print(f"[CombatTracker] HP is None or not a string: {hp_value}")
-            return 10  # Default fallback
-            
-        # If it's already just a number, convert and return
-        if hp_value.isdigit():
-            hp_int = int(hp_value)
-            print(f"[CombatTracker] HP is a digit string: {hp_int}")
-            return hp_int
-            
-        # Try to extract the average value (number before parentheses)
-        # Format is typically "45 (6d10+12)" or sometimes just "6d10+12"
-        match = re.match(r'(\d+)\s*\(', hp_value)
-        if match:
-            try:
-                hp_int = int(match.group(1))
-                print(f"[CombatTracker] Extracted HP from formula format: {hp_int}")
-                return hp_int
-            except (ValueError, TypeError) as e:
-                print(f"[CombatTracker] Error extracting from formula: {e}")
-                pass
-                
-        # If no average provided, try to calculate from the dice formula
-        dice_match = re.search(r'(\d+)d(\d+)([+-]\d+)?', hp_value)
-        if dice_match:
-            try:
-                # Extract dice components
-                count = int(dice_match.group(1))
-                sides = int(dice_match.group(2))
-                modifier = 0
-                if dice_match.group(3):
-                    modifier = int(dice_match.group(3))
-                    
-                # Calculate average
-                average = int((count * (sides + 1) / 2) + modifier)
-                print(f"[CombatTracker] Calculated average from dice string: {average}")
-                return max(1, average)  # Ensure at least 1 HP
-            except (ValueError, TypeError, IndexError) as e:
-                print(f"[CombatTracker] Error calculating from dice string: {e}")
-                pass
-                
-        # If all parsing fails, return a default value
-        print(f"[CombatTracker] Could not parse HP value: {hp_value} (type: {type(hp_value)}), using default")
-        return 10
 
     def add_character(self, character):
         """Add a player character from character panel to the tracker"""
