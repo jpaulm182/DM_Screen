@@ -1330,29 +1330,40 @@ class CombatTrackerPanel(BasePanel):
         # Create name item with combatant type stored in user role
         name_item = QTableWidgetItem(name)
         name_item.setData(Qt.UserRole, combatant_type)  # Store type with the name item
+        # Ensure only standard flags (no checkbox)
+        name_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
         self.initiative_table.setItem(row, 0, name_item)
         
         # Set initiative
         init_item = QTableWidgetItem(str(initiative))
         init_item.setData(Qt.DisplayRole, initiative)  # For sorting
+        init_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
         self.initiative_table.setItem(row, 1, init_item)
         
         # Set HP
         hp_item = QTableWidgetItem(str(hp))
+        hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
         self.initiative_table.setItem(row, 2, hp_item)
         
         # Set AC
         ac_item = QTableWidgetItem(str(ac))
+        ac_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
         self.initiative_table.setItem(row, 3, ac_item)
         
         # Set status as empty initially
-        self.initiative_table.setItem(row, 4, QTableWidgetItem(""))
+        status_item = QTableWidgetItem("")
+        status_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+        self.initiative_table.setItem(row, 4, status_item)
         
-        # Set notes as empty initially
-        self.initiative_table.setItem(row, 5, QTableWidgetItem(""))
+        # Set concentration as unchecked initially
+        conc_item = QTableWidgetItem("")
+        conc_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
+        conc_item.setCheckState(Qt.Unchecked)
+        self.initiative_table.setItem(row, 5, conc_item)
         
         # Set type (monster, character, etc.) for filtering
         type_item = QTableWidgetItem(combatant_type)
+        type_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
         self.initiative_table.setItem(row, 6, type_item)
         
         # Sort the initiative order
@@ -2510,12 +2521,12 @@ class CombatTrackerPanel(BasePanel):
                 value = combatant.get(key, "")
                 item = QTableWidgetItem()
                 
-                
                 if col == 5:  # Concentration
-                    item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                    item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
                     item.setCheckState(Qt.Checked if value else Qt.Unchecked)
                 else:
                     item.setText(str(value))
+                    item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
                 
                 # Restore max HP
                 if col == 2:
