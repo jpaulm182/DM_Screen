@@ -282,6 +282,11 @@ class MainWindow(QMainWindow):
         # Help menu
         help_menu = menu_bar.addMenu("&Help")
         
+        # Add keyboard shortcuts reference
+        shortcuts_action = QAction("Keyboard Shortcuts", self)
+        shortcuts_action.triggered.connect(self._show_shortcuts)
+        help_menu.addAction(shortcuts_action)
+        
         about_action = QAction("About", self)
         about_action.triggered.connect(self._show_about)
         help_menu.addAction(about_action)
@@ -1097,3 +1102,140 @@ class MainWindow(QMainWindow):
         if dialog.exec_():
             # Apply the new settings by reorganizing panels
             self._smart_organize_panels()
+
+    def _show_shortcuts(self):
+        """Display all available keyboard shortcuts in the application"""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QScrollArea, QWidget, QGridLayout
+        
+        # Create dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Keyboard Shortcuts")
+        dialog.setMinimumSize(600, 400)
+        
+        # Main layout
+        main_layout = QVBoxLayout(dialog)
+        
+        # Create scroll area for shortcuts
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        main_layout.addWidget(scroll)
+        
+        # Content widget
+        content = QWidget()
+        grid = QGridLayout(content)
+        grid.setColumnStretch(1, 1)  # Make description column take more space
+        
+        # Add a header
+        header_label = QLabel("<h2>DM Screen Keyboard Shortcuts</h2>")
+        grid.addWidget(header_label, 0, 0, 1, 3)
+        
+        # Group shortcuts by category
+        row = 1
+        
+        # Application shortcuts
+        grid.addWidget(QLabel("<h3>Application Shortcuts</h3>"), row, 0, 1, 3)
+        row += 1
+        
+        grid.addWidget(QLabel("<b>Ctrl+N</b>"), row, 0)
+        grid.addWidget(QLabel("New Session"), row, 1)
+        grid.addWidget(QLabel("File Menu"), row, 2)
+        row += 1
+        
+        grid.addWidget(QLabel("<b>Ctrl+S</b>"), row, 0)
+        grid.addWidget(QLabel("Save Current Layout"), row, 1)
+        grid.addWidget(QLabel("File Menu"), row, 2)
+        row += 1
+        
+        grid.addWidget(QLabel("<b>Ctrl+L</b>"), row, 0)
+        grid.addWidget(QLabel("Load Layout"), row, 1)
+        grid.addWidget(QLabel("File Menu"), row, 2)
+        row += 1
+        
+        grid.addWidget(QLabel("<b>Ctrl+H</b>"), row, 0)
+        grid.addWidget(QLabel("Show/Hide Welcome Panel"), row, 1)
+        grid.addWidget(QLabel("View Menu"), row, 2)
+        row += 1
+        
+        grid.addWidget(QLabel("<b>Ctrl+O</b>"), row, 0)
+        grid.addWidget(QLabel("Smart Organize Panels"), row, 1)
+        grid.addWidget(QLabel("View Menu"), row, 2)
+        row += 1
+        
+        grid.addWidget(QLabel("<b>Ctrl+Q</b>"), row, 0)
+        grid.addWidget(QLabel("Exit Application"), row, 1)
+        grid.addWidget(QLabel("File Menu"), row, 2)
+        row += 1
+        
+        # Panel shortcuts
+        grid.addWidget(QLabel("<h3>Panel Shortcuts</h3>"), row, 0, 1, 3)
+        row += 1
+        
+        grid.addWidget(QLabel("<b>Ctrl+1</b>"), row, 0)
+        grid.addWidget(QLabel("Show/Hide Combat Tracker"), row, 1)
+        grid.addWidget(QLabel("Toolbar"), row, 2)
+        row += 1
+        
+        grid.addWidget(QLabel("<b>Ctrl+2</b>"), row, 0)
+        grid.addWidget(QLabel("Show/Hide Dice Roller"), row, 1)
+        grid.addWidget(QLabel("Toolbar"), row, 2)
+        row += 1
+        
+        grid.addWidget(QLabel("<b>Ctrl+3</b>"), row, 0)
+        grid.addWidget(QLabel("Show/Hide Monsters"), row, 1)
+        grid.addWidget(QLabel("Toolbar"), row, 2)
+        row += 1
+        
+        grid.addWidget(QLabel("<b>Ctrl+4</b>"), row, 0)
+        grid.addWidget(QLabel("Show/Hide Spell Reference"), row, 1)
+        grid.addWidget(QLabel("Toolbar"), row, 2)
+        row += 1
+        
+        grid.addWidget(QLabel("<b>Ctrl+5</b>"), row, 0)
+        grid.addWidget(QLabel("Show/Hide Conditions"), row, 1)
+        grid.addWidget(QLabel("Toolbar"), row, 2)
+        row += 1
+        
+        grid.addWidget(QLabel("<b>Ctrl+6</b>"), row, 0)
+        grid.addWidget(QLabel("Show/Hide Rules Reference"), row, 1)
+        grid.addWidget(QLabel("Toolbar"), row, 2)
+        row += 1
+        
+        grid.addWidget(QLabel("<b>Ctrl+7</b>"), row, 0)
+        grid.addWidget(QLabel("Show/Hide Session Notes"), row, 1)
+        grid.addWidget(QLabel("Toolbar"), row, 2)
+        row += 1
+        
+        grid.addWidget(QLabel("<b>Ctrl+8</b>"), row, 0)
+        grid.addWidget(QLabel("Show/Hide Player Characters"), row, 1)
+        grid.addWidget(QLabel("Toolbar"), row, 2)
+        row += 1
+        
+        grid.addWidget(QLabel("<b>Ctrl+9</b>"), row, 0)
+        grid.addWidget(QLabel("Show/Hide Encounter Generator"), row, 1)
+        grid.addWidget(QLabel("Toolbar"), row, 2)
+        row += 1
+        
+        grid.addWidget(QLabel("<b>Ctrl+0</b>"), row, 0)
+        grid.addWidget(QLabel("Show/Hide AI Assistant"), row, 1)
+        grid.addWidget(QLabel("Toolbar"), row, 2)
+        row += 1
+        
+        # Panel-specific shortcuts
+        grid.addWidget(QLabel("<h3>Combat Tracker Shortcuts</h3>"), row, 0, 1, 3)
+        row += 1
+        
+        grid.addWidget(QLabel("<b>N</b>"), row, 0)
+        grid.addWidget(QLabel("Next Turn"), row, 1)
+        grid.addWidget(QLabel("Combat Tracker"), row, 2)
+        row += 1
+        
+        # Set the content widget
+        scroll.setWidget(content)
+        
+        # Add close button
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(dialog.accept)
+        main_layout.addWidget(close_button)
+        
+        # Show the dialog
+        dialog.exec()
