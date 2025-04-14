@@ -934,9 +934,11 @@ class MonsterPanel(BasePanel):
         # to avoid overwriting the existing one
         monster_id = self.current_monster.id
         if has_existing_image:
-            # Create a temp filename with "_new" suffix
-            monster_id = f"{monster_id}_new_temp"
-            logger.info(f"Using temporary monster ID for image generation: {monster_id}")
+            # Create a unique temporary ID including timestamp to prevent any file reuse
+            import time
+            timestamp = int(time.time())
+            monster_id = f"{monster_id}_new_{timestamp}"
+            logger.info(f"Using unique temporary monster ID for image generation: {monster_id}")
         
         # Define callback to process the image
         def on_image_generated(image_path, error):
@@ -960,25 +962,22 @@ class MonsterPanel(BasePanel):
                 return
                 
             try:
-                # Don't update the monster object directly here, let the save process handle it
+                logger.info(f"Image generated successfully at path: {image_path}")
                 
-                # If monster already has an image, we'll show the side-by-side dialog in _save_monster_image_path_slot
-                # otherwise we can display the new image here
-                if not has_existing_image:
-                    # Display the image
-                    pixmap = QPixmap(image_path)
-                    if not pixmap.isNull():
-                        # Scale the image to fit the label while maintaining aspect ratio
-                        pixmap = pixmap.scaled(
-                            300, 300,
-                            Qt.KeepAspectRatio, 
-                            Qt.SmoothTransformation
-                        )
-                        self.image_label.setPixmap(pixmap)
-                        logger.info(f"Monster image generated and displayed: {image_path}")
-                    else:
-                        logger.error(f"Failed to load generated image: {image_path}")
-                        self.image_label.setText("Failed to load generated image")
+                # Display the image
+                pixmap = QPixmap(image_path)
+                if not pixmap.isNull():
+                    # Scale the image to fit the label while maintaining aspect ratio
+                    pixmap = pixmap.scaled(
+                        300, 300,
+                        Qt.KeepAspectRatio, 
+                        Qt.SmoothTransformation
+                    )
+                    self.image_label.setPixmap(pixmap)
+                    logger.info(f"Monster image generated and displayed: {image_path}")
+                else:
+                    logger.error(f"Failed to load generated image into pixmap: {image_path}")
+                    self.image_label.setText("Failed to load generated image")
                 
                 # Emit signal to save image path in the main thread
                 # This avoids threading issues with SQLite
@@ -1018,25 +1017,31 @@ class MonsterPanel(BasePanel):
                     app_dir = self.app_state.app_dir
                     resolved_existing_path = os.path.normpath(os.path.join(app_dir, existing_image_path))
                 
-                # If it has an existing image, show comparison dialog
-                logger.info("Monster already has image. Showing comparison dialog.")
-                
-                # Create the comparison dialog in the main thread
-                comparison_dialog = ImageComparisonDialog(
-                    self,  # Parent in same thread
-                    resolved_existing_path,
-                    image_path,
-                    self.current_monster.name
-                )
-                
-                # Connect to the image selection signal
-                comparison_dialog.image_selected.connect(self._on_image_selected)
-                
-                # Show the dialog
-                comparison_dialog.exec()
-                
-                # Dialog handling is done via the _on_image_selected slot
-                return
+                # Ensure the old and new paths are different
+                if resolved_existing_path and os.path.exists(resolved_existing_path) and image_path != resolved_existing_path:
+                    logger.info("Monster already has image. Showing comparison dialog.")
+                    
+                    # Make a copy of the old image to ensure separation from new image
+                    old_image_temp = resolved_existing_path
+                    
+                    # Create the comparison dialog in the main thread
+                    comparison_dialog = ImageComparisonDialog(
+                        self,  # Parent in same thread
+                        old_image_temp,
+                        image_path,
+                        self.current_monster.name
+                    )
+                    
+                    # Connect to the image selection signal
+                    comparison_dialog.image_selected.connect(self._on_image_selected)
+                    
+                    # Show the dialog
+                    comparison_dialog.exec()
+                    
+                    # Dialog handling is done via the _on_image_selected slot
+                    return
+                else:
+                    logger.warning(f"Old image path issue - resolved_existing_path={resolved_existing_path}, exists={os.path.exists(resolved_existing_path) if resolved_existing_path else False}")
             
             # No existing image, just save the new one
             self._save_image_to_monster(image_path)
@@ -1188,9 +1193,27 @@ class ImageComparisonDialog(QDialog):
     def __init__(self, parent=None, old_image_path=None, new_image_path=None, monster_name="Monster"):
         """Initialize with paths to both the old and new images."""
         super().__init__(parent)
+        
+        # Safeguard against identical paths
+        if old_image_path == new_image_path:
+            logger.warning("Old and new image paths are identical, examining files for differences...")
+            # Try to verify if they are actually different files
+            if os.path.exists(old_image_path) and os.path.exists(new_image_path):
+                try:
+                    # Compare file modification times or sizes to see if they might be different
+                    old_stat = os.stat(old_image_path)
+                    new_stat = os.stat(new_image_path)
+                    
+                    if old_stat.st_mtime == new_stat.st_mtime and old_stat.st_size == new_stat.st_size:
+                        logger.error("Detected identical files by size and modification time. This will cause display issues.")
+                except Exception as e:
+                    logger.error(f"Error comparing file stats: {e}")
+        
         self.old_image_path = old_image_path
         self.new_image_path = new_image_path
         self.monster_name = monster_name
+        
+        logger.info(f"ImageComparisonDialog initialized with old_path={old_image_path}, new_path={new_image_path}")
         
         # Set up the dialog
         self.setWindowTitle(f"Image Comparison - {monster_name}")
@@ -1278,10 +1301,21 @@ class ImageComparisonDialog(QDialog):
             
             try:
                 # Create a fresh QPixmap to avoid caching issues
-                pixmap = QPixmap()
-                success = pixmap.load(path)
+                pixmap = None
                 
-                if not success or pixmap.isNull():
+                # Force load from file and avoid any caching
+                with open(path, 'rb') as f:
+                    image_data = f.read()
+                    if image_data:
+                        # Create pixmap from the raw image data
+                        pixmap = QPixmap()
+                        pixmap.loadFromData(image_data)
+                        logger.info(f"Loaded image from raw data, size: {len(image_data)} bytes")
+                    else:
+                        logger.error(f"Image file is empty: {path}")
+                        return False
+                
+                if not pixmap or pixmap.isNull():
                     label.setText(f"Failed to load {'current' if is_old else 'new'} image")
                     logger.error(f"Failed to load pixmap: {path}")
                     return False
@@ -1300,18 +1334,39 @@ class ImageComparisonDialog(QDialog):
                 
                 # Display the image with caption
                 label.setPixmap(pixmap)
-                logger.info(f"Successfully loaded {'current' if is_old else 'new'} image: {path}")
+                logger.info(f"Successfully loaded {'current' if is_old else 'new'} image: {path} ({pixmap.width()}x{pixmap.height()})")
                 return True
             except Exception as e:
                 logger.error(f"Error loading {'current' if is_old else 'new'} image: {e}", exc_info=True)
                 label.setText(f"Error loading {'current' if is_old else 'new'} image: {str(e)}")
                 return False
         
-        # Load both images - explicitly passing is_old flag
+        # To avoid image caching, ensure application has processed all pending events
+        QApplication.processEvents()
+        
+        # Load old image first
         old_loaded = load_image(self.old_image_path, self.old_image_label, is_old=True)
+        
         # Force application to process events before loading the second image
         QApplication.processEvents()
+        
+        # Clear any cached images in Qt's internal cache
+        QPixmap.fromImage(QPixmap(1, 1).toImage())
+        
+        # Load new image
         new_loaded = load_image(self.new_image_path, self.new_image_label, is_old=False)
+        
+        # Log info about the loaded images for debugging
+        logger.info(f"Image loading results - Old: {old_loaded}, New: {new_loaded}")
+        if old_loaded and new_loaded:
+            old_pixmap = self.old_image_label.pixmap()
+            new_pixmap = self.new_image_label.pixmap()
+            if old_pixmap and new_pixmap:
+                logger.info(f"Old image size: {old_pixmap.width()}x{old_pixmap.height()}, New image size: {new_pixmap.width()}x{new_pixmap.height()}")
+                
+                # Double-check if the pixmaps are identical (would indicate a problem)
+                if old_pixmap.toImage() == new_pixmap.toImage():
+                    logger.warning("WARNING: Old and new images appear to be identical in the comparison dialog!")
         
         # Enable/disable buttons based on whether images loaded
         self.keep_old_btn.setEnabled(old_loaded)
