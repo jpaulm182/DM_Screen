@@ -160,8 +160,8 @@ class EncounterGeneratorPanel(BasePanel):
                 model=model_id,
                 messages=[{"role": "user", "content": prompt}],
                 callback=self._handle_generation_result,
-                temperature=0.75, 
-                max_tokens=2000 
+                temperature=0.7,
+                max_tokens=4000  # Increased to 4000 for longer responses
             )
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to start generation: {e}")

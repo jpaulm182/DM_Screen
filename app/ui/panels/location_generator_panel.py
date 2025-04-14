@@ -359,6 +359,9 @@ class LocationGeneratorPanel(BasePanel):
                 QMessageBox.warning(self, "LLM Error", str(error))
                 return
             
+            # Debug: Print the raw LLM output
+            print("RAW LLM OUTPUT:", response)
+            
             # Try to extract JSON from the response
             player_desc = ""
             dm_desc = ""
@@ -458,7 +461,7 @@ class LocationGeneratorPanel(BasePanel):
             messages=[{"role": "user", "content": prompt}],
             callback=self._handle_generation_result,
             temperature=0.7,
-            max_tokens=2000
+            max_tokens=4000
         )
     
     def _get_generation_params(self):

@@ -150,9 +150,9 @@ class TreasureGeneratorPanel(BasePanel):
             self.llm_service.generate_completion_async(
                 model=model_id,
                 messages=[{"role": "user", "content": prompt}],
-                callback=self._handle_generation_result, # Use background handler
-                temperature=0.7, 
-                max_tokens=1500 # Allow more tokens for detailed treasure/items
+                callback=self._handle_generation_result,
+                temperature=0.7,
+                max_tokens=4000  # Increased to 4000 for longer responses
             )
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to start generation: {e}")

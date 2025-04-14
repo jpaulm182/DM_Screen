@@ -314,8 +314,8 @@ class RulesClarificationPanel(BasePanel):
             model=model_id,
             messages=[{"role": "user", "content": prompt}],
             callback=self._handle_generation_result,
-            temperature=0.3,  # Lower temperature for more deterministic factual responses
-            max_tokens=1500
+            temperature=0.7,
+            max_tokens=4000  # Increased to 4000 for longer responses
         )
     
     def _create_rules_prompt(self, query_text):

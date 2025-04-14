@@ -294,7 +294,7 @@ SESSION NOTES:
             
             # Call the LLM
             llm_service = self.app_state.llm_service
-            result = llm_service.generate_text(prompt, max_tokens=1000)
+            result = llm_service.generate_text(prompt, max_tokens=4000)  # Increased to 4000 for longer recaps
             
             # Update the result text
             self.result_text.setText(result)
@@ -347,17 +347,33 @@ class SessionNotesPanel(BasePanel):
     PANEL_DESCRIPTION = "Manage session notes, campaign events, and keep track of important plot elements"
     
     # Add signal for thread-safe LLM response handling
-    entity_generation_result = Signal(str, str, str)  # response, error, selected_text
+    entity_generation_result = Signal(str, str, str, str)  # response, error, selected_text, entity_type
     
     def __init__(self, app_state, panel_id=None):
         """Initialize the session notes panel"""
-        super().__init__(app_state, panel_id)
+        # Initialize data before calling the parent constructor
+        self.notes = []
+        self.filtered_notes = []
+        self.all_tags = []
+        self.current_note = None
+        
+        # This date tracks when the last recap was generated
+        # When generating a new recap, only notes created or updated after
+        # this date will be included by default, unless notes are explicitly selected
+        self.last_recap_date = None
+        
+        # Call parent constructor with the title
+        title = panel_id or self.PANEL_TITLE
+        super().__init__(app_state, title)
         
         # Connect signal to handler with thread safety
         self.entity_generation_result.connect(self._handle_entity_generation_result)
         
-        self._setup_ui()
+        # Load notes
         self._load_notes()
+        
+        # Load last recap date from settings
+        self.last_recap_date = self.app_state.get_setting("last_recap_date")
     
     def _setup_ui(self):
         """Set up the panel UI components"""
@@ -563,23 +579,24 @@ class SessionNotesPanel(BasePanel):
             item.setData(Qt.UserRole, note['id'])
             
             # Add timestamp tooltip
-            created_date = QDateTime.fromString(note['created_at'], Qt.ISODate)
-            updated_date = QDateTime.fromString(note['updated_at'], Qt.ISODate)
-            
-            created_str = created_date.toString("yyyy-MM-dd hh:mm:ss")
-            updated_str = updated_date.toString("yyyy-MM-dd hh:mm:ss")
-            
+            # Defensive: Use empty string if 'created_at' or 'updated_at' is missing
+            created_str = note.get('created_at', '')
+            updated_str = note.get('updated_at', '')
+            if created_str:
+                created_date = QDateTime.fromString(created_str, Qt.ISODate)
+                created_str = created_date.toString("yyyy-MM-dd hh:mm:ss")
+            if updated_str:
+                updated_date = QDateTime.fromString(updated_str, Qt.ISODate)
+                updated_str = updated_date.toString("yyyy-MM-dd hh:mm:ss")
             # Format the tooltip with both timestamps
             tooltip = f"Created: {created_str}\nUpdated: {updated_str}"
-            
             # Add tags to tooltip if available
             if note.get('tags'):
                 tags = note['tags'].split(',')
                 tooltip += f"\nTags: {', '.join(tags)}"
-                
             item.setToolTip(tooltip)
-            
             self.notes_list.addItem(item)
+        # Defensive coding: prevents KeyError if notes are missing timestamp fields
     
     def _update_tag_list(self):
         """Update the tag filter dropdown"""
@@ -682,14 +699,15 @@ class SessionNotesPanel(BasePanel):
         <html>
         <head>
         <style>
-            body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #e0e0e0; background-color: #1e1e1e; }}
-            h1 {{ color: #81a1c1; font-size: 20px; margin-top: 12px; margin-bottom: 8px; }}
-            h2 {{ color: #88c0d0; font-size: 18px; margin-top: 15px; margin-bottom: 6px; }}
-            h3 {{ color: #8fbcbb; font-size: 16px; margin-top: 10px; margin-bottom: 5px; }}
-            p {{ margin: 8px 0; color: #d8dee9; }}
-            ul {{ margin: 5px 0; padding-left: 20px; }}
-            li {{ color: #d8dee9; }}
-            .metadata {{ color: #a0a0a0; font-style: italic; font-size: 0.9em; }}
+            /* Best practices for readability: high contrast, clean font, good spacing */
+            body {{ font-family: 'Segoe UI', Arial, Helvetica, sans-serif; line-height: 1.7; color: #f8f8f2; background-color: #23272e; font-size: 16px; }}
+            h1 {{ color: #ffd700; font-size: 22px; margin-top: 16px; margin-bottom: 10px; font-weight: bold; }}
+            h2 {{ color: #88c0d0; font-size: 19px; margin-top: 14px; margin-bottom: 8px; font-weight: bold; }}
+            h3 {{ color: #8fbcbb; font-size: 17px; margin-top: 10px; margin-bottom: 6px; font-weight: bold; }}
+            p {{ margin: 10px 0; color: #f8f8f2; }}
+            ul {{ margin: 7px 0; padding-left: 22px; }}
+            li {{ color: #f8f8f2; margin-bottom: 4px; }}
+            .metadata {{ color: #a0a0a0; font-style: italic; font-size: 0.95em; }}
             .monster {{ background-color: #2e2220; padding: 15px; border-left: 3px solid #bf616a; border-radius: 4px; margin-bottom: 10px; }}
             .location {{ background-color: #1e2b23; padding: 15px; border-left: 3px solid #a3be8c; border-radius: 4px; margin-bottom: 10px; }}
             .recap {{ background-color: #1a2533; padding: 15px; border-left: 3px solid #5e81ac; border-radius: 4px; margin-bottom: 10px; }}
@@ -697,10 +715,10 @@ class SessionNotesPanel(BasePanel):
             .loot {{ background-color: #2d2922; padding: 15px; border-left: 3px solid #ebcb8b; border-radius: 4px; margin-bottom: 10px; }}
             .rules {{ background-color: #2a2826; padding: 15px; border-left: 3px solid #d08770; border-radius: 4px; margin-bottom: 10px; }}
             .property {{ font-weight: bold; color: #eceff4; }}
-            .stat-block {{ background-color: #2e3440; padding: 10px; margin: 8px 0; border-radius: 4px; border: 1px solid #3b4252; }}
+            .stat-block {{ background-color: #2e3440; padding: 12px; margin: 10px 0; border-radius: 4px; border: 1px solid #3b4252; }}
             table {{ border-collapse: collapse; width: 100%; margin: 10px 0; }}
             th {{ background-color: #3b4252; color: #eceff4; padding: 8px; text-align: left; border: 1px solid #4c566a; }}
-            td {{ border: 1px solid #4c566a; padding: 8px; text-align: left; color: #d8dee9; }}
+            td {{ border: 1px solid #4c566a; padding: 8px; text-align: left; color: #f8f8f2; }}
             .header-icon {{ margin-right: 5px; }}
             .location-header {{ background-color: #2e3c34; padding: 10px; border-radius: 4px; margin-bottom: 15px; }}
             .location-section {{ margin-top: 15px; margin-bottom: 15px; }}
@@ -708,10 +726,10 @@ class SessionNotesPanel(BasePanel):
             .npc-block {{ padding: 8px; border-left: 2px solid #5e81ac; margin: 8px 0; background-color: #2e3440; border-radius: 0 4px 4px 0; }}
             .poi-block {{ padding: 8px; border-left: 2px solid #ebcb8b; margin: 8px 0; background-color: #2e3440; border-radius: 0 4px 4px 0; }}
             .secret-block {{ padding: 8px; border-left: 2px solid #b48ead; margin: 8px 0; background-color: #2e3440; border-radius: 0 4px 4px 0; }}
-            strong {{ color: #ebcb8b; }}
+            strong {{ color: #ffd700; }}
             em {{ color: #a3be8c; font-style: italic; }}
-            a {{ color: #88c0d0; text-decoration: none; }}
-            a:hover {{ text-decoration: underline; }}
+            a {{ color: #88c0d0; text-decoration: underline; }}
+            a:hover {{ text-decoration: underline; background-color: #333; }}
         </style>
         </head>
         <body>
@@ -1133,324 +1151,137 @@ class SessionNotesPanel(BasePanel):
         
         return formatted
         
-    def _format_location_json(self, location_data):
-        """Format a location from JSON data"""
+    def _format_location_json(self, loc_data):
+        """
+        Format a Location JSON object as a D&D-style stat block for display.
+        Shows all fields: name, type, environment, size, population, danger_level, description, points_of_interest, npcs, secrets, player_description, dm_description.
+        """
         html = []
-        
-        # Location name as header
-        name = location_data.get("name", "Unnamed Location")
-        html.append(f'<div class="location-header"><h1>{name}</h1></div>')
-        
-        # Basic information in a stat block
-        html.append('<div class="stat-block">')
-        
-        # Type/Environment row
-        html.append('<div style="display: flex; justify-content: space-between; flex-wrap: wrap;">')
-        
-        # Left column - Type, environment
-        html.append('<div style="flex: 1; min-width: 150px; margin-right: 10px;">')
-        
-        location_type = location_data.get("type", "")
-        if location_type:
-            html.append(f'<div><span class="property">Type:</span> {location_type}</div>')
-        
-        environment = location_data.get("environment", "")
-        if environment:
-            html.append(f'<div><span class="property">Environment:</span> {environment}</div>')
-        
-        html.append('</div>')  # End left column
-        
-        # Right column - Size, population, danger
-        html.append('<div style="flex: 1; min-width: 150px;">')
-        
-        # Try different possible field names for size
-        size = location_data.get("size", location_data.get("size_scale", ""))
-        if size:
-            html.append(f'<div><span class="property">Size:</span> {size}</div>')
-        
-        # Try different possible field names for population
-        population = location_data.get("population", location_data.get("population_activity_level", ""))
-        if population:
-            html.append(f'<div><span class="property">Population:</span> {population}</div>')
-        
-        # Try different possible field names for danger level
-        danger = location_data.get("danger_level", location_data.get("threat_level", ""))
-        if danger:
-            html.append(f'<div><span class="property">Danger Level:</span> {danger}</div>')
-        
-        html.append('</div>')  # End right column
-        html.append('</div>')  # End flex container
-        html.append('</div>')  # End stat block
-        
-        # Narrative output (if present) - process this first
-        narrative = location_data.get("narrative_output", "")
-        if narrative and isinstance(narrative, dict):
-            # Physical description
-            phys_desc = narrative.get("physical_description", "")
-            if phys_desc:
-                html.append('<div class="location-section">')
-                html.append('<h2 class="section-title">Physical Description</h2>')
-                html.append(f'<p>{phys_desc}</p>')
-                html.append('</div>')
-            
-            # Background/history
-            hist_bg = narrative.get("history_background", "")
-            if hist_bg:
-                html.append('<div class="location-section">')
-                html.append('<h2 class="section-title">History & Background</h2>')
-                html.append(f'<p>{hist_bg}</p>')
-                html.append('</div>')
-            
-            # Atmosphere/mood
-            atmos = narrative.get("atmosphere_mood", "")
-            if atmos:
-                html.append('<div class="location-section">')
-                html.append('<h2 class="section-title">Atmosphere & Mood</h2>')
-                html.append(f'<p>{atmos}</p>')
-                html.append('</div>')
-                
-            # Notable threats and challenges
-            threats = narrative.get("notable_threats_challenges", "")
-            if threats:
-                html.append('<div class="location-section">')
-                html.append('<h2 class="section-title">Threats & Challenges</h2>')
-                html.append(f'<p>{threats}</p>')
-                html.append('</div>')
-                
-            # Handle nested POIs from narrative
-            self._append_narrative_points(html, narrative)
-            
-        # Only show description if not redundant with physical_description
-        elif not phys_desc:
-            # Description (only if not part of narrative)
-            description = location_data.get("description", "")
-            if description:
-                html.append('<div class="location-section">')
-                html.append('<h2 class="section-title">Description</h2>')
-                html.append(f'<p>{description}</p>')
-                html.append('</div>')
-        
-        # If narrative was a string or not present, handle other top-level fields
-        if not narrative or not isinstance(narrative, dict):
-            # Description
-            description = location_data.get("description", "")
-            if description:
-                html.append('<div class="location-section">')
-                html.append('<h2 class="section-title">Description</h2>')
-                html.append(f'<p>{description}</p>')
-                html.append('</div>')
-        
-            # History or background if not in narrative
-            history = location_data.get("history", location_data.get("background", ""))
-            if history:
-                html.append('<div class="location-section">')
-                html.append('<h2 class="section-title">History & Background</h2>')
-                html.append(f'<p>{history}</p>')
-                html.append('</div>')
-            
-            # Points of interest - if not already included in narrative
-            points = location_data.get("points_of_interest", [])
-            if points:
-                html.append('<div class="location-section">')
-                html.append('<h2 class="section-title">Points of Interest</h2>')
-                
-                if isinstance(points, list):
-                    for point in points:
-                        if isinstance(point, str):
-                            html.append(f'<div class="poi-block"><p>• {point}</p></div>')
-                        elif isinstance(point, dict):
-                            point_name = point.get("name", "")
-                            point_desc = point.get("description", "")
-                            
-                            if point_name and point_desc:
-                                html.append(f'<div class="poi-block"><h3>{point_name}</h3><p>{point_desc}</p></div>')
-                            elif point_name:
-                                html.append(f'<div class="poi-block"><p>• <strong>{point_name}</strong></p></div>')
-                            elif point_desc:
-                                html.append(f'<div class="poi-block"><p>• {point_desc}</p></div>')
-                elif isinstance(points, str):
-                    html.append(f'<p>{points}</p>')
-                
-                html.append('</div>')
-            
-            # NPCs - if not already included in narrative
-            npcs = location_data.get("npcs", location_data.get("key_npcs", []))
-            if npcs:
-                html.append('<div class="location-section">')
-                html.append('<h2 class="section-title">Notable NPCs</h2>')
-                
-                if isinstance(npcs, list):
-                    for npc in npcs:
-                        if isinstance(npc, str):
-                            html.append(f'<div class="npc-block"><p>• {npc}</p></div>')
-                        elif isinstance(npc, dict):
-                            npc_name = npc.get("name", "")
-                            npc_desc = npc.get("description", "")
-                            
-                            if npc_name and npc_desc:
-                                html.append(f'<div class="npc-block"><h3>{npc_name}</h3><p>{npc_desc}</p></div>')
-                            elif npc_name:
-                                html.append(f'<div class="npc-block"><p>• <strong>{npc_name}</strong></p></div>')
-                            elif npc_desc:
-                                html.append(f'<div class="npc-block"><p>• {npc_desc}</p></div>')
-                elif isinstance(npcs, str):
-                    html.append(f'<p>{npcs}</p>')
-                
-                html.append('</div>')
-            
-            # Secrets - if not already included in narrative
-            secrets = location_data.get("secrets", location_data.get("secrets_hidden_elements", []))
-            if secrets:
-                html.append('<div class="location-section">')
-                html.append('<h2 class="section-title">Secrets</h2>')
-                
-                if isinstance(secrets, list):
-                    for secret in secrets:
-                        if isinstance(secret, str):
-                            html.append(f'<div class="secret-block"><p>• {secret}</p></div>')
-                        elif isinstance(secret, dict):
-                            secret_name = secret.get("name", "")
-                            secret_desc = secret.get("description", secret.get("secret", ""))
-                            
-                            if secret_name and secret_desc:
-                                html.append(f'<div class="secret-block"><h3>{secret_name}</h3><p>{secret_desc}</p></div>')
-                            elif secret_name:
-                                html.append(f'<div class="secret-block"><p>• <strong>{secret_name}</strong></p></div>')
-                            elif secret_desc:
-                                html.append(f'<div class="secret-block"><p>• {secret_desc}</p></div>')
-                elif isinstance(secrets, str):
-                    html.append(f'<p>{secrets}</p>')
-                
-                html.append('</div>')
-                    
-            # Add threats and challenges
-            threats = location_data.get("threats", location_data.get("challenges", []))
-            if threats:
-                html.append('<div class="location-section">')
-                html.append('<h2 class="section-title">Threats & Challenges</h2>')
-                
-                if isinstance(threats, list):
-                    for threat in threats:
-                        if isinstance(threat, str):
-                            html.append(f'<p>• {threat}</p>')
-                        elif isinstance(threat, dict):
-                            threat_name = threat.get("name", "")
-                            threat_desc = threat.get("description", "")
-                            
-                            if threat_name and threat_desc:
-                                html.append(f'<h3>{threat_name}</h3><p>{threat_desc}</p>')
-                            elif threat_name:
-                                html.append(f'<p>• <strong>{threat_name}</strong></p>')
-                            elif threat_desc:
-                                html.append(f'<p>• {threat_desc}</p>')
-                
-                elif isinstance(threats, str):
-                    html.append(f'<p>{threats}</p>')
-                
-                html.append('</div>')
-        
-        # Handle any additional fields
-        for key, value in location_data.items():
-            if key not in ["name", "type", "description", "narrative_output", 
-                          "points_of_interest", "npcs", "key_npcs", "secrets", "secrets_hidden_elements", "history", 
-                          "background", "environment", "size", "size_scale", "population", "population_activity_level",
-                          "danger_level", "threat_level", "atmosphere", "mood", "atmosphere_mood",
-                          "threats", "challenges", "notable_threats_challenges"]:
-                if isinstance(value, str) and value:
-                    title = key.replace('_', ' ').title()
-                    html.append('<div class="location-section">')
-                    html.append(f'<h2 class="section-title">{title}</h2>')
-                    html.append(f'<p>{value}</p>')
-                    html.append('</div>')
-                elif isinstance(value, list) and value:
-                    title = key.replace('_', ' ').title()
-                    html.append('<div class="location-section">')
-                    html.append(f'<h2 class="section-title">{title}</h2>')
-                    
-                    for item in value:
-                        if isinstance(item, str):
-                            html.append(f'<p>• {item}</p>')
-                        elif isinstance(item, dict) and ("name" in item or "description" in item):
-                            item_name = item.get("name", "")
-                            item_desc = item.get("description", "")
-                            
-                            if item_name and item_desc:
-                                html.append(f'<h3>{item_name}</h3><p>{item_desc}</p>')
-                            elif item_name:
-                                html.append(f'<p>• <strong>{item_name}</strong></p>')
-                            elif item_desc:
-                                html.append(f'<p>• {item_desc}</p>')
-                    
-                    html.append('</div>')
-        
-        return ''.join(html)
-    
-    def _append_narrative_points(self, html_list, narrative):
-        """Helper method to append narrative points to the HTML list"""
-        # Points of interest
-        narrative_points = narrative.get("points_of_interest", [])
-        if narrative_points and len(narrative_points) > 0:
-            html_list.append('<div class="location-section">')
-            html_list.append('<h2 class="section-title">Points of Interest</h2>')
-            
-            for point in narrative_points:
-                if isinstance(point, dict):
-                    name = point.get("name", "")
-                    desc = point.get("description", "")
-                    if name and desc:
-                        html_list.append(f'<div class="poi-block"><h3>{name}</h3><p>{desc}</p></div>')
-                    elif name:
-                        html_list.append(f'<div class="poi-block"><p>• <strong>{name}</strong></p></div>')
-                    elif desc:
-                        html_list.append(f'<div class="poi-block"><p>• {desc}</p></div>')
-                elif isinstance(point, str):
-                    html_list.append(f'<div class="poi-block"><p>• {point}</p></div>')
-            
-            html_list.append('</div>')
-        
+        name = loc_data.get("name", "Unnamed Location")
+        html.append(f'<div class="stat-block" style="background-color: #22332e; border-top: 3px solid #88c0d0; border-bottom: 3px solid #88c0d0; padding: 15px; margin-bottom: 15px;">')
+        html.append(f'<h1 style="color: #88c0d0; text-align: center; margin-bottom: 15px;">{name}</h1>')
+        # Basic info
+        info_line = []
+        for key in ["type", "environment", "size", "population", "danger_level", "threat_level"]:
+            value = loc_data.get(key, "")
+            if value:
+                info_line.append(f"{key.replace('_', ' ').title()}: {value}")
+        if info_line:
+            html.append(f'<p style="font-style: italic; text-align: center; margin-bottom: 15px;">{" | ".join(info_line)}</p>')
+        # Description
+        description = loc_data.get("description", "")
+        if description:
+            html.append(f'<div><span class="property">Description:</span> {description}</div>')
+        # Points of Interest
+        pois = loc_data.get("points_of_interest", [])
+        if pois:
+            html.append('<div><span class="property">Points of Interest:</span>')
+            html.append('<ul>')
+            for poi in pois:
+                if isinstance(poi, dict):
+                    name = poi.get("name", "")
+                    desc = poi.get("description", "")
+                    html.append(f'<li><b>{name}</b>: {desc}</li>')
+                else:
+                    html.append(f'<li>{poi}</li>')
+            html.append('</ul></div>')
         # NPCs
-        narrative_npcs = narrative.get("key_npcs", [])
-        if narrative_npcs and len(narrative_npcs) > 0:
-            html_list.append('<div class="location-section">')
-            html_list.append('<h2 class="section-title">Key NPCs</h2>')
-            
-            for npc in narrative_npcs:
+        npcs = loc_data.get("npcs", [])
+        if npcs:
+            html.append('<div><span class="property">NPCs:</span>')
+            html.append('<ul>')
+            for npc in npcs:
                 if isinstance(npc, dict):
                     name = npc.get("name", "")
                     desc = npc.get("description", "")
-                    if name and desc:
-                        html_list.append(f'<div class="npc-block"><h3>{name}</h3><p>{desc}</p></div>')
-                    elif name:
-                        html_list.append(f'<div class="npc-block"><p>• <strong>{name}</strong></p></div>')
-                    elif desc:
-                        html_list.append(f'<div class="npc-block"><p>• {desc}</p></div>')
-                elif isinstance(npc, str):
-                    html_list.append(f'<div class="npc-block"><p>• {npc}</p></div>')
-            
-            html_list.append('</div>')
-        
+                    html.append(f'<li><b>{name}</b>: {desc}</li>')
+                else:
+                    html.append(f'<li>{npc}</li>')
+            html.append('</ul></div>')
         # Secrets
-        narrative_secrets = narrative.get("secrets_hidden_elements", [])
-        if narrative_secrets and len(narrative_secrets) > 0:
-            html_list.append('<div class="location-section">')
-            html_list.append('<h2 class="section-title">Secrets & Hidden Elements</h2>')
-            
-            for secret in narrative_secrets:
+        secrets = loc_data.get("secrets", [])
+        if secrets:
+            html.append('<div><span class="property">Secrets:</span>')
+            html.append('<ul>')
+            for secret in secrets:
                 if isinstance(secret, dict):
-                    # Some LLM responses use "secret" key, others use "name"/"description"
-                    secret_text = secret.get("secret", secret.get("description", ""))
-                    secret_name = secret.get("name", "")
-                    
-                    if secret_name and secret_text:
-                        html_list.append(f'<div class="secret-block"><h3>{secret_name}</h3><p>{secret_text}</p></div>')
-                    elif secret_name:
-                        html_list.append(f'<div class="secret-block"><p>• <strong>{secret_name}</strong></p></div>')
-                    elif secret_text:
-                        html_list.append(f'<div class="secret-block"><p>• {secret_text}</p></div>')
-                elif isinstance(secret, str):
-                    html_list.append(f'<div class="secret-block"><p>• {secret}</p></div>')
-            
-            html_list.append('</div>')
+                    name = secret.get("name", "")
+                    desc = secret.get("description", "")
+                    html.append(f'<li><b>{name}</b>: {desc}</li>')
+                else:
+                    html.append(f'<li>{secret}</li>')
+            html.append('</ul></div>')
+        # Player and DM descriptions
+        player_desc = loc_data.get("player_description", "")
+        if player_desc:
+            html.append('<div style="margin-top: 15px; background-color: #293040; border-left: 4px solid #5e81ac; padding: 10px; color: #f8f8f2;"><b>Player Description:</b><br>' + player_desc.replace("\n", "<br>") + '</div>')
+        dm_desc = loc_data.get("dm_description", "")
+        if dm_desc:
+            html.append('<div style="margin-top: 15px; background-color: #3a2a1a; border-left: 4px solid #e65100; padding: 10px; color: #f8f8f2;"><b>DM Description:</b><br>' + dm_desc.replace("\n", "<br>") + '</div>')
+        html.append('</div>')
+        return ''.join(html)
+
+    def _format_object_json(self, obj_data):
+        """
+        Format an Object JSON as a stat block. Shows all fields present in the JSON.
+        """
+        html = []
+        name = obj_data.get("name", "Unnamed Object")
+        html.append(f'<div class="stat-block" style="background-color: #2a2d33; border-top: 3px solid #b48ead; border-bottom: 3px solid #b48ead; padding: 15px; margin-bottom: 15px;">')
+        html.append(f'<h1 style="color: #b48ead; text-align: center; margin-bottom: 15px;">{name}</h1>')
+        # Show all fields except player/dm description
+        for key, value in obj_data.items():
+            if key in ("name", "player_description", "dm_description"):
+                continue
+            if isinstance(value, list):
+                html.append(f'<div><span class="property">{key.replace("_", " ").title()}:</span> <ul>')
+                for v in value:
+                    html.append(f'<li>{v}</li>')
+                html.append('</ul></div>')
+            elif isinstance(value, dict):
+                html.append(f'<div><span class="property">{key.replace("_", " ").title()}:</span> <pre>{json.dumps(value, indent=2)}</pre></div>')
+            else:
+                html.append(f'<div><span class="property">{key.replace("_", " ").title()}:</span> {value}</div>')
+        # Player and DM descriptions
+        player_desc = obj_data.get("player_description", "")
+        if player_desc:
+            html.append('<div style="margin-top: 15px; background-color: #293040; border-left: 4px solid #5e81ac; padding: 10px; color: #f8f8f2;"><b>Player Description:</b><br>' + player_desc.replace("\n", "<br>") + '</div>')
+        dm_desc = obj_data.get("dm_description", "")
+        if dm_desc:
+            html.append('<div style="margin-top: 15px; background-color: #3a2a1a; border-left: 4px solid #e65100; padding: 10px; color: #f8f8f2;"><b>DM Description:</b><br>' + dm_desc.replace("\n", "<br>") + '</div>')
+        html.append('</div>')
+        return ''.join(html)
+
+    def _format_other_json(self, other_data):
+        """
+        Format a generic/Other JSON as a stat block. Shows all fields present in the JSON.
+        """
+        html = []
+        name = other_data.get("name", "Other Entity")
+        html.append(f'<div class="stat-block" style="background-color: #2a2d33; border-top: 3px solid #ebcb8b; border-bottom: 3px solid #ebcb8b; padding: 15px; margin-bottom: 15px;">')
+        html.append(f'<h1 style="color: #ebcb8b; text-align: center; margin-bottom: 15px;">{name}</h1>')
+        # Show all fields except player/dm description
+        for key, value in other_data.items():
+            if key in ("name", "player_description", "dm_description"):
+                continue
+            if isinstance(value, list):
+                html.append(f'<div><span class="property">{key.replace("_", " ").title()}:</span> <ul>')
+                for v in value:
+                    html.append(f'<li>{v}</li>')
+                html.append('</ul></div>')
+            elif isinstance(value, dict):
+                html.append(f'<div><span class="property">{key.replace("_", " ").title()}:</span> <pre>{json.dumps(value, indent=2)}</pre></div>')
+            else:
+                html.append(f'<div><span class="property">{key.replace("_", " ").title()}:</span> {value}</div>')
+        # Player and DM descriptions
+        player_desc = other_data.get("player_description", "")
+        if player_desc:
+            html.append('<div style="margin-top: 15px; background-color: #293040; border-left: 4px solid #5e81ac; padding: 10px; color: #f8f8f2;"><b>Player Description:</b><br>' + player_desc.replace("\n", "<br>") + '</div>')
+        dm_desc = other_data.get("dm_description", "")
+        if dm_desc:
+            html.append('<div style="margin-top: 15px; background-color: #3a2a1a; border-left: 4px solid #e65100; padding: 10px; color: #f8f8f2;"><b>DM Description:</b><br>' + dm_desc.replace("\n", "<br>") + '</div>')
+        html.append('</div>')
+        return ''.join(html)
     
     def _format_recap_content(self, content):
         """Format session recap content with appropriate styling"""
@@ -1850,33 +1681,85 @@ class SessionNotesPanel(BasePanel):
 
     def _send_selection_to_llm(self, selected_text, entity_type, context):
         """Send the selected text, entity type, and context to the LLM for generation"""
-        # Show a loading dialog
-        progress = QProgressDialog("Generating entity...", None, 0, 0, self)
-        progress.setWindowTitle("Please Wait")
-        progress.setWindowModality(Qt.WindowModal)
-        progress.show()
+        self._entity_progress_dialog = QProgressDialog("Generating entity...", None, 0, 0, self)
+        self._entity_progress_dialog.setWindowTitle("Please Wait")
+        self._entity_progress_dialog.setWindowModality(Qt.WindowModal)
+        self._entity_progress_dialog.show()
         QApplication.processEvents()
 
         # Thread-safe callback using signals instead of direct function calls
         def handle_result(response, error):
-            # Emit signal to be handled in the main thread
-            self.entity_generation_result.emit(response, error, selected_text)
-            progress.close()
+            # Pass the user-selected entity_type to the handler for robust labeling/formatting
+            self.entity_generation_result.emit(response, error, selected_text, entity_type)
         
         # Use the shared utility to generate the entity
         generate_entity_from_selection(self, self.app_state.llm_service, selected_text, entity_type, context, handle_result)
-    
-    # Add new handler for the signal - will be called in the main thread
-    def _handle_entity_generation_result(self, response, error, selected_text):
+
+    def _fallback_format_location(self, data):
+        """Fallback: Format location-like JSON as simple HTML for display."""
+        html = []
+        name = data.get('name', 'Unnamed Location')
+        html.append(f'<h2>{name}</h2>')
+        description = data.get('description', '')
+        if description:
+            html.append(f'<p>{description}</p>')
+        # Points of Interest
+        points = data.get('points_of_interest', [])
+        if points:
+            html.append('<h3>Points of Interest</h3><ul>')
+            for point in points:
+                if isinstance(point, dict):
+                    pname = point.get('name', '')
+                    pdesc = point.get('description', '')
+                    html.append(f'<li><b>{pname}</b>: {pdesc}</li>')
+                else:
+                    html.append(f'<li>{point}</li>')
+            html.append('</ul>')
+        # NPCs
+        npcs = data.get('npcs', [])
+        if npcs:
+            html.append('<h3>NPCs</h3><ul>')
+            for npc in npcs:
+                if isinstance(npc, dict):
+                    nname = npc.get('name', '')
+                    ndesc = npc.get('description', '')
+                    html.append(f'<li><b>{nname}</b>: {ndesc}</li>')
+                else:
+                    html.append(f'<li>{npc}</li>')
+            html.append('</ul>')
+        # Secrets
+        secrets = data.get('secrets', [])
+        if secrets:
+            html.append('<h3>Secrets</h3><ul>')
+            for secret in secrets:
+                if isinstance(secret, dict):
+                    sname = secret.get('name', '')
+                    sdesc = secret.get('description', '')
+                    html.append(f'<li><b>{sname}</b>: {sdesc}</li>')
+                else:
+                    html.append(f'<li>{secret}</li>')
+            html.append('</ul>')
+        return '\n'.join(html)
+
+    def _handle_entity_generation_result(self, response, error, selected_text, user_entity_type):
         """Handle entity generation result in the main thread - safely"""
+        if hasattr(self, '_entity_progress_dialog') and self._entity_progress_dialog is not None:
+            self._entity_progress_dialog.close()
+            self._entity_progress_dialog.deleteLater()
+            self._entity_progress_dialog = None
         if error:
             QMessageBox.warning(self, "LLM Error", str(error))
             return
-        
-        # Try to extract JSON from the response
         import json
+        import re
         player_desc = ""
         dm_desc = ""
+        entity_name = None
+        formatted_content = None
+        data = None
+        # Debug: Print the raw LLM output
+        print("RAW LLM OUTPUT:", response)
+        # Try to extract JSON from the response
         try:
             json_start = response.find('{')
             json_end = response.rfind('}')
@@ -1885,14 +1768,213 @@ class SessionNotesPanel(BasePanel):
                 data = json.loads(json_str)
                 player_desc = data.get("player_description", "")
                 dm_desc = data.get("dm_description", "")
+                entity_name = data.get("name") or selected_text
         except Exception as e:
-            # Ignore JSON errors, fallback below
             logging.warning(f"Error parsing JSON response: {e}")
-            pass
-            
+            data = None
         if not player_desc and not dm_desc:
-            # Fallback: show the whole response in both tabs
             player_desc = dm_desc = response
-            
-        dialog = DetailDialog(self, selected_text, player_desc, dm_desc)
+        # --- Robust Labeling and Formatting ---
+        note_title = None
+        tags = []
+        if user_entity_type:
+            tags.append(user_entity_type.lower())
+        # Format based on entity type
+        if data and user_entity_type and user_entity_type.lower() == "npc":
+            formatted_content = self._format_npc_json(data)
+        elif data and user_entity_type and user_entity_type.lower() == "item":
+            formatted_content = self._format_item_json(data)
+        elif data and user_entity_type and user_entity_type.lower() == "location":
+            formatted_content = self._format_location_json(data)
+        elif data and user_entity_type and user_entity_type.lower() == "object":
+            formatted_content = self._format_object_json(data)
+        elif data and user_entity_type and user_entity_type.lower() == "other":
+            formatted_content = self._format_other_json(data)
+        elif data and ("player_description" in data or "dm_description" in data):
+            html = []
+            if data.get("player_description"):
+                html.append('<h3>Player Info</h3>')
+                html.append(f'<div style="margin-bottom: 1em;">{data["player_description"].replace("\n", "<br>")}</div>')
+            if data.get("dm_description"):
+                html.append('<h3>DM Info</h3>')
+                html.append(f'<div>{data["dm_description"].replace("\n", "<br>")}</div>')
+            formatted_content = '\n'.join(html)  # Save as HTML, not markdown/code block
+        elif user_entity_type and user_entity_type.lower() == 'location':
+            note_title = f"Location: {entity_name or selected_text}"
+            if data:
+                try:
+                    from app.ui.panels.location_generator_panel import LocationGeneratorPanel
+                    formatted_content = LocationGeneratorPanel._format_location_json(None, data)
+                except Exception as e:
+                    logging.warning(f"Could not format location content: {e}")
+                    formatted_content = self._fallback_format_location(data)
+            else:
+                formatted_content = dm_desc or player_desc or response
+        else:
+            note_title = f"{user_entity_type.title() if user_entity_type else 'Generated Entity'}: {entity_name or selected_text}"
+            if dm_desc or player_desc:
+                formatted_content = dm_desc or player_desc
+            elif data:
+                formatted_content = f"<pre>{json.dumps(data, indent=2)}</pre>"  # Only as a last resort
+            else:
+                formatted_content = response
+        # Set the note title if not already set
+        if not note_title:
+            note_title = f"{user_entity_type.title() if user_entity_type else 'Generated Entity'}: {entity_name or selected_text}"
+        dialog = DetailDialog(self, entity_name or selected_text, player_desc, dm_desc)
         dialog.exec()
+        self._create_note_with_content(note_title, formatted_content, tags)
+        # Comments: 
+        # - If the LLM returns player_description/dm_description, always format as readable HTML.
+        # - Never wrap in triple backticks or use markdown code blocks.
+        # - Only pretty-print JSON as a last resort.
+
+    def _format_npc_json(self, npc_data):
+        """
+        Format an NPC JSON object as a D&D-style stat block for display.
+        Shows all fields: name, race, gender, role, level, alignment, description, personality, background, goals, quirk, stats, skills, languages, equipment, spells, player_description, dm_description.
+        """
+        html = []
+        # Header
+        name = npc_data.get("name", "Unnamed NPC")
+        html.append(f'<div class="stat-block" style="background-color: #33272a; border-top: 3px solid #5e81ac; border-bottom: 3px solid #5e81ac; padding: 15px; margin-bottom: 15px;">')
+        html.append(f'<h1 style="color: #5e81ac; text-align: center; margin-bottom: 15px;">{name}</h1>')
+        # Basic info
+        race = npc_data.get("race", "")
+        gender = npc_data.get("gender", "")
+        role = npc_data.get("role", "")
+        level = npc_data.get("level", "")
+        alignment = npc_data.get("alignment", "")
+        info_line = []
+        if race:
+            info_line.append(race)
+        if gender:
+            info_line.append(gender)
+        if role:
+            info_line.append(role)
+        if level:
+            info_line.append(f"Level {level}")
+        if alignment:
+            info_line.append(alignment)
+        if info_line:
+            html.append(f'<p style="font-style: italic; text-align: center; margin-bottom: 15px;">{" | ".join(info_line)}</p>')
+        # Description and personality
+        description = npc_data.get("description", "")
+        if description:
+            html.append(f'<div><span class="property">Description:</span> {description}</div>')
+        personality = npc_data.get("personality", "")
+        if personality:
+            html.append(f'<div><span class="property">Personality:</span> {personality}</div>')
+        background = npc_data.get("background", "")
+        if background:
+            html.append(f'<div><span class="property">Background:</span> {background}</div>')
+        goals = npc_data.get("goals", "")
+        if goals:
+            html.append(f'<div><span class="property">Goals:</span> {goals}</div>')
+        quirk = npc_data.get("quirk", "")
+        if quirk:
+            html.append(f'<div><span class="property">Quirk:</span> {quirk}</div>')
+        # Stats
+        stats = npc_data.get("stats", {})
+        if stats:
+            html.append('<hr style="border-color: #4c566a; margin: 10px 0;">')
+            html.append('<div style="display: flex; justify-content: space-between; margin-bottom: 15px;">')
+            for ability in ["STR", "DEX", "CON", "INT", "WIS", "CHA"]:
+                score = stats.get(ability, "")
+                if score != "":
+                    # Calculate modifier if possible
+                    try:
+                        score_int = int(score)
+                        modifier = (score_int - 10) // 2
+                        modifier_str = f"{modifier:+d}" if modifier != 0 else "0"
+                        html.append(f'<div style="text-align: center;"><div style="font-weight: bold;">{ability}</div><div>{score} ({modifier_str})</div></div>')
+                    except Exception:
+                        html.append(f'<div style="text-align: center;"><div style="font-weight: bold;">{ability}</div><div>{score}</div></div>')
+            html.append('</div>')
+            # Other stats
+            for stat in ["AC", "HP"]:
+                value = stats.get(stat, "")
+                if value != "":
+                    html.append(f'<div><span class="property">{stat}:</span> {value}</div>')
+        # Skills
+        skills = npc_data.get("skills", {})
+        if skills:
+            html.append('<div><span class="property">Skills:</span> ')
+            html.append(', '.join(f'{k}: {v}' for k, v in skills.items()))
+            html.append('</div>')
+        # Languages
+        languages = npc_data.get("languages", [])
+        if languages:
+            html.append(f'<div><span class="property">Languages:</span> {", ".join(languages)}</div>')
+        # Equipment
+        equipment = npc_data.get("equipment", [])
+        if equipment:
+            html.append('<div><span class="property">Equipment:</span>')
+            html.append('<ul>')
+            for item in equipment:
+                if isinstance(item, dict):
+                    name = item.get("name", "")
+                    desc = item.get("description", "")
+                    html.append(f'<li><b>{name}</b>: {desc}</li>')
+                else:
+                    html.append(f'<li>{item}</li>')
+            html.append('</ul></div>')
+        # Spells
+        spells = npc_data.get("spells", [])
+        if spells:
+            html.append(f'<div><span class="property">Spells:</span> {", ".join(spells)}</div>')
+        # Player and DM descriptions
+        player_desc = npc_data.get("player_description", "")
+        if player_desc:
+            # Use a dark, readable background for player description
+            html.append('<div style="margin-top: 15px; background-color: #293040; border-left: 4px solid #5e81ac; padding: 10px; color: #f8f8f2;"><b>Player Description:</b><br>' + player_desc.replace("\n", "<br>") + '</div>')
+        dm_desc = npc_data.get("dm_description", "")
+        if dm_desc:
+            # Use a dark, readable background for DM description
+            html.append('<div style="margin-top: 15px; background-color: #3a2a1a; border-left: 4px solid #e65100; padding: 10px; color: #f8f8f2;"><b>DM Description:</b><br>' + dm_desc.replace("\n", "<br>") + '</div>')
+        html.append('</div>')  # Close stat block
+        return ''.join(html)
+
+    def _format_item_json(self, item_data):
+        """
+        Format an item JSON object as a D&D-style stat block for display.
+        Shows all fields: name, type, rarity, description, properties, player_description, dm_description.
+        """
+        html = []
+        # Header
+        name = item_data.get("name", "Unnamed Item")
+        html.append(f'<div class="stat-block" style="background-color: #2d2a3a; border-top: 3px solid #ffd700; border-bottom: 3px solid #ffd700; padding: 15px; margin-bottom: 15px;">')
+        html.append(f'<h1 style="color: #ffd700; text-align: center; margin-bottom: 15px;">{name}</h1>')
+        # Basic info
+        item_type = item_data.get("type", "")
+        rarity = item_data.get("rarity", "")
+        info_line = []
+        if item_type:
+            info_line.append(item_type)
+        if rarity:
+            info_line.append(rarity)
+        if info_line:
+            html.append(f'<p style="font-style: italic; text-align: center; margin-bottom: 15px;">{" | ".join(info_line)}</p>')
+        # Description
+        description = item_data.get("description", "")
+        if description:
+            html.append(f'<div><span class="property">Description:</span> {description}</div>')
+        # Properties
+        properties = item_data.get("properties", [])
+        if properties:
+            html.append('<div><span class="property">Properties:</span>')
+            html.append('<ul>')
+            for prop in properties:
+                html.append(f'<li>{prop}</li>')
+            html.append('</ul></div>')
+        # Player and DM descriptions
+        player_desc = item_data.get("player_description", "")
+        if player_desc:
+            # Use a dark, readable background for player description
+            html.append('<div style="margin-top: 15px; background-color: #293040; border-left: 4px solid #5e81ac; padding: 10px; color: #f8f8f2;"><b>Player Description:</b><br>' + player_desc.replace("\n", "<br>") + '</div>')
+        dm_desc = item_data.get("dm_description", "")
+        if dm_desc:
+            # Use a dark, readable background for DM description
+            html.append('<div style="margin-top: 15px; background-color: #3a2a1a; border-left: 4px solid #e65100; padding: 10px; color: #f8f8f2;"><b>DM Description:</b><br>' + dm_desc.replace("\n", "<br>") + '</div>')
+        html.append('</div>')  # Close stat block
+        return ''.join(html)
