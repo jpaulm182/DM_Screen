@@ -1162,9 +1162,9 @@ class SessionNotesPanel(BasePanel):
                 info_line.append(f"{key.replace('_', ' ').title()}: {value}")
         if info_line:
             html.append(f'<p style="font-style: italic; text-align: center; margin-bottom: 15px;">{" | ".join(info_line)}</p>')
-            # Description
+        # Description
         description = loc_data.get("description", "")
-            if description:
+        if description:
             html.append(f'<div><span class="property">Description:</span> {description}</div>')
         # Points of Interest
         pois = loc_data.get("points_of_interest", [])
@@ -1181,10 +1181,10 @@ class SessionNotesPanel(BasePanel):
             html.append('</ul></div>')
         # NPCs
         npcs = loc_data.get("npcs", [])
-            if npcs:
+        if npcs:
             html.append('<div><span class="property">NPCs:</span>')
             html.append('<ul>')
-                    for npc in npcs:
+            for npc in npcs:
                 if isinstance(npc, dict):
                     name = npc.get("name", "")
                     desc = npc.get("description", "")
@@ -1194,10 +1194,10 @@ class SessionNotesPanel(BasePanel):
             html.append('</ul></div>')
         # Secrets
         secrets = loc_data.get("secrets", [])
-            if secrets:
+        if secrets:
             html.append('<div><span class="property">Secrets:</span>')
             html.append('<ul>')
-                    for secret in secrets:
+            for secret in secrets:
                 if isinstance(secret, dict):
                     name = secret.get("name", "")
                     desc = secret.get("description", "")
@@ -1212,7 +1212,7 @@ class SessionNotesPanel(BasePanel):
         dm_desc = loc_data.get("dm_description", "")
         if dm_desc:
             html.append('<div style="margin-top: 15px; background-color: #3a2a1a; border-left: 4px solid #e65100; padding: 10px; color: #f8f8f2;"><b>DM Description:</b><br>' + dm_desc.replace("\n", "<br>") + '</div>')
-                html.append('</div>')
+        html.append('</div>')
         return ''.join(html)
 
     def _format_object_json(self, obj_data):
@@ -1243,7 +1243,7 @@ class SessionNotesPanel(BasePanel):
         dm_desc = obj_data.get("dm_description", "")
         if dm_desc:
             html.append('<div style="margin-top: 15px; background-color: #3a2a1a; border-left: 4px solid #e65100; padding: 10px; color: #f8f8f2;"><b>DM Description:</b><br>' + dm_desc.replace("\n", "<br>") + '</div>')
-                html.append('</div>')
+        html.append('</div>')
         return ''.join(html)
 
     def _format_other_json(self, other_data):
@@ -1274,7 +1274,7 @@ class SessionNotesPanel(BasePanel):
         dm_desc = other_data.get("dm_description", "")
         if dm_desc:
             html.append('<div style="margin-top: 15px; background-color: #3a2a1a; border-left: 4px solid #e65100; padding: 10px; color: #f8f8f2;"><b>DM Description:</b><br>' + dm_desc.replace("\n", "<br>") + '</div>')
-                    html.append('</div>')
+        html.append('</div>')
         return ''.join(html)
     
     def _format_recap_content(self, content):
@@ -1744,24 +1744,24 @@ class SessionNotesPanel(BasePanel):
             if error:
                 QMessageBox.warning(self, "LLM Error", str(error))
                 return
-            import json
+        import json
         import re
-            player_desc = ""
-            dm_desc = ""
+        player_desc = ""
+        dm_desc = ""
         entity_name = None
         formatted_content = None
         data = None
         # Debug: Print the raw LLM output
         print("RAW LLM OUTPUT:", response)
         # Try to extract JSON from the response
-            try:
-                json_start = response.find('{')
-                json_end = response.rfind('}')
-                if json_start >= 0 and json_end > json_start:
-                    json_str = response[json_start:json_end+1]
-                    data = json.loads(json_str)
-                    player_desc = data.get("player_description", "")
-                    dm_desc = data.get("dm_description", "")
+        try:
+            json_start = response.find('{')
+            json_end = response.rfind('}')
+            if json_start >= 0 and json_end > json_start:
+                json_str = response[json_start:json_end+1]
+                data = json.loads(json_str)
+                player_desc = data.get("player_description", "")
+                dm_desc = data.get("dm_description", "")
                 entity_name = data.get("name") or selected_text
         except Exception as e:
             logging.warning(f"Error parsing JSON response: {e}")
@@ -1816,7 +1816,7 @@ class SessionNotesPanel(BasePanel):
         if not note_title:
             note_title = f"{user_entity_type.title() if user_entity_type else 'Generated Entity'}: {entity_name or selected_text}"
         dialog = DetailDialog(self, entity_name or selected_text, player_desc, dm_desc)
-            dialog.exec()
+        dialog.exec()
         self._create_note_with_content(note_title, formatted_content, tags)
         # Comments: 
         # - If the LLM returns player_description/dm_description, always format as readable HTML.
