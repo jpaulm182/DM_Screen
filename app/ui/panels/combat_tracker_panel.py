@@ -2002,13 +2002,26 @@ class CombatTrackerPanel(BasePanel):
             menu.addAction(death_saves)
             menu.addSeparator()
         
-        # Status submenu
-        status_menu = menu.addMenu("Set Status")
-        status_menu.addAction("None").triggered.connect(lambda: self._set_status(""))
+        # Status submenu - Changed to Add Status and Remove Status
+        status_menu = menu.addMenu("Add Status")
+        status_menu.addAction("Clear All").triggered.connect(lambda: self._clear_statuses())
         
         for condition in CONDITIONS:
             action = status_menu.addAction(condition)
-            action.triggered.connect(lambda checked, c=condition: self._set_status(c))
+            action.triggered.connect(lambda checked, c=condition: self._add_status(c))
+        
+        # Get current statuses for the Remove Status menu
+        status_item = self.initiative_table.item(row, 5)  # Status is now column 5
+        current_statuses = []
+        if status_item and status_item.text():
+            current_statuses = [s.strip() for s in status_item.text().split(',')]
+            
+        # Only show Remove Status menu if there are statuses to remove
+        if current_statuses:
+            remove_status_menu = menu.addMenu("Remove Status")
+            for status in current_statuses:
+                action = remove_status_menu.addAction(status)
+                action.triggered.connect(lambda checked, s=status: self._remove_status(s))
         
         # Concentration toggle
         conc_item = self.initiative_table.item(row, 6)  # Concentration is now column 6
@@ -2021,239 +2034,8 @@ class CombatTrackerPanel(BasePanel):
         # Show the menu
         menu.exec_(self.initiative_table.mapToGlobal(position))
         
-    def _toggle_concentration(self, row):
-        """Toggle concentration state for a combatant"""
-        conc_item = self.initiative_table.item(row, 6)  # Concentration is now column 6
-        if conc_item:
-            # Toggle check state
-            current_state = conc_item.checkState()
-            new_state = Qt.Unchecked if current_state == Qt.Checked else Qt.Checked
-            conc_item.setCheckState(new_state)
-            
-            # Update tracking set
-            if new_state == Qt.Checked:
-                self.concentrating.add(row)
-            else:
-                self.concentrating.discard(row)
-                
-            # Log concentration change
-            name_item = self.initiative_table.item(row, 0)
-            if name_item:
-                name = name_item.text()
-                if new_state == Qt.Checked:
-                    self._log_combat_action("Status Effect", name, "began concentrating")
-                else:
-                    self._log_combat_action("Status Effect", name, "ended concentration")
-    
-    def _apply_damage(self, is_healing=False):
-        """Apply damage or healing to selected combatants"""
-        # Get selected rows
-        selected_rows = set(index.row() for index in self.initiative_table.selectedIndexes())
-        if not selected_rows:
-            return
-            
-        # Get name of first selected combatant for dialog
-        first_row = min(selected_rows)
-        name_item = self.initiative_table.item(first_row, 0)
-        target_name = name_item.text() if name_item else "combatant"
-        
-        # Open damage/healing dialog
-        dialog = DamageDialog(self, is_healing=is_healing)
-        if dialog.exec_():
-            amount = dialog.get_amount()
-            
-            # Apply to each selected row
-            for row in selected_rows:
-                hp_item = self.initiative_table.item(row, 2)  # HP is now column 2
-                max_hp_item = self.initiative_table.item(row, 3)  # Max HP is now column 3
-                if not hp_item or not max_hp_item:
-                    continue
-                    
-                name_item = self.initiative_table.item(row, 0)
-                if not name_item:
-                    continue
-                    
-                combatant_name = name_item.text()
-                
-                try:
-                    # Safely get current HP
-                    hp_text = hp_item.text().strip()
-                    current_hp = int(hp_text) if hp_text else 0
-                    
-                    # Get max HP
-                    max_hp_text = max_hp_item.text().strip()
-                    max_hp = int(max_hp_text) if max_hp_text else 999
-                    
-                    if is_healing:
-                        new_hp = current_hp + amount
-                        if max_hp > 0:  # Don't exceed max HP
-                            new_hp = min(new_hp, max_hp)
-                        
-                        # Log healing action
-                        self._log_combat_action(
-                            "Healing", 
-                            "DM", 
-                            "healed", 
-                            combatant_name, 
-                            f"{amount} HP (to {new_hp})"
-                        )
-                    else:
-                        new_hp = current_hp - amount
-                        
-                        # Check concentration if damaged
-                        if row in self.concentrating and amount > 0:
-                            self._check_concentration(row, amount)
-                        
-                        # Log damage action
-                        self._log_combat_action(
-                            "Damage", 
-                            "DM", 
-                            "dealt damage to", 
-                            combatant_name, 
-                            f"{amount} damage (to {new_hp})"
-                        )
-                    
-                    # Update HP
-                    hp_item.setText(str(new_hp))
-                    
-                    # Check for unconsciousness/death
-                    if new_hp <= 0:
-                        # Mark as unconscious
-                        status_item = self.initiative_table.item(row, 5)  # Status is now column 5
-                        if status_item:
-                            old_status = status_item.text()
-                            status_item.setText("Unconscious")
-                            
-                            if old_status != "Unconscious":
-                                # Log status change
-                                self._log_combat_action(
-                                    "Status Effect", 
-                                    "DM", 
-                                    "applied status", 
-                                    combatant_name, 
-                                    "Unconscious"
-                                )
-                        
-                        
-                        # Check if player character (has max HP) for death saves
-                        if max_hp > 0:
-                            # Set up death saves tracking if not already
-                            if row not in self.death_saves:
-                                self.death_saves[row] = {"successes": 0, "failures": 0}
-                except ValueError:
-                    # Handle invalid HP value
-                    pass
-    
-    def _check_concentration(self, row, damage):
-        """Check if a combatant needs to make a concentration save"""
-        if row not in self.concentrating:
-            return
-
-        # Get combatant name
-        name_item = self.initiative_table.item(row, 0)
-        if not name_item:
-            return
-        
-        combatant_name = name_item.text()
-            
-        # Calculate DC for concentration check
-        dc = max(10, damage // 2)
-        
-        # Create and show concentration check dialog
-        dialog = ConcentrationDialog(self, combatant_name, dc)
-        if dialog.exec_():
-            save_result = dialog.get_save_result()
-            passed = save_result >= dc
-            
-            # Log result of concentration check
-            outcome = "passed" if passed else "failed"
-            self._log_combat_action(
-                "Concentration Check", 
-                combatant_name, 
-                outcome,
-                f"DC {dc} concentration check",
-                f"(rolled {save_result})"
-            )
-            
-            # If failed, remove concentration
-            if not passed:
-                # Remove concentration
-                concentration_item = self.initiative_table.item(row, 6)  # Concentration is now column 6
-                if concentration_item:
-                    concentration_item.setCheckState(Qt.Unchecked)
-                
-                # Remove from concentrating list
-                if row in self.concentrating:
-                    self.concentrating.remove(row)
-                    
-                # Log concentration broken
-                self._log_combat_action(
-                    "Effect Ended", 
-                    combatant_name, 
-                    "lost concentration",
-                    "", ""
-                )
-    
-    def _manage_death_saves(self, row):
-        """Manage death saving throws for a character"""
-        current_saves = self.death_saves.get(row, {"successes": 0, "failures": 0})
-        dialog = DeathSavesDialog(self, current_saves)
-        
-        if dialog.exec_():
-            dialog_result = dialog.get_saves()
-            self.death_saves[row] = dialog_result
-            saves = self.death_saves[row]
-            
-            name_item = self.initiative_table.item(row, 0)
-            if name_item:
-                name = name_item.text()
-                
-                # Log death save changes
-                if saves:
-                    successes = saves.get("successes", 0)
-                    failures = saves.get("failures", 0)
-                    
-                    if successes >= 3:
-                        self._log_combat_action(
-                            "Death Save", 
-                            name, 
-                            "stabilized", 
-                            result=f"{successes} successes"
-                        )
-                        QMessageBox.information(self, "Stabilized", 
-                            f"{name} has stabilized!")
-                        self.death_saves.pop(row)
-                        
-                        # Update status to stable
-                        status_item = self.initiative_table.item(row, 4)
-                        if status_item:
-                            status_item.setText("Stable")
-                            
-                    elif failures >= 3:
-                        self._log_combat_action(
-                            "Death Save", 
-                            name, 
-                            "failed death saves", 
-                            result=f"{failures} failures"
-                        )
-                        QMessageBox.warning(self, "Death", 
-                            f"{name} has died!")
-                        self.death_saves.pop(row)
-                        
-                        # Update status to dead
-                        status_item = self.initiative_table.item(row, 4)
-                        if status_item:
-                            status_item.setText("Dead")
-                    else:
-                        self._log_combat_action(
-                            "Death Save", 
-                            name, 
-                            "updated death saves", 
-                            result=f"{successes} successes, {failures} failures"
-                        )
-    
-    def _set_status(self, status):
-        """Apply a status condition to selected combatants"""
+    def _add_status(self, status):
+        """Add a status condition to selected combatants without removing existing ones"""
         # Get selected rows
         selected_rows = set(index.row() for index in self.initiative_table.selectedIndexes())
         if not selected_rows:
@@ -2264,7 +2046,14 @@ class CombatTrackerPanel(BasePanel):
             if row < self.initiative_table.rowCount():
                 status_item = self.initiative_table.item(row, 5)  # Status is now column 5
                 if status_item:
-                    status_item.setText(status)
+                    current_statuses = []
+                    if status_item.text():
+                        current_statuses = [s.strip() for s in status_item.text().split(',')]
+                    
+                    # Only add if not already present
+                    if status not in current_statuses:
+                        current_statuses.append(status)
+                        status_item.setText(', '.join(current_statuses))
                 
                 # Log status change if there's a name
                 name_item = self.initiative_table.item(row, 0)
@@ -2279,6 +2068,76 @@ class CombatTrackerPanel(BasePanel):
                         name, 
                         status
                     )
+    
+    def _remove_status(self, status):
+        """Remove a specific status condition from selected combatants"""
+        # Get selected rows
+        selected_rows = set(index.row() for index in self.initiative_table.selectedIndexes())
+        if not selected_rows:
+            return
+        
+        # Remove status from each selected row
+        for row in selected_rows:
+            if row < self.initiative_table.rowCount():
+                status_item = self.initiative_table.item(row, 5)  # Status is now column 5
+                if status_item and status_item.text():
+                    current_statuses = [s.strip() for s in status_item.text().split(',')]
+                    
+                    # Remove the status if present
+                    if status in current_statuses:
+                        current_statuses.remove(status)
+                        status_item.setText(', '.join(current_statuses))
+                
+                # Log status removal if there's a name
+                name_item = self.initiative_table.item(row, 0)
+                if name_item:
+                    name = name_item.text()
+                    
+                    # Log status removal
+                    self._log_combat_action(
+                        "Status Effect", 
+                        "DM", 
+                        "removed status", 
+                        name, 
+                        status
+                    )
+    
+    def _clear_statuses(self):
+        """Clear all status conditions from selected combatants"""
+        # Get selected rows
+        selected_rows = set(index.row() for index in self.initiative_table.selectedIndexes())
+        if not selected_rows:
+            return
+        
+        # Clear statuses for each selected row
+        for row in selected_rows:
+            if row < self.initiative_table.rowCount():
+                status_item = self.initiative_table.item(row, 5)  # Status is now column 5
+                if status_item:
+                    status_item.setText("")
+                
+                # Log status clearing if there's a name
+                name_item = self.initiative_table.item(row, 0)
+                if name_item:
+                    name = name_item.text()
+                    
+                    # Log status clearing
+                    self._log_combat_action(
+                        "Status Effect", 
+                        "DM", 
+                        "cleared all statuses from", 
+                        name
+                    )
+    
+    # Keep _set_status for backwards compatibility but modify it to call _add_status
+    def _set_status(self, status):
+        """Apply a status condition to selected combatants (legacy method)"""
+        if not status:
+            # If empty status, clear all
+            self._clear_statuses()
+        else:
+            # Otherwise add the status
+            self._add_status(status)
     
     def _round_changed(self, value):
         """Handle round number change"""
@@ -2594,19 +2453,60 @@ class CombatTrackerPanel(BasePanel):
                         update_summaries.append(f"- {name_to_find}: HP changed from {old_hp} to {new_hp}")
                         # Handle death/unconscious status if HP reaches 0
                         if update["hp"] <= 0 and "status" not in update:
-                            update["status"] = "Unconscious" # Or "Dead"
+                            # Add Unconscious status
+                            status_item = self.initiative_table.item(found_row, 5)  # Status is now column 5
+                            if status_item:
+                                current_statuses = []
+                                if status_item.text():
+                                    current_statuses = [s.strip() for s in status_item.text().split(',')]
+                                
+                                # Only add if not already present
+                                if "Unconscious" not in current_statuses:
+                                    current_statuses.append("Unconscious")
+                                    status_item.setText(', '.join(current_statuses))
+                                    update_summaries.append(f"- {name_to_find}: Added 'Unconscious' status due to 0 HP")
                         
                 # Apply Status update
                 if "status" in update:
-                    status_item = self.initiative_table.item(found_row, 4)
+                    status_item = self.initiative_table.item(found_row, 5)
                     if status_item:
-                        old_status = status_item.text()
+                        old_status_text = status_item.text()
+                        old_statuses = [s.strip() for s in old_status_text.split(',')] if old_status_text else []
+                        
                         new_status = update["status"]
-                        status_item.setText(new_status)
-                        if old_status != new_status:
-                             update_summaries.append(f"- {name_to_find}: Status changed from '{old_status}' to '{new_status}'")
-                        # If status is Dead or Fled, mark for removal
-                        if update["status"] in ["Dead", "Fled"]:
+                        
+                        # Handle different status update formats
+                        if isinstance(new_status, list):
+                            # If status is a list, replace all existing statuses
+                            new_statuses = new_status
+                            status_item.setText(', '.join(new_statuses))
+                            update_summaries.append(f"- {name_to_find}: Status changed from '{old_status_text}' to '{', '.join(new_statuses)}'")
+                        elif new_status == "clear":
+                            # Special case to clear all statuses
+                            status_item.setText("")
+                            update_summaries.append(f"- {name_to_find}: All statuses cleared (was '{old_status_text}')")
+                        elif new_status.startswith("+"):
+                            # Add a status (e.g., "+Poisoned")
+                            status_to_add = new_status[1:].strip()
+                            if status_to_add and status_to_add not in old_statuses:
+                                old_statuses.append(status_to_add)
+                                status_item.setText(', '.join(old_statuses))
+                                update_summaries.append(f"- {name_to_find}: Added '{status_to_add}' status")
+                        elif new_status.startswith("-"):
+                            # Remove a status (e.g., "-Poisoned")
+                            status_to_remove = new_status[1:].strip()
+                            if status_to_remove and status_to_remove in old_statuses:
+                                old_statuses.remove(status_to_remove)
+                                status_item.setText(', '.join(old_statuses))
+                                update_summaries.append(f"- {name_to_find}: Removed '{status_to_remove}' status")
+                        else:
+                            # Otherwise, directly set the new status (backward compatibility)
+                            status_item.setText(new_status)
+                            update_summaries.append(f"- {name_to_find}: Status changed from '{old_status_text}' to '{new_status}'")
+                        
+                        # If status contains "Dead" or "Fled", mark for removal
+                        current_statuses = status_item.text().split(',')
+                        if any(s.strip() in ["Dead", "Fled"] for s in current_statuses):
                             rows_to_remove.append(found_row)
         
         # Remove combatants marked for removal (in reverse order)
@@ -3886,6 +3786,321 @@ class CombatTrackerPanel(BasePanel):
             print(f"[CombatTracker] Fixed types for {fix_count} combatants")
         
         return fix_count
+
+    def _toggle_concentration(self, row):
+        """Toggle concentration state for a combatant"""
+        conc_item = self.initiative_table.item(row, 6)  # Concentration is now column 6
+        if conc_item:
+            # Toggle check state
+            current_state = conc_item.checkState()
+            new_state = Qt.Unchecked if current_state == Qt.Checked else Qt.Checked
+            conc_item.setCheckState(new_state)
+            
+            # Update tracking set
+            if new_state == Qt.Checked:
+                self.concentrating.add(row)
+            else:
+                self.concentrating.discard(row)
+                
+            # Log concentration change
+            name_item = self.initiative_table.item(row, 0)
+            if name_item:
+                name = name_item.text()
+                if new_state == Qt.Checked:
+                    self._log_combat_action("Status Effect", name, "began concentrating")
+                else:
+                    self._log_combat_action("Status Effect", name, "ended concentration")
+    
+    def _apply_damage(self, is_healing=False):
+        """Apply damage or healing to selected combatants"""
+        # Get selected rows
+        selected_rows = set(index.row() for index in self.initiative_table.selectedIndexes())
+        if not selected_rows:
+            return
+            
+        # Get name of first selected combatant for dialog
+        first_row = min(selected_rows)
+        name_item = self.initiative_table.item(first_row, 0)
+        target_name = name_item.text() if name_item else "combatant"
+        
+        # Open damage/healing dialog
+        dialog = DamageDialog(self, is_healing=is_healing)
+        if dialog.exec_():
+            amount = dialog.get_amount()
+            
+            # Apply to each selected row
+            for row in selected_rows:
+                hp_item = self.initiative_table.item(row, 2)  # HP is now column 2
+                max_hp_item = self.initiative_table.item(row, 3)  # Max HP is now column 3
+                if not hp_item or not max_hp_item:
+                    continue
+                    
+                name_item = self.initiative_table.item(row, 0)
+                if not name_item:
+                    continue
+                    
+                combatant_name = name_item.text()
+                
+                try:
+                    # Safely get current HP
+                    hp_text = hp_item.text().strip()
+                    current_hp = int(hp_text) if hp_text else 0
+                    
+                    # Get max HP
+                    max_hp_text = max_hp_item.text().strip()
+                    max_hp = int(max_hp_text) if max_hp_text else 999
+                    
+                    if is_healing:
+                        new_hp = current_hp + amount
+                        if max_hp > 0:  # Don't exceed max HP
+                            new_hp = min(new_hp, max_hp)
+                        
+                        # Log healing action
+                        self._log_combat_action(
+                            "Healing", 
+                            "DM", 
+                            "healed", 
+                            combatant_name, 
+                            f"{amount} HP (to {new_hp})"
+                        )
+                    else:
+                        new_hp = current_hp - amount
+                        
+                        # Check concentration if damaged
+                        if row in self.concentrating and amount > 0:
+                            self._check_concentration(row, amount)
+                        
+                        # Log damage action
+                        self._log_combat_action(
+                            "Damage", 
+                            "DM", 
+                            "dealt damage to", 
+                            combatant_name, 
+                            f"{amount} damage (to {new_hp})"
+                        )
+                    
+                    # Update HP
+                    hp_item.setText(str(new_hp))
+                    
+                    # Check for unconsciousness/death
+                    if new_hp <= 0:
+                        # Mark as unconscious - add to existing statuses
+                        status_item = self.initiative_table.item(row, 5)  # Status is now column 5
+                        if status_item:
+                            current_statuses = []
+                            if status_item.text():
+                                current_statuses = [s.strip() for s in status_item.text().split(',')]
+                            
+                            # Only add if not already present
+                            if "Unconscious" not in current_statuses:
+                                current_statuses.append("Unconscious")
+                                status_item.setText(', '.join(current_statuses))
+                                
+                                # Log status change
+                                self._log_combat_action(
+                                    "Status Effect", 
+                                    "DM", 
+                                    "applied status", 
+                                    combatant_name, 
+                                    "Unconscious"
+                                )
+                        
+                        # Check if player character (has max HP) for death saves
+                        if max_hp > 0:
+                            # Set up death saves tracking if not already
+                            if row not in self.death_saves:
+                                self.death_saves[row] = {"successes": 0, "failures": 0}
+                except ValueError:
+                    # Handle invalid HP value
+                    pass
+
+    def _update_combatant_hp_and_status(self, row):
+        """Update the HP and status of a combatant in the data dictionary based on the table"""
+        if row not in self.combatants:
+            return
+            
+        # Get HP from table
+        hp_item = self.initiative_table.item(row, 2)  # Current HP
+        max_hp_item = self.initiative_table.item(row, 3)  # Max HP
+        
+        if hp_item:
+            hp_text = hp_item.text().strip()
+            try:
+                hp = int(hp_text) if hp_text else 0
+                
+                # Update the hp in the combatant data if it's a dictionary
+                if isinstance(self.combatants[row], dict):
+                    self.combatants[row]['current_hp'] = hp
+                elif hasattr(self.combatants[row], 'current_hp'):
+                    self.combatants[row].current_hp = hp
+            except (ValueError, TypeError):
+                # Ignore if not a valid number
+                pass
+        
+        # Update max HP if available
+        if max_hp_item:
+            max_hp_text = max_hp_item.text().strip()
+            try:
+                max_hp = int(max_hp_text) if max_hp_text else 0
+                
+                # Update the max_hp in the combatant data if it's a dictionary
+                if isinstance(self.combatants[row], dict):
+                    self.combatants[row]['max_hp'] = max_hp
+                elif hasattr(self.combatants[row], 'max_hp'):
+                    self.combatants[row].max_hp = max_hp
+            except (ValueError, TypeError):
+                # Ignore if not a valid number
+                pass
+                
+        # Get status from table
+        status_item = self.initiative_table.item(row, 5)  # Status is now column 5
+        if status_item:
+            status_text = status_item.text()
+            
+            # Parse statuses from comma-separated list
+            statuses = []
+            if status_text:
+                statuses = [s.strip() for s in status_text.split(',')]
+            
+            # Update the status in the combatant data if it's a dictionary
+            if isinstance(self.combatants[row], dict):
+                if 'conditions' not in self.combatants[row]:
+                    self.combatants[row]['conditions'] = []
+                self.combatants[row]['conditions'] = statuses
+            elif hasattr(self.combatants[row], 'conditions'):
+                self.combatants[row].conditions = statuses
+    
+    def _manage_death_saves(self, row):
+        """Manage death saving throws for a character"""
+        current_saves = self.death_saves.get(row, {"successes": 0, "failures": 0})
+        dialog = DeathSavesDialog(self, current_saves)
+        
+        if dialog.exec_():
+            dialog_result = dialog.get_saves()
+            self.death_saves[row] = dialog_result
+            saves = self.death_saves[row]
+            
+            name_item = self.initiative_table.item(row, 0)
+            if name_item:
+                name = name_item.text()
+                
+                # Log death save changes
+                if saves:
+                    successes = saves.get("successes", 0)
+                    failures = saves.get("failures", 0)
+                    
+                    if successes >= 3:
+                        self._log_combat_action(
+                            "Death Save", 
+                            name, 
+                            "stabilized", 
+                            result=f"{successes} successes"
+                        )
+                        QMessageBox.information(self, "Stabilized", 
+                            f"{name} has stabilized!")
+                        self.death_saves.pop(row)
+                        
+                        # Update status - add Stable, remove Unconscious
+                        status_item = self.initiative_table.item(row, 5)  # Status is now column 5
+                        if status_item:
+                            current_statuses = []
+                            if status_item.text():
+                                current_statuses = [s.strip() for s in status_item.text().split(',')]
+                            
+                            # Remove Unconscious if present
+                            if "Unconscious" in current_statuses:
+                                current_statuses.remove("Unconscious")
+                            
+                            # Add Stable if not present
+                            if "Stable" not in current_statuses:
+                                current_statuses.append("Stable")
+                                
+                            status_item.setText(', '.join(current_statuses))
+                            
+                    elif failures >= 3:
+                        self._log_combat_action(
+                            "Death Save", 
+                            name, 
+                            "failed death saves", 
+                            result=f"{failures} failures"
+                        )
+                        QMessageBox.warning(self, "Death", 
+                            f"{name} has died!")
+                        self.death_saves.pop(row)
+                        
+                        # Update status - add Dead, remove Unconscious
+                        status_item = self.initiative_table.item(row, 5)  # Status is now column 5
+                        if status_item:
+                            current_statuses = []
+                            if status_item.text():
+                                current_statuses = [s.strip() for s in status_item.text().split(',')]
+                            
+                            # Remove Unconscious if present
+                            if "Unconscious" in current_statuses:
+                                current_statuses.remove("Unconscious")
+                            
+                            # Add Dead if not present
+                            if "Dead" not in current_statuses:
+                                current_statuses.append("Dead")
+                                
+                            status_item.setText(', '.join(current_statuses))
+                    else:
+                        self._log_combat_action(
+                            "Death Save", 
+                            name, 
+                            "updated death saves", 
+                            result=f"{successes} successes, {failures} failures"
+                        )
+
+    def _check_concentration(self, row, damage):
+        """Check if a combatant needs to make a concentration save"""
+        if row not in self.concentrating:
+            return
+
+        # Get combatant name
+        name_item = self.initiative_table.item(row, 0)
+        if not name_item:
+            return
+        
+        combatant_name = name_item.text()
+            
+        # Calculate DC for concentration check
+        dc = max(10, damage // 2)
+        
+        # Create and show concentration check dialog
+        dialog = ConcentrationDialog(self, combatant_name, dc)
+        if dialog.exec_():
+            save_result = dialog.get_save_result()
+            passed = save_result >= dc
+            
+            # Log result of concentration check
+            outcome = "passed" if passed else "failed"
+            self._log_combat_action(
+                "Concentration Check", 
+                combatant_name, 
+                outcome,
+                f"DC {dc} concentration check",
+                f"(rolled {save_result})"
+            )
+            
+            # If failed, remove concentration
+            if not passed:
+                # Remove concentration
+                concentration_item = self.initiative_table.item(row, 6)  # Concentration is now column 6
+                if concentration_item:
+                    concentration_item.setCheckState(Qt.Unchecked)
+                
+                # Remove from concentrating list
+                if row in self.concentrating:
+                    self.concentrating.remove(row)
+                    
+                # Log concentration broken
+                self._log_combat_action(
+                    "Effect Ended", 
+                    combatant_name, 
+                    "lost concentration",
+                    "", ""
+                )
 
 class ConcentrationDialog(QDialog):
     """Dialog for concentration checks when taking damage"""
