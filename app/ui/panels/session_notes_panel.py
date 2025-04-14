@@ -9,14 +9,18 @@ from PySide6.QtWidgets import (
     QPushButton, QTextEdit, QListWidget, QListWidgetItem, 
     QSplitter, QMenu, QDialog, QFormLayout, QDialogButtonBox,
     QMessageBox, QComboBox, QProgressDialog, QApplication,
-    QTextBrowser
+    QTextBrowser, QInputDialog
 )
 from PySide6.QtCore import Qt, Signal, QDateTime, Slot
 from PySide6.QtGui import QFont, QAction, QIcon
 import re
 import json
+import logging
 
 from app.ui.panels.base_panel import BasePanel
+from app.utils.markdown_utils import markdown_to_html  # Import the Markdown utility
+from app.utils.link_handler import handle_dnd_link, generate_entity_from_selection  # Import the shared dnd:// link handler and entity generator
+from app.ui.dialogs.detail_dialog import DetailDialog
 
 
 class TagInputDialog(QDialog):
@@ -334,30 +338,26 @@ SESSION NOTES:
 
 class SessionNotesPanel(BasePanel):
     """
-    Panel for session note management with tag filtering
+    Panel for managing session notes, campaign events, and plot tracking
     """
+    
+    PANEL_TYPE = "session_notes"
+    PANEL_TITLE = "Session Notes"
+    PANEL_CATEGORY = "Campaign"
+    PANEL_DESCRIPTION = "Manage session notes, campaign events, and keep track of important plot elements"
+    
+    # Add signal for thread-safe LLM response handling
+    entity_generation_result = Signal(str, str, str)  # response, error, selected_text
     
     def __init__(self, app_state, panel_id=None):
         """Initialize the session notes panel"""
-        # Initialize data before calling the parent constructor
-        self.notes = []
-        self.filtered_notes = []
-        self.all_tags = []
-        self.current_note = None
+        super().__init__(app_state, panel_id)
         
-        # This date tracks when the last recap was generated
-        # When generating a new recap, only notes created or updated after
-        # this date will be included by default, unless notes are explicitly selected
-        self.last_recap_date = None
+        # Connect signal to handler with thread safety
+        self.entity_generation_result.connect(self._handle_entity_generation_result)
         
-        # Call parent constructor which will call _setup_ui
-        super().__init__(app_state, "Session Notes")
-        
-        # Load notes
+        self._setup_ui()
         self._load_notes()
-        
-        # Load last recap date from settings
-        self.last_recap_date = self.app_state.get_setting("last_recap_date")
     
     def _setup_ui(self):
         """Set up the panel UI components"""
@@ -477,6 +477,9 @@ class SessionNotesPanel(BasePanel):
         self.note_content.setOpenLinks(False)
         self.note_content.setOpenExternalLinks(False)
         self.note_content.anchorClicked.connect(self._handle_note_link_clicked)
+        # Add custom context menu for text selection
+        self.note_content.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.note_content.customContextMenuRequested.connect(self._show_note_content_context_menu)
         
         # Add panes to splitter
         splitter.addWidget(left_pane)
@@ -744,8 +747,9 @@ class SessionNotesPanel(BasePanel):
         elif content_type == 'rules':
             html_content += self._format_rules_content(content)
         else:
-            # Default markdown-like formatting for regular notes
-            html_content += self._format_default_content(content)
+            # For regular notes, convert Markdown to HTML for display
+            # This ensures clickable links and formatting
+            html_content += markdown_to_html(content)
         
         # Close the container div and HTML
         html_content += "</div></body></html>"
@@ -1811,13 +1815,84 @@ class SessionNotesPanel(BasePanel):
 
     def _handle_note_link_clicked(self, url):
         """Handle anchor clicks in the note content (for dnd:// links)"""
-        scheme = url.scheme()
-        path = url.path()
-        if scheme == "dnd":
-            element_data = path.lstrip("/")
-            # Call the same logic as the location generator (stub for now)
-            self._handle_interactive_element(element_data)
+        # Use the shared handler for dnd:// links
+        handle_dnd_link(self, url, self.app_state)
 
     def _handle_interactive_element(self, element_data):
         """Stub: Show or generate details for the clicked element. Replace with shared logic."""
         QMessageBox.information(self, "Element Clicked", f"Clicked: {element_data}\n(Implement shared detail dialog here)")
+
+    def _show_note_content_context_menu(self, pos):
+        """Show context menu for QTextBrowser to generate entity from selection"""
+        menu = self.note_content.createStandardContextMenu()
+        selected_text = self.note_content.textCursor().selectedText()
+        if selected_text:
+            action = QAction("Generate Entity from Selection", self)
+            action.triggered.connect(self._generate_entity_from_selection)
+            menu.addAction(action)
+        menu.exec(self.note_content.mapToGlobal(pos))
+
+    def _generate_entity_from_selection(self):
+        """Prompt for entity type and send selection to LLM (stub)"""
+        selected_text = self.note_content.textCursor().selectedText()
+        if not selected_text:
+            QMessageBox.information(self, "No Selection", "Please select some text to generate an entity.")
+            return
+        # Prompt for entity type
+        entity_types = ["NPC", "Location", "Item", "Object", "Other"]
+        entity_type, ok = QInputDialog.getItem(self, "Entity Type", "Select the type of entity to generate:", entity_types, 0, False)
+        if not ok or not entity_type:
+            return
+        # Get current note context (title, content)
+        context = self.current_note if hasattr(self, 'current_note') and self.current_note else {}
+        # Call stub to send to LLM
+        self._send_selection_to_llm(selected_text, entity_type, context)
+
+    def _send_selection_to_llm(self, selected_text, entity_type, context):
+        """Send the selected text, entity type, and context to the LLM for generation"""
+        # Show a loading dialog
+        progress = QProgressDialog("Generating entity...", None, 0, 0, self)
+        progress.setWindowTitle("Please Wait")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.show()
+        QApplication.processEvents()
+
+        # Thread-safe callback using signals instead of direct function calls
+        def handle_result(response, error):
+            # Emit signal to be handled in the main thread
+            self.entity_generation_result.emit(response, error, selected_text)
+            progress.close()
+        
+        # Use the shared utility to generate the entity
+        generate_entity_from_selection(self, self.app_state.llm_service, selected_text, entity_type, context, handle_result)
+    
+    # Add new handler for the signal - will be called in the main thread
+    def _handle_entity_generation_result(self, response, error, selected_text):
+        """Handle entity generation result in the main thread - safely"""
+        if error:
+            QMessageBox.warning(self, "LLM Error", str(error))
+            return
+        
+        # Try to extract JSON from the response
+        import json
+        player_desc = ""
+        dm_desc = ""
+        try:
+            json_start = response.find('{')
+            json_end = response.rfind('}')
+            if json_start >= 0 and json_end > json_start:
+                json_str = response[json_start:json_end+1]
+                data = json.loads(json_str)
+                player_desc = data.get("player_description", "")
+                dm_desc = data.get("dm_description", "")
+        except Exception as e:
+            # Ignore JSON errors, fallback below
+            logging.warning(f"Error parsing JSON response: {e}")
+            pass
+            
+        if not player_desc and not dm_desc:
+            # Fallback: show the whole response in both tabs
+            player_desc = dm_desc = response
+            
+        dialog = DetailDialog(self, selected_text, player_desc, dm_desc)
+        dialog.exec()
