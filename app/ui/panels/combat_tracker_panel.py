@@ -2417,20 +2417,23 @@ class CombatTrackerPanel(BasePanel):
             
             # Reset combatant state in the table
             for row in range(self.initiative_table.rowCount()):
-                # Reset HP to max
+                # Reset HP to max using the Max HP value from column 3
                 hp_item = self.initiative_table.item(row, 2)
-                if hp_item:
-                    max_hp = hp_item.data(Qt.UserRole)
-                    if max_hp:
-                        hp_item.setText(str(max_hp))
-                    else: # Fallback if max_hp wasn't stored
-                        hp_item.setText("1") 
+                max_hp_item = self.initiative_table.item(row, 3)
+                
+                if hp_item and max_hp_item:
+                    max_hp_text = max_hp_item.text()
+                    if max_hp_text and max_hp_text != "None":
+                        hp_item.setText(max_hp_text)
+                    else:
+                        # Fallback if max_hp is None or empty
+                        hp_item.setText("10") 
                         
                 # Clear status
                 status_item = self.initiative_table.item(row, 4)
                 if status_item:
                     status_item.setText("")
-                    
+                
                 # Reset concentration
                 conc_item = self.initiative_table.item(row, 5)
                 if conc_item:
@@ -2660,19 +2663,15 @@ class CombatTrackerPanel(BasePanel):
         # Save all combatants
         for row in range(self.initiative_table.rowCount()):
             combatant = {}
-            for col, key in enumerate(["name", "initiative", "hp", "ac", "status", "concentration"]):
+            for col, key in enumerate(["name", "initiative", "hp", "max_hp", "ac", "status", "concentration"]):
                 item = self.initiative_table.item(row, col)
-                if col == 5:  # Concentration
+                if col == 6:  # Concentration
                     combatant[key] = item.checkState() == Qt.Checked if item else False
                 else:
                     combatant[key] = item.text() if item else ""
-                
-                # Save max HP
-                if col == 2 and item:
-                    combatant["max_hp"] = item.data(Qt.UserRole)
             
-            # Save type from column 6
-            type_item = self.initiative_table.item(row, 6)
+            # Save type from column 7
+            type_item = self.initiative_table.item(row, 7)
             if type_item:
                 combatant["type"] = type_item.text()
             
@@ -3011,6 +3010,9 @@ class CombatTrackerPanel(BasePanel):
                 max_possible_hp = int(max_hp * 1.25)
                 hp = max(min_hp, min(hp, max_possible_hp))
                 print(f"[CombatTracker] Adjusted HP to {hp} (limited to {min_hp}-{max_possible_hp})")
+            
+            # Set max_hp to the randomly rolled hp value so they match
+            max_hp = hp
             
             ac = get_attr(monster_data, "ac", 10, ["armor_class", "armorClass", "AC"])
             print(f"[CombatTracker] Retrieved AC value: {ac}")
