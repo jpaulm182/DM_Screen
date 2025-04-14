@@ -12,7 +12,8 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QFileDialog, QInputDialog,
     QScrollArea, QMessageBox, QGroupBox, QCheckBox, QSpinBox,
     QRadioButton, QButtonGroup, QSlider, QFrame, QSizePolicy,
-    QApplication
+    QApplication,
+    QTextBrowser
 )
 from PySide6.QtCore import Qt, Signal, Slot, QSize, QMetaObject, Q_ARG, QRect
 from PySide6.QtGui import QIcon, QAction, QTextCursor, QFont, QPalette, QScreen
@@ -233,7 +234,7 @@ class LocationGeneratorPanel(BasePanel):
         html_layout = QVBoxLayout(self.html_tab)
         html_layout.setContentsMargins(5, 5, 5, 5)
         
-        self.location_display = QTextEdit()
+        self.location_display = QTextBrowser()
         self.location_display.setReadOnly(True)
         self.location_display.setMinimumHeight(200)
         self.location_display.setPlaceholderText("Generated location will appear here...")
@@ -328,6 +329,11 @@ class LocationGeneratorPanel(BasePanel):
         
         # Connect thread-safe signal for LLM generation results
         self.generation_result.connect(self._update_ui_with_generation_result)
+        
+        # Set up HTML link click handling
+        self.location_display.setOpenLinks(False)
+        self.location_display.setOpenExternalLinks(False)
+        self.location_display.anchorClicked.connect(self._handle_link_clicked)
     
     def _load_settings(self):
         """Load saved settings and available models"""
@@ -453,6 +459,22 @@ class LocationGeneratorPanel(BasePanel):
         prompt += "6. Atmosphere and overall mood of the location\n"
         prompt += "7. Any notable threats or challenges present\n"
         
+        # Add new section for generating the HTML structure with clickable elements
+        prompt += "\nImportant: Format all output in HTML with clickable elements for NPCs, locations, objects, and other important features.\n"
+        prompt += "For each element (NPC, place, object, etc.), create a data-element attribute with the element type and a unique identifier.\n"
+        prompt += "Include both a player-facing description and a DM-only description for each section.\n"
+        prompt += "Example structure in the narrative_output field:\n"
+        prompt += "<div class='location-content'>\n"
+        prompt += "  <div class='player-description'>\n"
+        prompt += "    <h3>What Players See</h3>\n"
+        prompt += "    <p>Description with <span class='interactive' data-element='npc-guard'>guard</span> and <span class='interactive' data-element='object-statue'>statue</span>...</p>\n"
+        prompt += "  </div>\n"
+        prompt += "  <div class='dm-description'>\n"
+        prompt += "    <h3>For DM's Eyes Only</h3>\n"
+        prompt += "    <p>Additional context, secrets, and motivations...</p>\n"
+        prompt += "  </div>\n"
+        prompt += "</div>\n"
+        
         return prompt
     
     def _handle_generation_result(self, response, error):
@@ -551,8 +573,43 @@ class LocationGeneratorPanel(BasePanel):
             self.fullscreen_button.setEnabled(False)
     
     def _format_location_as_html(self, location_data):
-        """Format location data as HTML for display"""
-        html = "<html><body style='font-family: Arial, sans-serif;'>"
+        """Format location data as HTML for display with interactive elements as <a href> links"""
+        html = """
+        <html>
+        <head>
+        <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; }
+            h2 { color: #4a148c; border-bottom: 1px solid #ccc; padding-bottom: 5px; }
+            h3 { color: #6a1b9a; margin-top: 15px; }
+            a.interactive { 
+                color: #0277bd; 
+                text-decoration: underline; 
+                cursor: pointer;
+                font-weight: bold;
+            }
+            a.interactive:hover { 
+                color: #01579b; 
+                background-color: #e1f5fe;
+            }
+            .player-description {
+                background-color: #f5f5f5;
+                border-left: 4px solid #4a148c;
+                padding: 10px;
+                margin: 10px 0;
+            }
+            .dm-description {
+                background-color: #fff3e0;
+                border-left: 4px solid #e65100;
+                padding: 10px;
+                margin: 10px 0;
+            }
+            .dm-description h3 {
+                color: #e65100;
+            }
+        </style>
+        </head>
+        <body>
+        """
         
         # Location name and type
         name = location_data.get("name", "Unnamed Location")
@@ -570,45 +627,52 @@ class LocationGeneratorPanel(BasePanel):
         # Narrative output (if present)
         narrative = location_data.get("narrative_output", "")
         if narrative:
-            html += f"<div>{narrative}</div>"
+            # Check if narrative is already in HTML format
+            if narrative.strip().startswith("<") and narrative.strip().endswith(">"):
+                html += f"{narrative}"
+            else:
+                html += f"<div>{narrative}</div>"
         
-        # Points of interest
+        # Points of interest as links
         points = location_data.get("points_of_interest", [])
         if points:
             html += "<h3>Points of Interest</h3><ul>"
-            for point in points:
+            for i, point in enumerate(points):
                 if isinstance(point, str):
-                    html += f"<li>{point}</li>"
+                    html += f"<li><a class='interactive' href='dnd://poi-{i}'>{point}</a></li>"
                 elif isinstance(point, dict):
                     point_name = point.get("name", "")
                     point_desc = point.get("description", "")
-                    html += f"<li><b>{point_name}</b>: {point_desc}</li>"
+                    html += f"<li><a class='interactive' href='dnd://poi-{point_name.lower().replace(' ', '-')}'><b>{point_name}</b></a>: {point_desc}</li>"
             html += "</ul>"
         
-        # NPCs
+        # NPCs as links
         npcs = location_data.get("npcs", [])
         if npcs:
             html += "<h3>Notable NPCs</h3><ul>"
-            for npc in npcs:
+            for i, npc in enumerate(npcs):
                 if isinstance(npc, str):
-                    html += f"<li>{npc}</li>"
+                    html += f"<li><a class='interactive' href='dnd://npc-{i}'>{npc}</a></li>"
                 elif isinstance(npc, dict):
                     npc_name = npc.get("name", "")
                     npc_desc = npc.get("description", "")
-                    html += f"<li><b>{npc_name}</b>: {npc_desc}</li>"
+                    html += f"<li><a class='interactive' href='dnd://npc-{npc_name.lower().replace(' ', '-')}'><b>{npc_name}</b></a>: {npc_desc}</li>"
             html += "</ul>"
         
-        # Secrets
+        # Secrets as links
         secrets = location_data.get("secrets", [])
         if secrets:
             html += "<h3>Secrets</h3><ul>"
-            for secret in secrets:
+            for i, secret in enumerate(secrets):
                 if isinstance(secret, str):
-                    html += f"<li>{secret}</li>"
+                    html += f"<li><a class='interactive' href='dnd://secret-{i}'>{secret}</a></li>"
                 elif isinstance(secret, dict):
                     secret_name = secret.get("name", "")
                     secret_desc = secret.get("description", "")
-                    html += f"<li><b>{secret_name}</b>: {secret_desc}</li>"
+                    if secret_name:
+                        html += f"<li><a class='interactive' href='dnd://secret-{secret_name.lower().replace(' ', '-')}'><b>{secret_name}</b></a>: {secret_desc}</li>"
+                    else:
+                        html += f"<li><a class='interactive' href='dnd://secret-{i}'>{secret_desc}</a></li>"
             html += "</ul>"
         
         # Handle other potential location data
@@ -619,7 +683,10 @@ class LocationGeneratorPanel(BasePanel):
                     html += f"<h3>{key.replace('_', ' ').title()}</h3>"
                     html += f"<p>{value}</p>"
         
-        html += "</body></html>"
+        html += """
+        </body>
+        </html>
+        """
         return html
     
     def _save_location(self):
@@ -1290,6 +1357,358 @@ class LocationGeneratorPanel(BasePanel):
             
         location_data = self.current_generation["parsed_data"]
         dialog = FullScreenLocationDialog(self, location_data)
+        dialog.exec()
+
+    def _handle_link_clicked(self, url):
+        """Handle clicks on interactive elements in the HTML content"""
+        scheme = url.scheme()
+        path = url.path()
+        
+        if scheme == "py" and path.startswith("/element-clicked/"):
+            element_data = path.replace("/element-clicked/", "")
+            self._handle_element_interaction(element_data)
+    
+    def _handle_element_interaction(self, element_data):
+        """Handle interaction with an element in the location description"""
+        if not element_data:
+            return
+            
+        # Split the element data into type and identifier
+        parts = element_data.split('-', 1)
+        if len(parts) != 2:
+            return
+            
+        element_type = parts[0]
+        element_id = parts[1]
+        
+        # Check if we already have data for this element
+        element_info = self._find_element_info(element_type, element_id)
+        
+        if element_info:
+            # Show existing information
+            self._show_element_details(element_type, element_id, element_info)
+        else:
+            # Generate new information using LLM
+            self._generate_element_details(element_type, element_id)
+    
+    def _find_element_info(self, element_type, element_id):
+        """Find information about an element from the current generation"""
+        if not self.current_generation:
+            return None
+            
+        location_data = self.current_generation["parsed_data"]
+        
+        # Check different collections based on element type
+        if element_type == "npc":
+            npcs = location_data.get("npcs", [])
+            for npc in npcs:
+                if isinstance(npc, dict):
+                    npc_name = npc.get("name", "").lower().replace(" ", "-")
+                    if npc_name == element_id or str(npc.get("id", "")) == element_id:
+                        return npc
+                        
+        elif element_type == "poi":
+            points = location_data.get("points_of_interest", [])
+            for point in points:
+                if isinstance(point, dict):
+                    point_name = point.get("name", "").lower().replace(" ", "-")
+                    if point_name == element_id or str(point.get("id", "")) == element_id:
+                        return point
+                        
+        elif element_type == "secret":
+            secrets = location_data.get("secrets", [])
+            for secret in secrets:
+                if isinstance(secret, dict):
+                    secret_name = secret.get("name", "").lower().replace(" ", "-")
+                    if secret_name == element_id or str(secret.get("id", "")) == element_id:
+                        return secret
+                        
+        # Check for numeric index (for string items)
+        if element_id.isdigit():
+            index = int(element_id)
+            if element_type == "npc" and len(location_data.get("npcs", [])) > index:
+                npc = location_data["npcs"][index]
+                if isinstance(npc, str):
+                    return {"name": npc, "description": ""}
+            elif element_type == "poi" and len(location_data.get("points_of_interest", [])) > index:
+                poi = location_data["points_of_interest"][index]
+                if isinstance(poi, str):
+                    return {"name": poi, "description": ""}
+            elif element_type == "secret" and len(location_data.get("secrets", [])) > index:
+                secret = location_data["secrets"][index]
+                if isinstance(secret, str):
+                    return {"name": "Secret", "description": secret}
+                    
+        return None
+        
+    def _generate_element_details(self, element_type, element_id):
+        """Generate detailed information about an element using LLM"""
+        if not self.current_generation:
+            return
+            
+        # Get the location context
+        location_data = self.current_generation["parsed_data"]
+        location_name = location_data.get("name", "Unnamed Location")
+        location_type = location_data.get("type", "")
+        
+        # Determine what we're looking for based on the element type and ID
+        element_name = element_id.replace("-", " ")
+        
+        # Try to find a better name if it's a numeric ID
+        if element_id.isdigit():
+            index = int(element_id)
+            if element_type == "npc" and len(location_data.get("npcs", [])) > index:
+                npc = location_data["npcs"][index]
+                if isinstance(npc, str):
+                    element_name = npc
+            elif element_type == "poi" and len(location_data.get("points_of_interest", [])) > index:
+                poi = location_data["points_of_interest"][index]
+                if isinstance(poi, str):
+                    element_name = poi
+            elif element_type == "secret" and len(location_data.get("secrets", [])) > index:
+                secret = location_data["secrets"][index]
+                if isinstance(secret, str):
+                    element_name = "Secret"  # Use a generic name since it's a secret
+        
+        # Create a prompt for generating details
+        prompt = f"Generate detailed information about {element_name} in {location_name}"
+        
+        if element_type == "npc":
+            prompt += f", an NPC located in {location_name}"
+            if location_type:
+                prompt += f" ({location_type})"
+            prompt += ".\n\n"
+            prompt += "Include the following information in JSON format:\n"
+            prompt += "1. Physical appearance and demeanor\n"
+            prompt += "2. Personality traits, quirks, and mannerisms\n"
+            prompt += "3. Background and history\n"
+            prompt += "4. Motivations and goals\n"
+            prompt += "5. Relationships with other NPCs or factions\n"
+            prompt += "6. Information they know that might be useful to players\n"
+            prompt += "7. IMPORTANT: Include a 'player_description' field (what players would observe) and a 'dm_description' field (additional information only the DM should know)\n"
+            
+        elif element_type == "poi":
+            prompt += f", a location or point of interest within {location_name}"
+            if location_type:
+                prompt += f" ({location_type})"
+            prompt += ".\n\n"
+            prompt += "Include the following information in JSON format:\n"
+            prompt += "1. Physical description with sensory details\n"
+            prompt += "2. Purpose or function\n"
+            prompt += "3. Notable features or objects\n"
+            prompt += "4. History or significance\n"
+            prompt += "5. Current occupants or activity\n"
+            prompt += "6. Any secrets or hidden aspects\n"
+            prompt += "7. IMPORTANT: Include a 'player_description' field (what players would observe) and a 'dm_description' field (additional information only the DM should know)\n"
+            
+        elif element_type == "secret":
+            prompt += f", a secret or hidden element in {location_name}"
+            if location_type:
+                prompt += f" ({location_type})"
+            prompt += ".\n\n"
+            prompt += "Include the following information in JSON format:\n"
+            prompt += "1. Nature of the secret\n"
+            prompt += "2. How it's hidden or concealed\n"
+            prompt += "3. Clues or hints that might lead players to discover it\n"
+            prompt += "4. Significance or implications if discovered\n"
+            prompt += "5. Related NPCs or history\n"
+            prompt += "6. Potential rewards or consequences\n"
+            prompt += "7. IMPORTANT: Include a 'player_description' field (subtle clues players might notice) and a 'dm_description' field (complete information only the DM should know)\n"
+        
+        else:
+            prompt += f", an important element in {location_name}"
+            if location_type:
+                prompt += f" ({location_type})"
+            prompt += ".\n\n"
+            prompt += "Include the following information in JSON format:\n"
+            prompt += "1. Detailed description\n"
+            prompt += "2. Significance or purpose\n"
+            prompt += "3. Any special properties or features\n"
+            prompt += "4. Relevant history or lore\n"
+            prompt += "5. How characters might interact with it\n"
+            prompt += "6. IMPORTANT: Include a 'player_description' field (what players would observe) and a 'dm_description' field (additional information only the DM should know)\n"
+        
+        # Get context information from the current location
+        prompt += f"\nAdditional context about {location_name}:\n"
+        description = location_data.get("description", "")
+        if description:
+            prompt += f"Description: {description}\n"
+            
+        # Add campaign context if available
+        if self.current_generation["params"]["context"]:
+            prompt += f"Campaign context: {self.current_generation['params']['context']}\n"
+            
+        # Show a loading dialog
+        self.status_label.setText(f"Generating details for {element_name}...")
+        self.status_label.setStyleSheet("color: blue;")
+        
+        # Get the model ID
+        model_id = self.model_combo.currentData()
+        
+        # Call LLM service
+        self.llm_service.generate_completion_async(
+            model=model_id,
+            messages=[{"role": "user", "content": prompt}],
+            callback=lambda response, error: self._handle_element_generation_result(
+                response, error, element_type, element_id, element_name),
+            temperature=0.7,
+            max_tokens=1500
+        )
+    
+    def _handle_element_generation_result(self, response, error, element_type, element_id, element_name):
+        """Handle the result of element detail generation"""
+        # Update UI in the main thread via a meta call
+        QMetaObject.invokeMethod(
+            self, 
+            "_process_element_generation_result",
+            Qt.QueuedConnection,
+            Q_ARG(str, response),
+            Q_ARG(str, error if error else ""),
+            Q_ARG(str, element_type),
+            Q_ARG(str, element_id),
+            Q_ARG(str, element_name)
+        )
+    
+    def _process_element_generation_result(self, response, error, element_type, element_id, element_name):
+        """Process the element generation result in the main thread"""
+        self.status_label.setText("Ready")
+        self.status_label.setStyleSheet("color: gray;")
+        
+        if error:
+            QMessageBox.warning(
+                self,
+                "Generation Error",
+                f"Error generating details for {element_name}: {error}"
+            )
+            return
+            
+        # Try to extract JSON from the response
+        try:
+            # Find JSON block in case there's text before or after
+            json_start = response.find('{')
+            json_end = response.rfind('}')
+            
+            if json_start >= 0 and json_end > json_start:
+                json_str = response[json_start:json_end+1]
+                element_data = json.loads(json_str)
+                
+                # Store in the current location data
+                if self.current_generation:
+                    if element_type == "npc":
+                        if "npcs" not in self.current_generation["parsed_data"]:
+                            self.current_generation["parsed_data"]["npcs"] = []
+                        self.current_generation["parsed_data"]["npcs"].append({
+                            "name": element_name,
+                            "id": element_id,
+                            **element_data
+                        })
+                    elif element_type == "poi":
+                        if "points_of_interest" not in self.current_generation["parsed_data"]:
+                            self.current_generation["parsed_data"]["points_of_interest"] = []
+                        self.current_generation["parsed_data"]["points_of_interest"].append({
+                            "name": element_name,
+                            "id": element_id,
+                            **element_data
+                        })
+                    elif element_type == "secret":
+                        if "secrets" not in self.current_generation["parsed_data"]:
+                            self.current_generation["parsed_data"]["secrets"] = []
+                        self.current_generation["parsed_data"]["secrets"].append({
+                            "name": element_name,
+                            "id": element_id,
+                            **element_data
+                        })
+                    
+                # Show the details
+                self._show_element_details(element_type, element_id, element_data)
+            else:
+                # Handle non-JSON response
+                QMessageBox.warning(
+                    self,
+                    "Invalid Response",
+                    f"Could not parse details for {element_name}. Response format was invalid."
+                )
+        except Exception as e:
+            QMessageBox.warning(
+                self,
+                "Parsing Error",
+                f"Error parsing details for {element_name}: {str(e)}"
+            )
+    
+    def _show_element_details(self, element_type, element_id, element_data):
+        """Show the details for an element in a dialog"""
+        element_name = element_data.get("name", element_id.replace("-", " ").title())
+        
+        # Create a dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"{element_name} Details")
+        dialog.resize(600, 400)
+        
+        # Create layout
+        layout = QVBoxLayout(dialog)
+        
+        # Create tabs for player and DM information
+        tabs = QTabWidget()
+        
+        # Player tab
+        player_tab = QWidget()
+        player_layout = QVBoxLayout(player_tab)
+        
+        player_title = QLabel(element_name)
+        player_title_font = QFont()
+        player_title_font.setPointSize(16)
+        player_title_font.setBold(True)
+        player_title.setFont(player_title_font)
+        player_title.setAlignment(Qt.AlignCenter)
+        player_layout.addWidget(player_title)
+        
+        # Use player_description if available
+        player_desc = element_data.get("player_description", "")
+        if not player_desc:
+            # Fall back to regular description
+            player_desc = element_data.get("description", "No description available")
+        
+        player_desc_text = QTextEdit()
+        player_desc_text.setReadOnly(True)
+        player_desc_text.setHtml(f"<p>{player_desc}</p>")
+        player_layout.addWidget(player_desc_text)
+        
+        # DM tab
+        dm_tab = QWidget()
+        dm_layout = QVBoxLayout(dm_tab)
+        
+        dm_title = QLabel(f"{element_name} (DM Information)")
+        dm_title.setFont(player_title_font)
+        dm_title.setAlignment(Qt.AlignCenter)
+        dm_layout.addWidget(dm_title)
+        
+        # Use dm_description if available
+        dm_desc = element_data.get("dm_description", "")
+        if not dm_desc:
+            # Fall back to a summary of all fields
+            dm_desc = "<h3>DM Notes</h3>"
+            for key, value in element_data.items():
+                if key not in ["name", "id", "player_description", "dm_description"] and isinstance(value, str):
+                    dm_desc += f"<h4>{key.replace('_', ' ').title()}</h4>"
+                    dm_desc += f"<p>{value}</p>"
+        
+        dm_desc_text = QTextEdit()
+        dm_desc_text.setReadOnly(True)
+        dm_desc_text.setHtml(dm_desc)
+        dm_layout.addWidget(dm_desc_text)
+        
+        # Add tabs to the tab widget
+        tabs.addTab(player_tab, "Player Information")
+        tabs.addTab(dm_tab, "DM Information")
+        
+        layout.addWidget(tabs)
+        
+        # Add close button
+        button_box = QDialogButtonBox(QDialogButtonBox.Close)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+        
+        # Show the dialog
         dialog.exec()
 
 

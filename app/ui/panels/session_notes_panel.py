@@ -8,7 +8,8 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
     QPushButton, QTextEdit, QListWidget, QListWidgetItem, 
     QSplitter, QMenu, QDialog, QFormLayout, QDialogButtonBox,
-    QMessageBox, QComboBox, QProgressDialog, QApplication
+    QMessageBox, QComboBox, QProgressDialog, QApplication,
+    QTextBrowser
 )
 from PySide6.QtCore import Qt, Signal, QDateTime, Slot
 from PySide6.QtGui import QFont, QAction, QIcon
@@ -470,9 +471,12 @@ class SessionNotesPanel(BasePanel):
         right_layout.addWidget(self.note_tags)
         
         # Note content
-        self.note_content = QTextEdit()
+        self.note_content = QTextBrowser()
         self.note_content.setReadOnly(True)
         right_layout.addWidget(self.note_content)
+        self.note_content.setOpenLinks(False)
+        self.note_content.setOpenExternalLinks(False)
+        self.note_content.anchorClicked.connect(self._handle_note_link_clicked)
         
         # Add panes to splitter
         splitter.addWidget(left_pane)
@@ -1804,3 +1808,16 @@ class SessionNotesPanel(BasePanel):
         # Open the recap dialog
         recap_dialog = RecapDialog(self, self.app_state, notes_to_include)
         recap_dialog.exec()
+
+    def _handle_note_link_clicked(self, url):
+        """Handle anchor clicks in the note content (for dnd:// links)"""
+        scheme = url.scheme()
+        path = url.path()
+        if scheme == "dnd":
+            element_data = path.lstrip("/")
+            # Call the same logic as the location generator (stub for now)
+            self._handle_interactive_element(element_data)
+
+    def _handle_interactive_element(self, element_data):
+        """Stub: Show or generate details for the clicked element. Replace with shared logic."""
+        QMessageBox.information(self, "Element Clicked", f"Clicked: {element_data}\n(Implement shared detail dialog here)")
