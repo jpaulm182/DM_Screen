@@ -42,6 +42,21 @@ class DatabaseManager:
         
         # Create tables if they don't exist
         self._create_tables()
+        # Migrate schema for session_notes (add origin_note_id if missing)
+        self._migrate_session_notes_schema()
+    
+    def _migrate_session_notes_schema(self):
+        """
+        Add the origin_note_id column to session_notes if it does not exist.
+        This allows linking notes to their origin (e.g., for generated notes).
+        Safe to run multiple times.
+        """
+        cursor = self.connection.cursor()
+        cursor.execute("PRAGMA table_info(session_notes)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "origin_note_id" not in columns:
+            cursor.execute("ALTER TABLE session_notes ADD COLUMN origin_note_id INTEGER")
+            self.connection.commit()
     
     def _create_tables(self):
         """Create database tables if they don't exist"""
@@ -140,7 +155,8 @@ class DatabaseManager:
             content TEXT NOT NULL,
             tags TEXT,
             created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            origin_note_id INTEGER -- Optional: links to the originating note (nullable)
         )
         ''')
         

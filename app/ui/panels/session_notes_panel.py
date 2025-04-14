@@ -584,10 +584,10 @@ class SessionNotesPanel(BasePanel):
             updated_str = note.get('updated_at', '')
             if created_str:
                 created_date = QDateTime.fromString(created_str, Qt.ISODate)
-                created_str = created_date.toString("yyyy-MM-dd hh:mm:ss")
+            created_str = created_date.toString("yyyy-MM-dd hh:mm:ss")
             if updated_str:
                 updated_date = QDateTime.fromString(updated_str, Qt.ISODate)
-                updated_str = updated_date.toString("yyyy-MM-dd hh:mm:ss")
+            updated_str = updated_date.toString("yyyy-MM-dd hh:mm:ss")
             # Format the tooltip with both timestamps
             tooltip = f"Created: {created_str}\nUpdated: {updated_str}"
             # Add tags to tooltip if available
@@ -685,57 +685,33 @@ class SessionNotesPanel(BasePanel):
             self.delete_btn.setEnabled(True)
     
     def _display_formatted_content(self, note):
-        """Display note content with type-specific formatting based on tags and content"""
-        # Get content and tags
+        """
+        Display note content with type-specific formatting based on tags and content structure.
+        If the note has an origin_note_id, show a clickable link to the origin note at the top.
+        """
         content = note.get('content', '')
         tags = note.get('tags', '').lower().split(',')
         title = note.get('title', '').lower()
-        
-        # Detect content type based on title, tags, and content structure
         content_type = self._detect_content_type(note)
-        
-        # Create HTML content with appropriate styling
         html_content = f"""
         <html>
         <head>
         <style>
-            /* Best practices for readability: high contrast, clean font, good spacing */
             body {{ font-family: 'Segoe UI', Arial, Helvetica, sans-serif; line-height: 1.7; color: #f8f8f2; background-color: #23272e; font-size: 16px; }}
-            h1 {{ color: #ffd700; font-size: 22px; margin-top: 16px; margin-bottom: 10px; font-weight: bold; }}
-            h2 {{ color: #88c0d0; font-size: 19px; margin-top: 14px; margin-bottom: 8px; font-weight: bold; }}
-            h3 {{ color: #8fbcbb; font-size: 17px; margin-top: 10px; margin-bottom: 6px; font-weight: bold; }}
-            p {{ margin: 10px 0; color: #f8f8f2; }}
-            ul {{ margin: 7px 0; padding-left: 22px; }}
-            li {{ color: #f8f8f2; margin-bottom: 4px; }}
-            .metadata {{ color: #a0a0a0; font-style: italic; font-size: 0.95em; }}
-            .monster {{ background-color: #2e2220; padding: 15px; border-left: 3px solid #bf616a; border-radius: 4px; margin-bottom: 10px; }}
-            .location {{ background-color: #1e2b23; padding: 15px; border-left: 3px solid #a3be8c; border-radius: 4px; margin-bottom: 10px; }}
-            .recap {{ background-color: #1a2533; padding: 15px; border-left: 3px solid #5e81ac; border-radius: 4px; margin-bottom: 10px; }}
-            .ai {{ background-color: #2a2438; padding: 15px; border-left: 3px solid #b48ead; border-radius: 4px; margin-bottom: 10px; }}
-            .loot {{ background-color: #2d2922; padding: 15px; border-left: 3px solid #ebcb8b; border-radius: 4px; margin-bottom: 10px; }}
-            .rules {{ background-color: #2a2826; padding: 15px; border-left: 3px solid #d08770; border-radius: 4px; margin-bottom: 10px; }}
-            .property {{ font-weight: bold; color: #eceff4; }}
-            .stat-block {{ background-color: #2e3440; padding: 12px; margin: 10px 0; border-radius: 4px; border: 1px solid #3b4252; }}
-            table {{ border-collapse: collapse; width: 100%; margin: 10px 0; }}
-            th {{ background-color: #3b4252; color: #eceff4; padding: 8px; text-align: left; border: 1px solid #4c566a; }}
-            td {{ border: 1px solid #4c566a; padding: 8px; text-align: left; color: #f8f8f2; }}
-            .header-icon {{ margin-right: 5px; }}
-            .location-header {{ background-color: #2e3c34; padding: 10px; border-radius: 4px; margin-bottom: 15px; }}
-            .location-section {{ margin-top: 15px; margin-bottom: 15px; }}
-            .section-title {{ font-weight: bold; color: #a3be8c; }}
-            .npc-block {{ padding: 8px; border-left: 2px solid #5e81ac; margin: 8px 0; background-color: #2e3440; border-radius: 0 4px 4px 0; }}
-            .poi-block {{ padding: 8px; border-left: 2px solid #ebcb8b; margin: 8px 0; background-color: #2e3440; border-radius: 0 4px 4px 0; }}
-            .secret-block {{ padding: 8px; border-left: 2px solid #b48ead; margin: 8px 0; background-color: #2e3440; border-radius: 0 4px 4px 0; }}
-            strong {{ color: #ffd700; }}
-            em {{ color: #a3be8c; font-style: italic; }}
-            a {{ color: #88c0d0; text-decoration: underline; }}
-            a:hover {{ text-decoration: underline; background-color: #333; }}
+            /* ... existing styles ... */
         </style>
         </head>
         <body>
         """
-        
-        # Add type-specific container
+        # --- Origin Note Link ---
+        origin_note_id = note.get('origin_note_id')
+        if origin_note_id:
+            # Try to find the origin note in self.notes
+            origin_note = next((n for n in self.notes if n.get('id') == origin_note_id), None)
+            origin_title = origin_note['title'] if origin_note else f"Note #{origin_note_id}"
+            # Add a clickable link to select the origin note
+            html_content += f'<div style="margin-bottom: 10px;">Generated from: <a href="note://{origin_note_id}" style="color: #88c0d0; text-decoration: underline;">{origin_title}</a></div>'
+        # ... existing code for type-specific containers and content ...
         if content_type == 'monster':
             html_content += '<div class="monster">'
         elif content_type == 'location':
@@ -750,8 +726,7 @@ class SessionNotesPanel(BasePanel):
             html_content += '<div class="rules">'
         else:
             html_content += '<div>'
-        
-        # Process the content based on its type
+        # ... existing content formatting ...
         if content_type == 'monster':
             html_content += self._format_monster_content(content)
         elif content_type == 'location':
@@ -765,15 +740,34 @@ class SessionNotesPanel(BasePanel):
         elif content_type == 'rules':
             html_content += self._format_rules_content(content)
         else:
-            # For regular notes, convert Markdown to HTML for display
-            # This ensures clickable links and formatting
             html_content += markdown_to_html(content)
-        
-        # Close the container div and HTML
         html_content += "</div></body></html>"
-        
-        # Set the formatted content
         self.note_content.setHtml(html_content)
+        # --- Handle link clicks for origin notes ---
+        self.note_content.anchorClicked.disconnect()
+        self.note_content.anchorClicked.connect(self._handle_note_content_link)
+
+    def _handle_note_content_link(self, url):
+        """
+        Handle anchor clicks in the note content, including origin note links.
+        """
+        url_str = url.toString()
+        if url_str.startswith('note://'):
+            # Extract note ID and select that note
+            try:
+                note_id = int(url_str.split('note://')[1])
+                # Find the item in the list widget and select it
+                for i in range(self.notes_list.count()):
+                    item = self.notes_list.item(i)
+                    if item.data(Qt.UserRole) == note_id:
+                        self.notes_list.setCurrentItem(item)
+                        self._note_selected(item)
+                        break
+            except Exception:
+                pass
+        else:
+            # Fallback to existing handler for dnd:// links
+            handle_dnd_link(self, url, self.app_state)
     
     def _detect_content_type(self, note):
         """Detect the type of content based on title, tags, and content analysis"""
@@ -1168,9 +1162,9 @@ class SessionNotesPanel(BasePanel):
                 info_line.append(f"{key.replace('_', ' ').title()}: {value}")
         if info_line:
             html.append(f'<p style="font-style: italic; text-align: center; margin-bottom: 15px;">{" | ".join(info_line)}</p>')
-        # Description
+            # Description
         description = loc_data.get("description", "")
-        if description:
+            if description:
             html.append(f'<div><span class="property">Description:</span> {description}</div>')
         # Points of Interest
         pois = loc_data.get("points_of_interest", [])
@@ -1187,10 +1181,10 @@ class SessionNotesPanel(BasePanel):
             html.append('</ul></div>')
         # NPCs
         npcs = loc_data.get("npcs", [])
-        if npcs:
+            if npcs:
             html.append('<div><span class="property">NPCs:</span>')
             html.append('<ul>')
-            for npc in npcs:
+                    for npc in npcs:
                 if isinstance(npc, dict):
                     name = npc.get("name", "")
                     desc = npc.get("description", "")
@@ -1200,10 +1194,10 @@ class SessionNotesPanel(BasePanel):
             html.append('</ul></div>')
         # Secrets
         secrets = loc_data.get("secrets", [])
-        if secrets:
+            if secrets:
             html.append('<div><span class="property">Secrets:</span>')
             html.append('<ul>')
-            for secret in secrets:
+                    for secret in secrets:
                 if isinstance(secret, dict):
                     name = secret.get("name", "")
                     desc = secret.get("description", "")
@@ -1218,7 +1212,7 @@ class SessionNotesPanel(BasePanel):
         dm_desc = loc_data.get("dm_description", "")
         if dm_desc:
             html.append('<div style="margin-top: 15px; background-color: #3a2a1a; border-left: 4px solid #e65100; padding: 10px; color: #f8f8f2;"><b>DM Description:</b><br>' + dm_desc.replace("\n", "<br>") + '</div>')
-        html.append('</div>')
+                html.append('</div>')
         return ''.join(html)
 
     def _format_object_json(self, obj_data):
@@ -1249,7 +1243,7 @@ class SessionNotesPanel(BasePanel):
         dm_desc = obj_data.get("dm_description", "")
         if dm_desc:
             html.append('<div style="margin-top: 15px; background-color: #3a2a1a; border-left: 4px solid #e65100; padding: 10px; color: #f8f8f2;"><b>DM Description:</b><br>' + dm_desc.replace("\n", "<br>") + '</div>')
-        html.append('</div>')
+                html.append('</div>')
         return ''.join(html)
 
     def _format_other_json(self, other_data):
@@ -1280,7 +1274,7 @@ class SessionNotesPanel(BasePanel):
         dm_desc = other_data.get("dm_description", "")
         if dm_desc:
             html.append('<div style="margin-top: 15px; background-color: #3a2a1a; border-left: 4px solid #e65100; padding: 10px; color: #f8f8f2;"><b>DM Description:</b><br>' + dm_desc.replace("\n", "<br>") + '</div>')
-        html.append('</div>')
+                    html.append('</div>')
         return ''.join(html)
     
     def _format_recap_content(self, content):
@@ -1747,33 +1741,33 @@ class SessionNotesPanel(BasePanel):
             self._entity_progress_dialog.close()
             self._entity_progress_dialog.deleteLater()
             self._entity_progress_dialog = None
-        if error:
-            QMessageBox.warning(self, "LLM Error", str(error))
-            return
-        import json
+            if error:
+                QMessageBox.warning(self, "LLM Error", str(error))
+                return
+            import json
         import re
-        player_desc = ""
-        dm_desc = ""
+            player_desc = ""
+            dm_desc = ""
         entity_name = None
         formatted_content = None
         data = None
         # Debug: Print the raw LLM output
         print("RAW LLM OUTPUT:", response)
         # Try to extract JSON from the response
-        try:
-            json_start = response.find('{')
-            json_end = response.rfind('}')
-            if json_start >= 0 and json_end > json_start:
-                json_str = response[json_start:json_end+1]
-                data = json.loads(json_str)
-                player_desc = data.get("player_description", "")
-                dm_desc = data.get("dm_description", "")
+            try:
+                json_start = response.find('{')
+                json_end = response.rfind('}')
+                if json_start >= 0 and json_end > json_start:
+                    json_str = response[json_start:json_end+1]
+                    data = json.loads(json_str)
+                    player_desc = data.get("player_description", "")
+                    dm_desc = data.get("dm_description", "")
                 entity_name = data.get("name") or selected_text
         except Exception as e:
             logging.warning(f"Error parsing JSON response: {e}")
             data = None
-        if not player_desc and not dm_desc:
-            player_desc = dm_desc = response
+            if not player_desc and not dm_desc:
+                player_desc = dm_desc = response
         # --- Robust Labeling and Formatting ---
         note_title = None
         tags = []
@@ -1822,7 +1816,7 @@ class SessionNotesPanel(BasePanel):
         if not note_title:
             note_title = f"{user_entity_type.title() if user_entity_type else 'Generated Entity'}: {entity_name or selected_text}"
         dialog = DetailDialog(self, entity_name or selected_text, player_desc, dm_desc)
-        dialog.exec()
+            dialog.exec()
         self._create_note_with_content(note_title, formatted_content, tags)
         # Comments: 
         # - If the LLM returns player_description/dm_description, always format as readable HTML.
