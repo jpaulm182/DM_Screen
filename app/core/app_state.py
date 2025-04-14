@@ -360,3 +360,34 @@ class AppState:
         panel_layout = self.get_setting("panel_layout", {})
         panel_layout[setting_name] = value
         self.set_setting("panel_layout", panel_layout)
+        
+    def get_panel_setting(self, panel_id, setting_name, default=None):
+        """Get a panel-specific setting
+        
+        Args:
+            panel_id: The ID of the panel (e.g., 'dice_roller')
+            setting_name: Name of the setting to retrieve
+            default: Default value if setting is not found
+            
+        Returns:
+            The value of the setting or default if not found
+        """
+        panel_settings = self.get_setting("panel_settings", {})
+        panel_config = panel_settings.get(panel_id, {})
+        return panel_config.get(setting_name, default)
+        
+    def save_panel_setting(self, panel_id, setting_name, value):
+        """Save a panel-specific setting
+        
+        Args:
+            panel_id: The ID of the panel (e.g., 'dice_roller')
+            setting_name: Name of the setting to save
+            value: Value to save
+        """
+        panel_settings = self.get_setting("panel_settings", {})
+        
+        if panel_id not in panel_settings:
+            panel_settings[panel_id] = {}
+            
+        panel_settings[panel_id][setting_name] = value
+        self.set_setting("panel_settings", panel_settings)

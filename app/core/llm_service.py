@@ -2,7 +2,7 @@
 """
 LLM Service module for DM Screen
 
-Provides API integrations for OpenAI GPT-4o and Anthropic Claude models.
+Provides API integrations for OpenAI GPT-4.1 and Anthropic Claude models.
 """
 
 import os
@@ -30,8 +30,8 @@ class ModelInfo:
     """Information about available models"""
     
     # OpenAI models
-    OPENAI_GPT4O = "gpt-4o"
-    OPENAI_GPT4O_MINI = "gpt-4o-mini"
+    OPENAI_GPT4O = "gpt-4.1"
+    OPENAI_GPT4O_MINI = "gpt-4.1-mini"
     
     # Anthropic models
     ANTHROPIC_CLAUDE_3_OPUS = "claude-3-opus-20240229"
@@ -43,8 +43,8 @@ class ModelInfo:
         """Get all available models"""
         return {
             ModelProvider.OPENAI: [
-                {"id": cls.OPENAI_GPT4O, "name": "GPT-4o", "context_window": 128000},
-                {"id": cls.OPENAI_GPT4O_MINI, "name": "GPT-4o Mini", "context_window": 128000},
+                {"id": cls.OPENAI_GPT4O, "name": "GPT-4.1", "context_window": 128000},
+                {"id": cls.OPENAI_GPT4O_MINI, "name": "GPT-4.1 Mini", "context_window": 128000},
             ],
             ModelProvider.ANTHROPIC: [
                 {"id": cls.ANTHROPIC_CLAUDE_3_OPUS, "name": "Claude 3 Opus", "context_window": 200000},
@@ -141,7 +141,7 @@ class LLMService(QObject):
     Service for interacting with LLM APIs
     
     Handles authentication, API calls, and response processing for
-    OpenAI GPT-4o and Anthropic Claude models.
+    OpenAI GPT-4.1 and Anthropic Claude models.
     """
     
     # Signals
@@ -383,7 +383,7 @@ class LLMService(QObject):
             if not available_models:
                 raise ValueError("No LLM models available. Please set up API keys.")
             
-            # Prefer OpenAI GPT-4o if available, otherwise use the first available model
+            # Prefer OpenAI GPT-4.1 if available, otherwise use the first available model
             default_model = None
             for m in available_models:
                 if m["id"] == ModelInfo.OPENAI_GPT4O:
@@ -406,7 +406,7 @@ class LLMService(QObject):
 
     def generate_image(self, prompt, output_path=None, monster_id=None, size="1024x1024"):
         """
-        Generate an image using OpenAI DALL-E through GPT-4o
+        Generate an image using OpenAI DALL-E through GPT-4.1
         
         Args:
             prompt (str): The image generation prompt

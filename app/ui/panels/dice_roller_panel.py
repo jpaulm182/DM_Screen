@@ -8,6 +8,7 @@ Provides a flexible dice rolling system with support for:
 - Advantage/disadvantage rolls
 - Roll history
 - Saved custom rolls
+- Mini mode for non-obtrusive operation
 """
 
 import re
@@ -19,8 +20,8 @@ from PySide6.QtWidgets import (
     QSpinBox, QComboBox, QCheckBox, QMessageBox,
     QScrollArea, QSizePolicy, QMenu, QInputDialog
 )
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QColor, QPalette, QTextDocument
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QFont, QColor, QPalette, QTextDocument, QIcon
 from app.ui.panels.base_panel import BasePanel
 
 class DiceRollerPanel(BasePanel):
@@ -31,6 +32,7 @@ class DiceRollerPanel(BasePanel):
         # Initialize with default values before parent init
         self.roll_history = []
         self.saved_rolls = self._get_default_rolls()
+        self.mini_mode = False  # Start in full mode
         
         # Call parent init
         super().__init__(app_state, "Dice Roller")
@@ -41,7 +43,43 @@ class DiceRollerPanel(BasePanel):
     def _setup_ui(self):
         """Set up the dice roller UI"""
         # Create a new layout for this panel
-        layout = QVBoxLayout()
+        self.main_layout = QVBoxLayout()
+        
+        # Add toggle button for mini mode at the top right
+        toggle_layout = QHBoxLayout()
+        toggle_layout.addStretch()
+        
+        self.mini_mode_toggle = QPushButton("Mini Mode")
+        self.mini_mode_toggle.setCheckable(True)
+        self.mini_mode_toggle.setToolTip("Toggle between full and compact dice roller")
+        self.mini_mode_toggle.clicked.connect(self._toggle_mini_mode)
+        toggle_layout.addWidget(self.mini_mode_toggle)
+        
+        self.main_layout.addLayout(toggle_layout)
+        
+        # Create both UI modes
+        self._setup_full_ui()
+        self._setup_mini_ui()
+        
+        # Show the appropriate UI
+        self._toggle_mini_mode(self.mini_mode)
+        
+        # Set the layout for this panel
+        self.setLayout(self.main_layout)
+        
+        # Now that UI is set up, try to load saved rolls and update UI
+        try:
+            self._try_load_saved_rolls()
+            self._update_saved_roll_combo()
+            self.saved_roll_combo.currentTextChanged.connect(self._on_saved_roll_selected)
+        except Exception as e:
+            print(f"Error initializing saved rolls: {e}")
+    
+    def _setup_full_ui(self):
+        """Set up the full version of the dice roller UI"""
+        self.full_widget = QWidget()
+        layout = QVBoxLayout(self.full_widget)
+        self.full_widget.setLayout(layout)
         
         # Quick roll buttons
         quick_roll_group = QGroupBox("Quick Rolls")
@@ -148,16 +186,158 @@ class DiceRollerPanel(BasePanel):
         history_group.setLayout(history_layout)
         layout.addWidget(history_group)
         
-        # Set the layout for this panel
-        self.setLayout(layout)
+        # Add the full widget to the main layout but initially hide it
+        self.main_layout.addWidget(self.full_widget)
+    
+    def _setup_mini_ui(self):
+        """Set up the mini version of the dice roller UI"""
+        self.mini_widget = QWidget()
+        layout = QVBoxLayout(self.mini_widget)
         
-        # Now that UI is set up, try to load saved rolls and update UI
+        # Mini result display - smaller but still visible
+        self.mini_result_display = QLabel()
+        self.mini_result_display.setAlignment(Qt.AlignCenter)
+        self.mini_result_display.setTextFormat(Qt.RichText)
+        default_text = f"<span style='font-size: 20px; font-weight: bold;'>Roll some dice</span>"
+        self.mini_result_display.setText(default_text)
+        self.mini_result_display.setStyleSheet("background-color: rgba(0, 0, 0, 0.1); border-radius: 5px; padding: 5px;")
+        self.mini_result_display.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self.mini_result_display.setMinimumHeight(50)
+        layout.addWidget(self.mini_result_display)
+        
+        # Compact dice buttons in a single row
+        dice_layout = QHBoxLayout()
+        standard_dice = [4, 6, 8, 10, 12, 20, 100]
+        
+        for sides in standard_dice:
+            button = QPushButton(f"d{sides}")
+            button.setMaximumWidth(40)  # Make buttons narrower
+            button.clicked.connect(lambda checked, s=sides: self._quick_roll_mini(s))
+            dice_layout.addWidget(button)
+        
+        # Add advantage/disadvantage buttons
+        adv_button = QPushButton("ADV")
+        adv_button.setToolTip("Roll with advantage (2d20, take highest)")
+        adv_button.clicked.connect(lambda: self._roll_with_advantage_mini(True))
+        dice_layout.addWidget(adv_button)
+        
+        disadv_button = QPushButton("DIS")
+        disadv_button.setToolTip("Roll with disadvantage (2d20, take lowest)")
+        disadv_button.clicked.connect(lambda: self._roll_with_advantage_mini(False))
+        dice_layout.addWidget(disadv_button)
+        
+        layout.addLayout(dice_layout)
+        
+        # Mini custom roll input
+        mini_input_layout = QHBoxLayout()
+        self.mini_roll_input = QLineEdit()
+        self.mini_roll_input.setPlaceholderText("2d6+3")
+        self.mini_roll_input.returnPressed.connect(self._custom_roll_mini)
+        mini_input_layout.addWidget(self.mini_roll_input)
+        
+        mini_roll_button = QPushButton("Roll")
+        mini_roll_button.clicked.connect(self._custom_roll_mini)
+        mini_input_layout.addWidget(mini_roll_button)
+        
+        # Add saved roll dropdown (compact version)
+        self.mini_saved_roll_combo = QComboBox()
+        self.mini_saved_roll_combo.setMaximumWidth(150)
+        self.mini_saved_roll_combo.currentTextChanged.connect(self._on_mini_saved_roll_selected)
+        mini_input_layout.addWidget(self.mini_saved_roll_combo)
+        
+        layout.addLayout(mini_input_layout)
+        
+        # Add the mini widget to the main layout but initially hide it
+        self.main_layout.addWidget(self.mini_widget)
+        self.mini_widget.hide()
+    
+    def _toggle_mini_mode(self, checked=None):
+        """Toggle between full and mini dice roller modes"""
+        if checked is None:
+            checked = not self.mini_mode
+        
+        self.mini_mode = checked
+        self.mini_mode_toggle.setChecked(checked)
+        
+        if checked:
+            self.mini_mode_toggle.setText("Full Mode")
+            self.full_widget.hide()
+            self.mini_widget.show()
+            
+            # Update the mini saved roll combo
+            self.mini_saved_roll_combo.clear()
+            self.mini_saved_roll_combo.addItem("-- Saved --")
+            for name in sorted(self.saved_rolls.keys()):
+                self.mini_saved_roll_combo.addItem(f"{name}")
+        else:
+            self.mini_mode_toggle.setText("Mini Mode")
+            self.mini_widget.hide()
+            self.full_widget.show()
+        
+        # Save the mode preference
+        if hasattr(self, 'app_state') and self.app_state:
+            self.app_state.save_panel_setting("dice_roller", "mini_mode", checked)
+    
+    def _quick_roll_mini(self, sides):
+        """Perform a quick roll in mini mode"""
+        result = random.randint(1, sides)
+        self._update_mini_result(f"d{sides}", result)
+        self._add_to_history(f"d{sides}", result)
+    
+    def _custom_roll_mini(self):
+        """Handle custom dice roll in mini mode"""
+        expression = self.mini_roll_input.text().strip().lower()
+        if not expression:
+            return
+        
         try:
-            self._try_load_saved_rolls()
-            self._update_saved_roll_combo()
-            self.saved_roll_combo.currentTextChanged.connect(self._on_saved_roll_selected)
-        except Exception as e:
-            print(f"Error initializing saved rolls: {e}")
+            results = self._parse_and_roll(expression)
+            if results:
+                total, details = results
+                self._update_mini_result(expression, total, details)
+                self._add_to_history(expression, total, details)
+        except ValueError as e:
+            QMessageBox.warning(self, "Invalid Roll", str(e))
+    
+    def _roll_with_advantage_mini(self, is_advantage):
+        """Roll with advantage/disadvantage in mini mode"""
+        roll1 = random.randint(1, 20)
+        roll2 = random.randint(1, 20)
+        
+        if is_advantage:
+            result = max(roll1, roll2)
+            roll_type = "Advantage"
+        else:
+            result = min(roll1, roll2)
+            roll_type = "Disadvantage"
+        
+        details = f"[{roll1}, {roll2}]"
+        self._update_mini_result(f"d20 {roll_type}", result, details)
+        self._add_to_history(f"d20 with {roll_type}", result, details)
+    
+    def _update_mini_result(self, expression, result, details=None):
+        """Update the mini mode result display"""
+        # Similar styling as full mode but more compact
+        if "d20" in expression.lower() and result == 20:
+            result_text = f"<span style='font-size: 28px; font-weight: bold; color: white;'>{result}</span>"
+            self.mini_result_display.setStyleSheet("background-color: rgba(0, 200, 0, 0.5); color: white; font-weight: bold; border-radius: 5px; padding: 5px; border: 2px solid green;")
+        elif "d20" in expression.lower() and result == 1:
+            result_text = f"<span style='font-size: 28px; font-weight: bold; color: white;'>{result}</span>"
+            self.mini_result_display.setStyleSheet("background-color: rgba(200, 0, 0, 0.5); color: white; font-weight: bold; border-radius: 5px; padding: 5px; border: 2px solid red;")
+        else:
+            result_text = f"<span style='font-size: 24px; font-weight: bold;'>{result}</span>"
+            self.mini_result_display.setStyleSheet("background-color: rgba(0, 0, 0, 0.1); border-radius: 5px; padding: 5px;")
+        
+        expr_text = f"<span style='font-size: 12px; color: #555;'>{expression}</span>"
+        self.mini_result_display.setText(f"{result_text}<br>{expr_text}")
+    
+    def _on_mini_saved_roll_selected(self, text):
+        """Handle selection from mini mode saved roll dropdown"""
+        if text and text != "-- Saved --":
+            formula = self.saved_rolls.get(text, "")
+            if formula:
+                self.mini_roll_input.setText(formula)
+                self._custom_roll_mini()
     
     def _quick_roll(self, sides):
         """Perform a quick roll of a single die"""
@@ -251,42 +431,8 @@ class DiceRollerPanel(BasePanel):
         if details:
             text += f" {details}"
         
-        # Update the prominent result display with MUCH larger text for the result
-        # Split it into a large result and smaller expression
-        result_font = QFont(self.font())
-        result_font.setBold(True)
-        result_font.setPointSize(24)  # Even larger for prominence
-        
-        # Create separate labels for result and expression for better visual hierarchy
-        # Size up the result for critical hits/fails
-        is_crit_hit = False
-        is_crit_fail = False
-        
-        if "d20" in expression.lower() and result == 20:
-            result_text = f"<span style='font-size: 48px; font-weight: bold; color: white;'>{result}</span>"
-            is_crit_hit = True
-        elif "d20" in expression.lower() and result == 1:
-            result_text = f"<span style='font-size: 48px; font-weight: bold; color: white;'>{result}</span>"
-            is_crit_fail = True
-        else:
-            result_text = f"<span style='font-size: 36px; font-weight: bold;'>{result}</span>"
-        
-        expr_text = f"<span style='font-size: 14px; color: #555;'>{expression}</span>"
-        self.result_display.setText(f"{result_text}<br>{expr_text}")
-        
-        # Update style based on roll type
-        if "d20" in expression.lower():
-            if result == 20:
-                # Critical hit!
-                self.result_display.setStyleSheet("background-color: rgba(0, 200, 0, 0.5); color: white; font-weight: bold; border-radius: 5px; padding: 10px; border: 2px solid green;")
-            elif result == 1:
-                # Critical fail!
-                self.result_display.setStyleSheet("background-color: rgba(200, 0, 0, 0.5); color: white; font-weight: bold; border-radius: 5px; padding: 10px; border: 2px solid red;")
-            else:
-                self.result_display.setStyleSheet("background-color: rgba(0, 0, 0, 0.1); border-radius: 5px; padding: 10px;")
-        else:
-            # For non-d20 rolls, use a neutral but visible style
-            self.result_display.setStyleSheet("background-color: rgba(0, 0, 150, 0.1); border-radius: 5px; padding: 10px;")
+        # Update the result display in both modes
+        self._update_result_display(expression, result, details)
         
         # Store plain text in history
         self.roll_history.append(text)
@@ -296,6 +442,9 @@ class DiceRollerPanel(BasePanel):
         item.setToolTip(text)  # Add tooltip for longer entries
         
         # Apply color formatting based on roll type
+        is_crit_hit = "d20" in expression.lower() and result == 20
+        is_crit_fail = "d20" in expression.lower() and result == 1
+        
         if is_crit_hit:
             item.setForeground(QColor("white"))
             item.setBackground(QColor(0, 150, 0))  # Darker green background for better contrast
@@ -322,6 +471,74 @@ class DiceRollerPanel(BasePanel):
             
         # Log to combat log if available
         self._log_roll_to_combat_log(expression, result, details)
+    
+    def _update_result_display(self, expression, result, details=None):
+        """Update both result displays with the roll result"""
+        # Format result for full mode display
+        is_crit_hit = "d20" in expression.lower() and result == 20
+        is_crit_fail = "d20" in expression.lower() and result == 1
+        
+        # Update full mode display
+        if "d20" in expression.lower() and result == 20:
+            result_text = f"<span style='font-size: 48px; font-weight: bold; color: white;'>{result}</span>"
+            self.result_display.setStyleSheet("background-color: rgba(0, 200, 0, 0.5); color: white; font-weight: bold; border-radius: 5px; padding: 10px; border: 2px solid green;")
+        elif "d20" in expression.lower() and result == 1:
+            result_text = f"<span style='font-size: 48px; font-weight: bold; color: white;'>{result}</span>"
+            self.result_display.setStyleSheet("background-color: rgba(200, 0, 0, 0.5); color: white; font-weight: bold; border-radius: 5px; padding: 10px; border: 2px solid red;")
+        else:
+            result_text = f"<span style='font-size: 36px; font-weight: bold;'>{result}</span>"
+            self.result_display.setStyleSheet("background-color: rgba(0, 0, 0, 0.1); border-radius: 5px; padding: 10px;")
+        
+        expr_text = f"<span style='font-size: 14px; color: #555;'>{expression}</span>"
+        self.result_display.setText(f"{result_text}<br>{expr_text}")
+        
+        # Also update mini mode display
+        self._update_mini_result(expression, result, details)
+    
+    def _update_saved_roll_combo(self):
+        """Update the saved rolls combo boxes in both modes"""
+        # Update full mode combo
+        self.saved_roll_combo.clear()
+        self.saved_roll_combo.addItem("-- Select Saved Formula --")
+        
+        for name in sorted(self.saved_rolls.keys()):
+            self.saved_roll_combo.addItem(f"{name} ({self.saved_rolls[name]})")
+            
+        # Also update mini mode combo if it exists
+        if hasattr(self, 'mini_saved_roll_combo'):
+            self.mini_saved_roll_combo.clear()
+            self.mini_saved_roll_combo.addItem("-- Saved --")
+            for name in sorted(self.saved_rolls.keys()):
+                self.mini_saved_roll_combo.addItem(f"{name}")
+    
+    def _try_load_saved_rolls(self):
+        """Safely try to load saved rolls after UI is ready"""
+        if not hasattr(self, 'app_state') or not self.app_state:
+            print("Warning: app_state not available")
+            return
+            
+        try:
+            if hasattr(self.app_state, 'config_dir'):
+                config_dir = self.app_state.config_dir
+                saved_rolls_file = config_dir / "saved_dice_rolls.json"
+                
+                if saved_rolls_file.exists():
+                    try:
+                        with open(saved_rolls_file, 'r') as f:
+                            loaded_rolls = json.load(f)
+                            if isinstance(loaded_rolls, dict):
+                                self.saved_rolls = loaded_rolls
+                                self.loaded = True
+                    except Exception as e:
+                        print(f"Error loading saved dice rolls: {e}")
+                
+                # Load mini mode preference
+                self.mini_mode = self.app_state.get_panel_setting("dice_roller", "mini_mode", False)
+                if self.mini_mode:
+                    # Delay setting mini mode until after UI setup
+                    QTimer.singleShot(100, lambda: self._toggle_mini_mode(True))
+        except Exception as e:
+            print(f"Unexpected error accessing config: {e}")
     
     def _log_roll_to_combat_log(self, expression, result, details=None):
         """Log the roll to the combat log if available"""
@@ -374,52 +591,6 @@ class DiceRollerPanel(BasePanel):
             "Damage (Greatsword)": "2d6", 
             "Sneak Attack (L1)": "1d6"
         }
-        
-    def _try_load_saved_rolls(self):
-        """Safely try to load saved rolls after UI is ready"""
-        if not hasattr(self, 'app_state') or not self.app_state:
-            print("Warning: app_state not available")
-            return
-            
-        try:
-            if hasattr(self.app_state, 'config_dir'):
-                config_dir = self.app_state.config_dir
-                saved_rolls_file = config_dir / "saved_dice_rolls.json"
-                
-                if saved_rolls_file.exists():
-                    try:
-                        with open(saved_rolls_file, 'r') as f:
-                            loaded_rolls = json.load(f)
-                            if isinstance(loaded_rolls, dict):
-                                self.saved_rolls = loaded_rolls
-                                self.loaded = True
-                    except Exception as e:
-                        print(f"Error loading saved dice rolls: {e}")
-        except Exception as e:
-            print(f"Unexpected error accessing config: {e}")
-            
-    def _load_saved_rolls(self):
-        """Legacy method kept for compatibility"""
-        return self.saved_rolls
-    
-    def _save_rolls(self):
-        """Save the roll formulas to config"""
-        config_dir = self.app_state.config_dir
-        saved_rolls_file = config_dir / "saved_dice_rolls.json"
-        
-        try:
-            with open(saved_rolls_file, 'w') as f:
-                json.dump(self.saved_rolls, f, indent=2)
-        except Exception as e:
-            print(f"Error saving dice rolls: {e}")
-    
-    def _update_saved_roll_combo(self):
-        """Update the saved rolls combo box"""
-        self.saved_roll_combo.clear()
-        self.saved_roll_combo.addItem("-- Select Saved Formula --")
-        
-        for name in sorted(self.saved_rolls.keys()):
-            self.saved_roll_combo.addItem(f"{name} ({self.saved_rolls[name]})")
     
     def _on_saved_roll_selected(self, text):
         """Handle selection of a saved roll from the dropdown"""
@@ -578,6 +749,41 @@ class DiceRollerPanel(BasePanel):
                 if index >= 0:
                     self.saved_roll_combo.setCurrentIndex(index)
     
+    def save_state(self):
+        """Save the panel state"""
+        return {
+            "mini_mode": self.mini_mode,
+            "saved_rolls": self.saved_rolls,
+            "roll_history": self.roll_history
+        }
+    
+    def restore_state(self, state):
+        """Restore the panel state from saved data"""
+        if not state:
+            return
+            
+        # Restore saved rolls
+        if "saved_rolls" in state and isinstance(state["saved_rolls"], dict):
+            self.saved_rolls = state["saved_rolls"]
+            self._update_saved_roll_combo()
+            
+        # Restore roll history
+        if "roll_history" in state and isinstance(state["roll_history"], list):
+            self.roll_history = state["roll_history"]
+            self.history_list.clear()
+            
+            # Add history items in reverse order (newest at top)
+            for text in reversed(self.roll_history):
+                item = QListWidgetItem(text)
+                item.setToolTip(text)
+                self.history_list.addItem(item)
+            
+        # Restore mini mode state
+        if "mini_mode" in state:
+            mini_mode = state["mini_mode"]
+            # Use a timer to ensure UI is fully set up before switching modes
+            QTimer.singleShot(100, lambda: self._toggle_mini_mode(mini_mode))
+    
     def _show_history_context_menu(self, pos):
         """Show context menu for roll history items"""
         item = self.history_list.itemAt(pos)
@@ -612,3 +818,14 @@ class DiceRollerPanel(BasePanel):
                         self.saved_rolls[name] = formula
                         self._save_rolls()
                         self._update_saved_roll_combo()
+    
+    def _save_rolls(self):
+        """Save the roll formulas to config"""
+        config_dir = self.app_state.config_dir
+        saved_rolls_file = config_dir / "saved_dice_rolls.json"
+        
+        try:
+            with open(saved_rolls_file, 'w') as f:
+                json.dump(self.saved_rolls, f, indent=2)
+        except Exception as e:
+            print(f"Error saving dice rolls: {e}")
