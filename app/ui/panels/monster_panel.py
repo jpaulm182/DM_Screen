@@ -84,7 +84,8 @@ class MonsterPanel(BasePanel):
     """Panel for viewing and managing monster/NPC stat blocks"""
     
     # Signal emitted when adding monster to combat
-    add_to_combat = Signal(dict)  # Emits monster data as dict
+    # Renamed from add_to_combat to match PanelManager connection logic
+    add_combatant_signal = Signal(list)  # Emits a LIST containing monster data as dict
 
     # Signal emitted when a new custom monster is created/saved
     custom_monster_created = Signal(str) # Emits new monster's name
@@ -635,10 +636,10 @@ class MonsterPanel(BasePanel):
                     pass
             print(f"[MonsterPanel] Manually converted monster to dictionary with {len(monster_dict)} keys")
                 
-        # Emit the signal with the monster data
-        print(f"[MonsterPanel] Emitting add_to_combat signal with monster data, keys: {list(monster_dict.keys())}")
-        self.add_to_combat.emit(monster_dict)
-        print("[MonsterPanel] add_to_combat signal emitted")
+        # Emit the signal with the monster data AS A LIST
+        print(f"[MonsterPanel] Emitting add_combatant_signal with monster data list, keys: {list(monster_dict.keys())}")
+        self.add_combatant_signal.emit([monster_dict]) # Send as a list
+        print("[MonsterPanel] add_combatant_signal emitted")
         
         # Show a confirmation message
         QMessageBox.information(

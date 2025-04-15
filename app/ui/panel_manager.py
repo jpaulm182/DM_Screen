@@ -200,12 +200,17 @@ class PanelManager(QObject):
             return dock
             
         except Exception as e:
+            # Log the error and show message, but don't stop the app
+            print(f"ERROR creating panel {panel_class.__name__}: {str(e)}")
+            import traceback
+            traceback.print_exc()
             QMessageBox.critical(
                 self.main_window,
                 "Panel Creation Error",
                 f"Failed to create {panel_class.__name__}: {str(e)}"
             )
-            return None
+            # raise e # Don't re-raise, return None instead
+            return None # Return None if creation failed
     
     def _apply_panel_styling(self, dock, panel_id):
         """Apply color coding and styling to the panel based on its category"""
@@ -268,94 +273,75 @@ class PanelManager(QObject):
     def _connect_panel_signals(self):
         """Connect signals between panels for inter-panel communication"""
         print("[PanelManager] Attempting to connect panel signals...")
-        
         try:
-            # Connect monster panel to combat tracker
-            monster_panel = self.panels["monster"].widget()
-            combat_tracker = self.panels["combat_tracker"].widget()
-            
+            # Get references to panels, checking if they exist and are valid
+            combat_tracker_dock = self.panels.get("combat_tracker")
+            monster_dock = self.panels.get("monster")
+            pc_dock = self.panels.get("player_character")
+            npc_dock = self.panels.get("npc_generator")
+            combat_log_dock = self.panels.get("combat_log")
+
+            # Get actual panel widgets, checking for None
+            combat_tracker = combat_tracker_dock.widget() if combat_tracker_dock else None
+            monster_panel = monster_dock.widget() if monster_dock else None
+            pc_panel = pc_dock.widget() if pc_dock else None
+            npc_panel = npc_dock.widget() if npc_dock else None
+            combat_log_panel = combat_log_dock.widget() if combat_log_dock else None
+
+            # Connect MonsterPanel -> CombatTracker
             if monster_panel and combat_tracker:
-                print(f"[PanelManager] Found both monster_panel ({type(monster_panel).__name__}) and combat_tracker ({type(combat_tracker).__name__})")
-                
-                if hasattr(monster_panel, "add_to_combat"):
-                    print("[PanelManager] monster_panel has add_to_combat signal")
-                    
-                    if hasattr(combat_tracker, "add_monster"):
-                        print("[PanelManager] combat_tracker has add_monster method")
-                        monster_panel.add_to_combat.connect(combat_tracker.add_monster)
-                        print("[PanelManager] CONNECTED: monster_panel.add_to_combat -> combat_tracker.add_monster")
-                    else:
-                        print("[PanelManager] ERROR: combat_tracker does not have add_monster method!")
+                if hasattr(monster_panel, 'add_combatant_signal') and hasattr(combat_tracker, 'add_combatant_group'):
+                    monster_panel.add_combatant_signal.connect(combat_tracker.add_combatant_group)
+                    print("[PanelManager] Connected MonsterPanel -> CombatTracker")
                 else:
-                    print("[PanelManager] ERROR: monster_panel does not have add_to_combat signal!")
+                    print("[PanelManager] Failed to connect Monster -> Combat: Missing signal/slot")
             else:
-                missing = []
-                if not monster_panel:
-                    missing.append("monster_panel")
-                if not combat_tracker:
-                    missing.append("combat_tracker")
-                print(f"[PanelManager] ERROR: Missing panels: {', '.join(missing)}")
+                 print("[PanelManager] Skipped Monster -> Combat connection (panel missing)")
+
+            # Connect PlayerCharacterPanel -> CombatTracker
+            if pc_panel and combat_tracker:
+                if hasattr(pc_panel, 'add_to_combat') and hasattr(combat_tracker, 'add_character'):
+                    pc_panel.add_to_combat.connect(combat_tracker.add_character)
+                    print("[PanelManager] Connected PlayerCharacterPanel -> CombatTracker")
+                else:
+                     print("[PanelManager] Failed to connect PC -> Combat: Missing signal/slot")
+            else:
+                 print("[PanelManager] Skipped PC -> Combat connection (panel missing)")
+                 
+            # Connect NPCGeneratorPanel -> PlayerCharacterPanel
+            if npc_panel and pc_panel:
+                if hasattr(npc_panel, 'npc_generated_signal') and hasattr(pc_panel, 'add_npc_character'):
+                    npc_panel.npc_generated_signal.connect(pc_panel.add_npc_character)
+                    print("[PanelManager] Connected NPC Generator -> PlayerCharacterPanel")
+                else:
+                    print("[PanelManager] Failed to connect NPC -> PC: Missing signal/slot")
+            else:
+                print("[PanelManager] Skipped NPC -> PC connection (panel missing)")
             
-            # Connect conditions panel to combat tracker
-            conditions_panel = self.panels["conditions"].widget()
-            if conditions_panel and hasattr(conditions_panel, "apply_condition"):
-                conditions_panel.apply_condition.connect(combat_tracker.apply_condition)
-                print("[PanelManager] Connected conditions_panel.apply_condition to combat_tracker.apply_condition")
+            # Connect CombatTrackerPanel -> CombatLogPanel
+            if combat_tracker and combat_log_panel:
+                if hasattr(combat_tracker, 'combat_log_signal'): # Assuming combat_tracker emits this
+                    # Find the correct slot on combat_log_panel 
+                    # Assuming it's called add_log_entry based on previous code snippets
+                    if hasattr(combat_log_panel, 'add_log_entry'):
+                        combat_tracker.combat_log_signal.connect(combat_log_panel.add_log_entry)
+                        print("[PanelManager] Connected CombatTracker -> CombatLog")
+                    else:
+                        print("[PanelManager] Failed to connect Combat -> Log: CombatLogPanel missing add_log_entry slot")
+                else:
+                    print("[PanelManager] Failed to connect Combat -> Log: CombatTrackerPanel missing combat_log_signal")
+            else:
+                print("[PanelManager] Skipped Combat -> Log connection (panel missing)")
             
-            # Connect player character panel to combat tracker
-            player_character_panel = self.panels["player_character"].widget()
-            if player_character_panel and hasattr(player_character_panel, "add_to_combat"):
-                player_character_panel.add_to_combat.connect(combat_tracker.add_character)
-                print("[PanelManager] Connected player_character_panel.add_to_combat to combat_tracker.add_character")
-            
-            # Connect Encounter Generator to Combat Tracker
-            encounter_panel_dock = self.panels.get("encounter_generator")
-            if encounter_panel_dock and combat_tracker:
-                encounter_panel = encounter_panel_dock.widget()
-                if hasattr(encounter_panel, 'add_group_to_combat') and hasattr(combat_tracker, 'add_combatant_group'):
-                    encounter_panel.add_group_to_combat.connect(combat_tracker.add_combatant_group)
-                    print("Connected EncounterGeneratorPanel.add_group_to_combat to CombatTrackerPanel.add_combatant_group") # Debug log
-            
-            # Connect custom monster creation from Encounter Generator to Monster Panel
-            if encounter_panel_dock and monster_panel:
-                encounter_panel = encounter_panel_dock.widget()
-                if hasattr(encounter_panel, 'add_group_to_combat') and hasattr(monster_panel, '_load_initial_monsters'):
-                    # When monsters are added to combat from encounter generator, refresh the monster panel list
-                    encounter_panel.add_group_to_combat.connect(lambda _: monster_panel._load_initial_monsters())
-                    print("Connected EncounterGeneratorPanel.add_group_to_combat to MonsterPanel._load_initial_monsters")
-            
-            # Connect Monster Panel's custom monster created signal to Session Notes Panel
-            session_notes_dock = self.panels.get("session_notes")
-            if monster_panel and session_notes_dock:
-                session_notes = session_notes_dock.widget()
-                if hasattr(monster_panel, "custom_monster_created") and hasattr(session_notes, "add_monster_creation_note"):
-                    monster_panel.custom_monster_created.connect(session_notes.add_monster_creation_note)
-                    print("Connected MonsterPanel.custom_monster_created to SessionNotesPanel.add_monster_creation_note")
-            
-            # Connect NPC Generator to LLM panel for context sharing (if implemented)
-            npc_generator = self.panels["npc_generator"].widget()
-            llm_panel = self.panels["llm"].widget()
-            
-            # Connect NPC Generator to Player Character Panel
-            if npc_generator and player_character_panel and hasattr(npc_generator, "npc_generated"):
-                npc_generator.npc_generated.connect(player_character_panel.add_npc_character)
-            
-            # Weather panel and time tracker panel (future integration)
-            weather_panel = self.panels["weather"].widget()
-            time_tracker = self.panels["time_tracker"].widget()
-            
-            # This connection would be implemented when the signal/slot is ready
-            # if weather_panel and time_tracker:
-            #     if hasattr(time_tracker, "update_weather") and hasattr(weather_panel, "generate_weather"):
-            #         time_tracker.update_weather.connect(weather_panel.generate_weather)
-            
-            # TODO: Connect Encounter Generator panel signals
-            # encounter_panel = self.get_panel_widget("encounter_generator")
-            # combat_tracker = self.get_panel_widget("combat_tracker")
-            # if encounter_panel and combat_tracker and hasattr(encounter_panel, 'add_group_to_combat'):
-            #     encounter_panel.add_group_to_combat.connect(combat_tracker.add_combatant_group) # Assuming combat_tracker has this method
-            
-            print("[PanelManager] Successfully connected panel signals")
+            # Connect CombatTrackerPanel -> PlayerCharacterPanel (for viewing details)
+            # This might not be needed if viewing details directly shows the panel?
+            # Consider if direct calls are better than signals here.
+            # if combat_tracker and pc_panel:
+            #     if hasattr(combat_tracker, 'view_character_details') and hasattr(pc_panel, 'select_character_by_name'):
+            #         combat_tracker.view_character_details.connect(pc_panel.select_character_by_name)
+            #         print("[PanelManager] Connected CombatTracker -> PlayerCharacterPanel (View Details)")
+
+            # Add more connections as needed...
             
         except Exception as e:
             print(f"[PanelManager] ERROR connecting panel signals: {e}")

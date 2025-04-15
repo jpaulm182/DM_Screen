@@ -955,6 +955,9 @@ class CombatTrackerPanel(BasePanel):
         self.current_details_type = None  # Type of current combatant for details
         self.next_monster_id = 1  # Counter for unique monster IDs
         
+        # --- NEW: Flag to prevent sorting during LLM resolution --- 
+        self._is_resolving_combat = False 
+        
         # Initialize timers
         self.timer = QTimer()
         self.timer.timeout.connect(self._update_timer)
@@ -1504,6 +1507,11 @@ class CombatTrackerPanel(BasePanel):
     
     def _sort_initiative(self):
         """Sort the initiative list in descending order."""
+        # --- Check flag: Prevent sorting during LLM resolution --- 
+        if self._is_resolving_combat:
+            print("[CombatTracker] _sort_initiative: Skipping sort because _is_resolving_combat is True.")
+            return
+            
         print(f"[CombatTracker] _sort_initiative ENTRY with {self.initiative_table.rowCount()} rows")
         # Block signals to prevent recursive calls during sorting
         self.initiative_table.blockSignals(True)
@@ -2435,6 +2443,10 @@ class CombatTrackerPanel(BasePanel):
         self.fast_resolve_button.setEnabled(False)
         self.fast_resolve_button.setText("Resolving...")
 
+        # --- SET FLAG before starting resolution --- 
+        self._is_resolving_combat = True
+        print("[CombatTracker] Setting _is_resolving_combat = True")
+
         # --- Dice roller function ---
         def dice_roller(expr):
             """Parse and roll a dice expression like '1d20+5'. Returns the integer result."""
@@ -2919,7 +2931,6 @@ class CombatTrackerPanel(BasePanel):
             result = json.loads(result_json)
         except json.JSONDecodeError:
             print(f"[CombatTracker] Error decoding result JSON: {result_json}")
-            # Handle error appropriately, maybe show an error message
             error = f"Failed to parse combat result data. JSON: {result_json}"
             
         # Apply final HP/Status updates from the result (but don't remove rows yet)
@@ -2929,11 +2940,15 @@ class CombatTrackerPanel(BasePanel):
         self._cleanup_dead_combatants()
 
         print(f"[CombatTracker] _process_and_sort_final_resolution: UI processed and cleaned up.")
+        
+        # --- RESET FLAG after resolution is complete --- 
+        self._is_resolving_combat = False
+        print("[CombatTracker] Setting _is_resolving_combat = False")
         # REMOVED: self._sort_initiative() - No need to sort after combat ends
 
     def _process_resolution_ui(self, result, error):
         """Process the combat resolution result in the main GUI thread and show user-facing output."""
-        # Re-enable button
+        # Re-enable button first, regardless of outcome
         self.fast_resolve_button.setEnabled(True)
         self.fast_resolve_button.setText("Fast Resolve")
         
@@ -3643,6 +3658,11 @@ class CombatTrackerPanel(BasePanel):
     
     def _sort_initiative(self):
         """Sort the initiative list in descending order."""
+        # --- Check flag: Prevent sorting during LLM resolution --- 
+        if self._is_resolving_combat:
+            print("[CombatTracker] _sort_initiative: Skipping sort because _is_resolving_combat is True.")
+            return
+            
         print(f"[CombatTracker] _sort_initiative ENTRY with {self.initiative_table.rowCount()} rows")
         # Block signals to prevent recursive calls during sorting
         self.initiative_table.blockSignals(True)
@@ -4237,3 +4257,271 @@ class CombatTrackerPanel(BasePanel):
         self.initiative_table.viewport().update()
         QApplication.processEvents()
         print("[CombatTracker] Cleanup: Finished.")
+
+    def _view_combatant_details(self, row, col=0): # Added col default
+        """Show the details for the combatant at the given row"""
+        # Ensure row is valid
+        if row < 0 or row >= self.initiative_table.rowCount():
+            print(f"[Combat Tracker] Invalid row provided to _view_combatant_details: {row}")
+            return
+            
+        name_item = self.initiative_table.item(row, 0) # Name is in column 0
+        if not name_item:
+            print(f"[Combat Tracker] No name item found at row {row}")
+            return
+            
+        combatant_name = name_item.text()
+        # Get type from UserRole data first
+        combatant_type = name_item.data(Qt.UserRole)
+        
+        # If type is None or empty, try to get it from the type column (index 7)
+        if not combatant_type:
+             type_item = self.initiative_table.item(row, 7) 
+             if type_item:
+                 combatant_type = type_item.text().lower()
+                 # Store it back in the name item for future use
+                 name_item.setData(Qt.UserRole, combatant_type)
+                 print(f"[Combat Tracker] Inferred type '{combatant_type}' for {combatant_name} from column 7")
+            
+        # If still None, default to custom
+        if not combatant_type:
+            combatant_type = "custom"
+            name_item.setData(Qt.UserRole, combatant_type) # Store default
+            print(f"[Combat Tracker] Defaulting type to 'custom' for {combatant_name}")
+            
+        print(f"[Combat Tracker] Viewing details for {combatant_type} '{combatant_name}'")
+        
+        panel_manager = getattr(self.app_state, 'panel_manager', None)
+        if not panel_manager:
+             print("[Combat Tracker] No panel_manager found in app_state, falling back to dialog.")
+             self._show_combatant_dialog(row, combatant_name, combatant_type)
+             return
+
+        # Redirect to appropriate panel based on combatant type
+        panel_found = False
+        if combatant_type == "monster":
+            monster_panel = self.get_panel("monster")
+            if monster_panel:
+                panel_manager.show_panel("monster")
+                # Now search and select the monster
+                result = monster_panel.search_and_select_monster(combatant_name)
+                panel_found = True
+                if not result:
+                    print(f"[Combat Tracker] Monster '{combatant_name}' not found in monster browser. Showing dialog.")
+                    self._show_combatant_dialog(row, combatant_name, combatant_type)
+            else:
+                 print("[Combat Tracker] Monster panel not found. Showing dialog.")
+                 self._show_combatant_dialog(row, combatant_name, combatant_type)
+                 panel_found = True # Dialog shown, counts as handled
+                 
+        elif combatant_type == "character":
+            character_panel = self.get_panel("player_character")
+            if character_panel:
+                panel_manager.show_panel("player_character")
+                # Now search and select the character
+                result = character_panel.select_character_by_name(combatant_name)
+                panel_found = True
+                if not result:
+                    print(f"[Combat Tracker] Character '{combatant_name}' not found in character panel. Showing dialog.")
+                    self._show_combatant_dialog(row, combatant_name, combatant_type)
+            else:
+                print("[Combat Tracker] Character panel not found. Showing dialog.")
+                self._show_combatant_dialog(row, combatant_name, combatant_type)
+                panel_found = True # Dialog shown, counts as handled
+
+        # Fallback for custom types or if panels failed
+        if not panel_found:
+            print(f"[Combat Tracker] Type is '{combatant_type}' or panel redirection failed. Showing dialog.")
+            self._show_combatant_dialog(row, combatant_name, combatant_type)
+
+    def _show_combatant_dialog(self, row, combatant_name, combatant_type):
+        """Show a dialog with combatant details when we can't redirect to another panel"""
+        print(f"[Combat Tracker] Showing dialog for {combatant_type} '{combatant_name}' at row {row}")
+        
+        # Start with basic data from the initiative table
+        combatant_data = {
+            "name": combatant_name,
+            "type": combatant_type, # Ensure type is passed
+            "initiative": 0,
+            "hp": 0,
+            "max_hp": 0,
+            "ac": 10, # Default AC
+            "status": ""
+        }
+        try:
+            combatant_data["initiative"] = int(self.initiative_table.item(row, 1).text()) if self.initiative_table.item(row, 1) else 0
+            combatant_data["hp"] = int(self.initiative_table.item(row, 2).text()) if self.initiative_table.item(row, 2) else 0
+            combatant_data["max_hp"] = int(self.initiative_table.item(row, 3).text()) if self.initiative_table.item(row, 3) else combatant_data["hp"] # Use current HP as max if missing
+            combatant_data["ac"] = int(self.initiative_table.item(row, 4).text()) if self.initiative_table.item(row, 4) else 10
+            combatant_data["status"] = self.initiative_table.item(row, 5).text() if self.initiative_table.item(row, 5) else ""
+        except (ValueError, AttributeError) as e:
+             print(f"[Combat Tracker] Error getting basic data from table for row {row}: {e}")
+
+        # Try to get more detailed data from the stored self.combatants dictionary
+        if row in self.combatants:
+            stored_data = self.combatants[row]
+            print(f"[Combat Tracker] Found stored data for row {row}: {type(stored_data)}")
+            # If stored_data is an object, convert to dict if possible
+            if hasattr(stored_data, '__dict__'):
+                 # Combine basic table data with stored object attributes
+                 # Prioritize stored data if keys overlap (except maybe HP/Status)
+                 more_data = stored_data.__dict__
+                 # Keep current HP/Status from table, but add other details
+                 current_hp = combatant_data["hp"]
+                 current_status = combatant_data["status"]
+                 combatant_data.update(more_data) # Update with object data
+                 combatant_data["hp"] = current_hp # Restore table HP
+                 combatant_data["status"] = current_status # Restore table status
+                 print(f"[Combat Tracker] Merged object data into combatant_data")
+            elif isinstance(stored_data, dict):
+                 # Combine basic table data with stored dictionary data
+                 # Prioritize stored data if keys overlap (except maybe HP/Status)
+                 more_data = stored_data
+                 current_hp = combatant_data["hp"]
+                 current_status = combatant_data["status"]
+                 combatant_data.update(more_data) # Update with stored dict data
+                 combatant_data["hp"] = current_hp # Restore table HP
+                 combatant_data["status"] = current_status # Restore table status
+                 print(f"[Combat Tracker] Merged dictionary data into combatant_data")
+            else:
+                 print(f"[Combat Tracker] Stored data for row {row} is not a dict or object with __dict__.")
+        else:
+             print(f"[Combat Tracker] No stored data found in self.combatants for row {row}. Using table data only.")
+
+        # Create and execute the details dialog
+        print(f"[Combat Tracker] Final data for dialog: {combatant_data}")
+        dialog = CombatantDetailsDialog(self, combatant_data, combatant_type)
+        dialog.exec()
+
+    def _on_selection_changed(self):
+        """Handle when the selection in the initiative table changes"""
+        selected_items = self.initiative_table.selectedItems()
+        if not selected_items:
+            # If selection is cleared, potentially clear details pane or do nothing
+            # self.current_details_combatant = None
+            # self._clear_details_layouts() 
+            return
+            
+        # Get the selected row (selectedItems gives all cells in the row)
+        row = selected_items[0].row()
+        
+        # If details pane is visible, update it with the selected combatant
+        # Avoid calling _view_combatant_details directly if it causes loops
+        # Store selected combatant info and call update method
+        if row in self.combatants:
+             self.current_details_combatant = self.combatants[row]
+             name_item = self.initiative_table.item(row, 0)
+             self.current_details_type = name_item.data(Qt.UserRole) if name_item else "custom" 
+        else:
+            # Handle cases where there's no stored data (e.g., manually added)
+            # Create temporary data from table for display
+             name_item = self.initiative_table.item(row, 0)
+             type_item = self.initiative_table.item(row, 7)
+             self.current_details_combatant = {
+                 "name": name_item.text() if name_item else "Manual Entry",
+                 "hp": self.initiative_table.item(row, 2).text() if self.initiative_table.item(row, 2) else "0",
+                 "max_hp": self.initiative_table.item(row, 3).text() if self.initiative_table.item(row, 3) else "0",
+                 "ac": self.initiative_table.item(row, 4).text() if self.initiative_table.item(row, 4) else "10",
+                 "status": self.initiative_table.item(row, 5).text() if self.initiative_table.item(row, 5) else "",
+             }
+             self.current_details_type = type_item.text().lower() if type_item else "custom"
+        
+        if self.show_details_pane:
+             self._update_details_pane() # Update the pane content
+
+    def _toggle_details_pane(self):
+        """Toggle the visibility of the details pane"""
+        self.show_details_pane = not self.show_details_pane
+        self.toggle_details_btn.setChecked(self.show_details_pane)
+        self.details_widget.setVisible(self.show_details_pane)
+
+    def _fix_missing_types(self):
+        """Fix any missing combatant types for existing entries after initialization or state restore."""
+        # Check if table exists and has rows
+        if not hasattr(self, 'initiative_table') or self.initiative_table.rowCount() == 0:
+            return 0 # Nothing to fix
+            
+        fix_count = 0
+        print("[CombatTracker] Running _fix_missing_types...")
+        
+        for row in range(self.initiative_table.rowCount()):
+            name_item = self.initiative_table.item(row, 0)
+            type_item = self.initiative_table.item(row, 7) # Type is column 7
+            name = name_item.text() if name_item else f"Row {row}"
+            
+            # Check if type is missing or invalid
+            current_type = type_item.text().lower().strip() if type_item and type_item.text() else None
+            needs_fix = not current_type or current_type not in ["monster", "character", "manual"]
+            
+            # Also check if UserRole data is missing (used by context menu/details)
+            if name_item and name_item.data(Qt.UserRole) is None:
+                needs_fix = True
+
+            if needs_fix:
+                inferred_type = ""
+                # 1. Check stored combatant data first
+                if row in self.combatants:
+                    data = self.combatants[row]
+                    if isinstance(data, dict):
+                        if any(k in data for k in ["monster_id", "size", "challenge_rating", "hit_points"]):
+                            inferred_type = "monster"
+                        elif any(k in data for k in ["character_class", "level", "race"]):
+                            inferred_type = "character"
+                    elif hasattr(data, '__dict__'): # Handle object data
+                         if hasattr(data, 'size') or hasattr(data, 'challenge_rating') or hasattr(data, 'hit_points'):
+                            inferred_type = "monster"
+                         elif hasattr(data, 'character_class') or hasattr(data, 'level') or hasattr(data, 'race'):
+                            inferred_type = "character"
+                
+                # 2. If still unknown, use name-based heuristics
+                if not inferred_type:
+                    monster_names = ["goblin", "ogre", "dragon", "troll", "zombie", "skeleton", 
+                                     "ghoul", "ghast", "ghost", "demon", "devil", "elemental", "giant"]
+                    lower_name = name.lower()
+                    
+                    if any(monster in lower_name for monster in monster_names):
+                        inferred_type = "monster"
+                    elif "(npc)" in lower_name:
+                        inferred_type = "character"
+                    elif name == "Add your party here!": # Handle placeholder
+                         inferred_type = "character"
+                    else:
+                        # Default fallback - might be risky, consider 'manual'?
+                        inferred_type = "manual" 
+                
+                # Apply the fix
+                if not type_item:
+                    type_item = QTableWidgetItem()
+                    self.initiative_table.setItem(row, 7, type_item)
+                
+                if type_item.text() != inferred_type:
+                     type_item.setText(inferred_type)
+                     
+                # Also fix UserRole data on name item
+                if name_item and name_item.data(Qt.UserRole) != inferred_type:
+                    name_item.setData(Qt.UserRole, inferred_type)
+                    
+                fix_count += 1
+                print(f"[CombatTracker] Fixed missing/invalid type for '{name}' (row {row}) - set to '{inferred_type}'")
+        
+        if fix_count > 0:
+            print(f"[CombatTracker] Fixed types for {fix_count} combatants")
+        else:
+             print("[CombatTracker] _fix_missing_types: No types needed fixing.")
+        
+        return fix_count
+
+    def _toggle_concentration(self, row):
+        """Toggle concentration state for a combatant"""
+        if row not in self.concentrating:
+            self.concentrating.add(row)
+            # Log concentration gained
+            self._log_combat_action("Effect Started", "DM", "gained concentration", "", "")
+        else:
+            self.concentrating.remove(row)
+            # Log concentration broken
+            self._log_combat_action("Effect Ended", "DM", "lost concentration", "", "")
+
+    def closeEvent(self, event):
+        # Call parent closeEvent
+        super().closeEvent(event)
