@@ -687,7 +687,8 @@ class SessionNotesPanel(BasePanel):
     def _display_formatted_content(self, note):
         """
         Display note content with type-specific formatting based on tags and content structure.
-        If the note has an origin_note_id, show a clickable link to the origin note at the top.
+        If the note has an origin_note_id, show a visually prominent clickable link to the origin note at the top.
+        Also, show a 'Linked Notes' section at the bottom listing all notes that reference this note.
         """
         content = note.get('content', '')
         tags = note.get('tags', '').lower().split(',')
@@ -698,19 +699,24 @@ class SessionNotesPanel(BasePanel):
         <head>
         <style>
             body {{ font-family: 'Segoe UI', Arial, Helvetica, sans-serif; line-height: 1.7; color: #f8f8f2; background-color: #23272e; font-size: 16px; }}
+            .origin-link-box {{ background: #2d3a4a; border-left: 5px solid #88c0d0; padding: 10px; margin-bottom: 15px; font-size: 1.1em; }}
+            .linked-notes-box {{ background: #2a2d33; border-left: 5px solid #ebcb8b; padding: 10px; margin-top: 20px; }}
+            .linked-note-item {{ margin-bottom: 5px; }}
             /* ... existing styles ... */
         </style>
         </head>
         <body>
         """
-        # --- Origin Note Link ---
+        # --- Origin Note Link (visually prominent) ---
         origin_note_id = note.get('origin_note_id')
         if origin_note_id:
             # Try to find the origin note in self.notes
             origin_note = next((n for n in self.notes if n.get('id') == origin_note_id), None)
             origin_title = origin_note['title'] if origin_note else f"Note #{origin_note_id}"
-            # Add a clickable link to select the origin note
-            html_content += f'<div style="margin-bottom: 10px;">Generated from: <a href="note://{origin_note_id}" style="color: #88c0d0; text-decoration: underline;">{origin_title}</a></div>'
+            # Add a visually prominent box for the origin link
+            html_content += f'<div class="origin-link-box">\n'
+            html_content += f'<b>Origin:</b> <a href="note://{origin_note_id}" style="color: #88c0d0; text-decoration: underline; font-weight: bold;">{origin_title}</a>'
+            html_content += '</div>'
         # ... existing code for type-specific containers and content ...
         if content_type == 'monster':
             html_content += '<div class="monster">'
@@ -741,9 +747,21 @@ class SessionNotesPanel(BasePanel):
             html_content += self._format_rules_content(content)
         else:
             html_content += markdown_to_html(content)
-        html_content += "</div></body></html>"
+        html_content += "</div>"
+        # --- Linked Notes Section (backlinks) ---
+        # Find all notes that reference this note as their origin_note_id
+        linked_notes = [n for n in self.notes if n.get('origin_note_id') == note.get('id')]
+        if linked_notes:
+            html_content += '<div class="linked-notes-box">'
+            html_content += '<b>Linked Notes:</b><ul style="margin-top: 8px;">'
+            for ln in linked_notes:
+                ln_title = ln.get('title', f"Note #{ln.get('id')}")
+                ln_id = ln.get('id')
+                html_content += f'<li class="linked-note-item"><a href="note://{ln_id}" style="color: #ebcb8b; text-decoration: underline;">{ln_title}</a></li>'
+            html_content += '</ul></div>'
+        html_content += "</body></html>"
         self.note_content.setHtml(html_content)
-        # --- Handle link clicks for origin notes ---
+        # --- Handle link clicks for origin notes and backlinks ---
         self.note_content.anchorClicked.disconnect()
         self.note_content.anchorClicked.connect(self._handle_note_content_link)
 
