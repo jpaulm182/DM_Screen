@@ -2335,30 +2335,33 @@ class CombatTrackerPanel(BasePanel):
                 elif combatant_type in ["character", "pc"]:
                     has_player = True
         
+        # Modified check: Only require at least one combatant (monster is preferred, but not strictly required here now)
+        # We let the core resolver handle more specific validation
         if not has_monster and not has_player:
+             QMessageBox.warning(
+                 self, 
+                 "Cannot Start Combat", 
+                 "You need at least one combatant (monster or character) to run combat."
+             )
+             return
+        # Keep the check for needing at least one monster if players are present
+        elif not has_monster and has_player:
             QMessageBox.warning(
                 self, 
                 "Cannot Start Combat", 
-                "You need at least one monster and one player character to run combat.\n\n"
-                "Add monsters from the Monster Panel and add player characters using the form below."
-            )
-            return
-        elif not has_monster:
-            QMessageBox.warning(
-                self, 
-                "Cannot Start Combat", 
-                "You need at least one monster to run combat.\n\n"
+                "You need at least one monster to run combat against player characters.\\n\\n" # Updated message
                 "Add monsters from the Monster Panel."
             )
             return
-        elif not has_player:
-            QMessageBox.warning(
-                self, 
-                "Cannot Start Combat", 
-                "You need at least one player character to run combat.\n\n"
-                "Add a character using the form below, or import from the Player Characters panel."
-            )
-            return
+        # REMOVED: The check that required a player if only monsters were present.
+        # elif not has_player:
+        #     QMessageBox.warning(
+        #         self, 
+        #         "Cannot Start Combat", 
+        #         "You need at least one player character to run combat.\\n\\n"
+        #         "Add a character using the form below, or import from the Player Characters panel."
+        #     )
+        #     return
 
         # Confirm the user wants to proceed
         confirm = QMessageBox.question(

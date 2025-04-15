@@ -83,10 +83,6 @@ class CombatResolver:
             callback(None, "No monsters in the combat. Add at least one monster from the monster panel.")
             return
             
-        if not characters:
-            callback(None, "No player characters in the combat. Add at least one character.")
-            return
-            
         print(f"[CombatResolver] Combat validation passed: {len(monsters)} monsters and {len(characters)} characters")
         
         def run_resolution():
