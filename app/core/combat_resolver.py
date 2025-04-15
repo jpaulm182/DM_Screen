@@ -129,16 +129,25 @@ class CombatResolver:
                     
                     print(f"[CombatResolver] Combat state check: {len(remaining_monsters)} monsters and {len(remaining_characters)} characters remaining")
                     
-                    # Add death saves check for characters
-                    characters_with_failed_saves = []
-                    for c in combatants:
-                        if c.get("type", "").lower() != "monster" and "death_saves" in c:
-                            if c["death_saves"].get("failures", 0) >= 3:
-                                characters_with_failed_saves.append(c)
-                    
-                    # End combat if all monsters are dead or all characters are dead/failed saves
-                    if not remaining_monsters or not remaining_characters:
-                        print(f"[CombatResolver] Combat ending: Monsters alive={len(remaining_monsters)}, Characters alive={len(remaining_characters)}")
+                    # Determine if combat should end based on remaining factions
+                    combat_should_end = False
+                    if not remaining_monsters and not remaining_characters:
+                        # No one left
+                        combat_should_end = True
+                        print("[CombatResolver] Combat ending: No combatants left.")
+                    elif not remaining_characters:
+                        # Only monsters left, end if 1 or 0 remain
+                        if len(remaining_monsters) <= 1:
+                            combat_should_end = True
+                            print("[CombatResolver] Combat ending: Only 1 or 0 monsters left.")
+                    elif not remaining_monsters:
+                        # Only characters left, combat ends
+                        combat_should_end = True
+                        print("[CombatResolver] Combat ending: Only characters left.")
+                    # Removed the check for failed death saves here, handled within loop
+
+                    # End combat if necessary
+                    if combat_should_end:
                         break
                     
                     # Process each combatant's turn in initiative order
@@ -302,17 +311,36 @@ class CombatResolver:
                         remaining_monsters = [c for c in combatants if c.get("type", "").lower() == "monster" and c.get("hp", 0) > 0 and c.get("status", "").lower() != "dead"]
                         remaining_characters = [c for c in combatants if c.get("type", "").lower() != "monster" and (c.get("hp", 0) > 0 or c.get("status", "").lower() == "unconscious" or c.get("status", "").lower() == "stable")]
                         
-                        if not remaining_monsters or not remaining_characters:
+                        # Check end condition again after turn
+                        combat_should_end_after_turn = False
+                        if not remaining_monsters and not remaining_characters:
+                            combat_should_end_after_turn = True
+                        elif not remaining_characters:
+                            if len(remaining_monsters) <= 1:
+                                combat_should_end_after_turn = True
+                        elif not remaining_monsters:
+                             combat_should_end_after_turn = True
+                             
+                        if combat_should_end_after_turn:
                             print(f"[CombatResolver] Combat ending after turn: Monsters alive={len(remaining_monsters)}, Characters alive={len(remaining_characters)}")
-                            break
+                            break # Break inner turn loop
                     
-                    # If no more enemies of one type, end combat
-                    remaining_monsters = [c for c in combatants if c.get("type", "").lower() == "monster" and c.get("hp", 0) > 0 and c.get("status", "").lower() != "dead"]
-                    remaining_characters = [c for c in combatants if c.get("type", "").lower() != "monster" and (c.get("hp", 0) > 0 or c.get("status", "").lower() == "unconscious" or c.get("status", "").lower() == "stable")]
+                    # Check end condition at end of round (after processing all turns)
+                    remaining_monsters_end_round = [c for c in combatants if c.get("type", "").lower() == "monster" and c.get("hp", 0) > 0 and c.get("status", "").lower() != "dead"]
+                    remaining_characters_end_round = [c for c in combatants if c.get("type", "").lower() != "monster" and (c.get("hp", 0) > 0 or c.get("status", "").lower() == "unconscious" or c.get("status", "").lower() == "stable")]
                     
-                    if not remaining_monsters or not remaining_characters:
-                        print(f"[CombatResolver] Combat ending after round: Monsters alive={len(remaining_monsters)}, Characters alive={len(remaining_characters)}")
-                        break
+                    combat_should_end_end_round = False
+                    if not remaining_monsters_end_round and not remaining_characters_end_round:
+                        combat_should_end_end_round = True
+                    elif not remaining_characters_end_round:
+                        if len(remaining_monsters_end_round) <= 1:
+                            combat_should_end_end_round = True
+                    elif not remaining_monsters_end_round:
+                         combat_should_end_end_round = True
+                         
+                    if combat_should_end_end_round:
+                        print(f"[CombatResolver] Combat ending after round: Monsters alive={len(remaining_monsters_end_round)}, Characters alive={len(remaining_characters_end_round)}")
+                        break # Break outer round loop
                     
                     # End of round, increment counter
                     round_num += 1

@@ -25,10 +25,11 @@ from PySide6.QtWidgets import (
     QTabWidget, QScrollArea, QFormLayout, QFrame, QSplitter, QApplication,
     QSizePolicy, QTextEdit
 )
-from PySide6.QtCore import Qt, QTimer, Signal, Slot, QSize, QMetaObject
+from PySide6.QtCore import Qt, QTimer, Signal, Slot, QSize, QMetaObject, Q_ARG
 from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QBrush, QPalette
 import random
 import re
+import json # Added json import
 
 from app.ui.panels.base_panel import BasePanel
 from app.ui.panels.panel_category import PanelCategory
@@ -2843,18 +2844,33 @@ class CombatTrackerPanel(BasePanel):
         # Use QMetaObject.invokeMethod to ensure the signal emission happens
         # from the main thread, which is safer for complex scenarios.
         print("[CombatTracker] _handle_resolution_result: Queuing final UI update.")
+        
+        # Serialize result dict to JSON string
+        result_str = json.dumps(result if result else {})
+        error_str = error if error else ""
+        
         QMetaObject.invokeMethod(
             self, 
             "_process_and_sort_final_resolution", 
             Qt.QueuedConnection,
-            Q_ARG(dict, result if result else {}), # Pass empty dict if None
-            Q_ARG(str, error if error else "")     # Pass empty string if None
+            Q_ARG(str, result_str), # Pass JSON string
+            Q_ARG(str, error_str)     
         )
 
-    @Slot(dict, str) # Slot to receive the final result on the main thread
-    def _process_and_sort_final_resolution(self, result, error):
+    @Slot(str, str) # Slot now receives strings
+    def _process_and_sort_final_resolution(self, result_json, error):
         """Process the final combat result AND sort the table afterwards."""
         print("[CombatTracker] _process_and_sort_final_resolution: Starting final UI update.")
+        
+        # Deserialize result string back to dict
+        result = {}
+        try:
+            result = json.loads(result_json)
+        except json.JSONDecodeError:
+            print(f"[CombatTracker] Error decoding result JSON: {result_json}")
+            # Handle error appropriately, maybe show an error message
+            error = f"Failed to parse combat result data. JSON: {result_json}"
+            
         self._process_resolution_ui(result, error)
         print("[CombatTracker] _process_and_sort_final_resolution: UI processed, now sorting.")
         self._sort_initiative()
