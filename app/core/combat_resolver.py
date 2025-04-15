@@ -35,16 +35,60 @@ class CombatResolver:
         import threading
         
         # Make a deep copy to avoid mutating the original
-        state = copy.deepcopy(combat_state)
+        # Ensure combat_state is a dictionary before copying
+        if isinstance(combat_state, dict):
+            state_copy = copy.deepcopy(combat_state)
+        else:
+            print(f"[CombatResolver] Warning: combat_state is not a dictionary, type: {type(combat_state)}")
+            # Create a valid dictionary
+            state_copy = {
+                "round": 1,
+                "current_turn_index": 0,
+                "combatants": []
+            }
+            # If it's a string, try to parse as JSON
+            if isinstance(combat_state, str):
+                try:
+                    import json
+                    parsed = json.loads(combat_state)
+                    if isinstance(parsed, dict):
+                        state_copy = parsed
+                except Exception as e:
+                    print(f"[CombatResolver] Failed to parse combat_state as JSON: {e}")
+        
         log = []  # Combat log for transparency
         
         def run_resolution():
             try:
-                # Extract combat state
+                # Use state_copy from outer scope
+                state = state_copy
+                
+                # Ensure state is a dictionary, not a string or other type
+                if not isinstance(state, dict):
+                    print(f"[CombatResolver] Error: state is not a dictionary in run_resolution, type: {type(state)}")
+                    callback(None, f"Invalid combat state: {type(state)}")
+                    return
+                
+                # Extract combat state - defensively get values with defaults
                 round_num = state.get("round", 1)
+                if not isinstance(round_num, int):
+                    try:
+                        round_num = int(round_num)
+                    except (ValueError, TypeError):
+                        round_num = 1
+                    
                 combatants = state.get("combatants", [])
-                active_combatants = sorted(range(len(combatants)), 
-                                          key=lambda i: -combatants[i].get("initiative", 0))
+                if not isinstance(combatants, list):
+                    print(f"[CombatResolver] Error: combatants is not a list, type: {type(combatants)}")
+                    combatants = []
+                
+                # Sort active combatants by initiative (safely)
+                try:
+                    active_combatants = sorted(range(len(combatants)), 
+                                            key=lambda i: -int(combatants[i].get("initiative", 0)))
+                except Exception as e:
+                    print(f"[CombatResolver] Error sorting combatants: {e}")
+                    active_combatants = list(range(len(combatants)))
                 
                 max_rounds = 50  # Failsafe to prevent infinite loops
                 
@@ -54,6 +98,10 @@ class CombatResolver:
                     
                     # Process each combatant's turn in initiative order
                     for idx in active_combatants:
+                        if idx >= len(combatants):
+                            print(f"[CombatResolver] Error: combatant index {idx} out of range")
+                            continue
+                            
                         combatant = combatants[idx]
                         
                         # Skip dead/unconscious combatants
@@ -82,11 +130,42 @@ class CombatResolver:
                         if "updates" in turn_result:
                             for update in turn_result["updates"]:
                                 target_name = update.get("name")
+                                
+                                # Handle special case for "Nearest Enemy" or similar targets
+                                if target_name == "Nearest Enemy" or "Enemy" in target_name:
+                                    # Find first enemy of current combatant
+                                    enemy_idx = None
+                                    for i, c in enumerate(combatants):
+                                        # Skip current combatant
+                                        if i == idx:
+                                            continue
+                                        # Found an enemy
+                                        enemy_idx = i
+                                        break
+                                        
+                                    if enemy_idx is not None:
+                                        target_name = combatants[enemy_idx].get("name", "Unknown")
+                                
                                 for i, c in enumerate(combatants):
                                     if c.get("name") == target_name:
                                         # Update HP if specified
                                         if "hp" in update:
-                                            c["hp"] = update["hp"]
+                                            # Check if the update is a string like "reduce by 5"
+                                            hp_update = update["hp"]
+                                            if isinstance(hp_update, str) and "reduce" in hp_update.lower():
+                                                # Extract damage amount
+                                                import re
+                                                damage_match = re.search(r'\d+', hp_update)
+                                                if damage_match:
+                                                    damage = int(damage_match.group(0))
+                                                    current_hp = c.get("hp", 0)
+                                                    c["hp"] = max(0, current_hp - damage)
+                                                    print(f"[CombatResolver] Reduced {target_name}'s HP by {damage} to {c['hp']}")
+                                            else:
+                                                try:
+                                                    c["hp"] = int(update["hp"])
+                                                except (ValueError, TypeError):
+                                                    print(f"[CombatResolver] Invalid HP value: {update['hp']}")
                                         # Update status if specified
                                         if "status" in update:
                                             c["status"] = update["status"]
@@ -117,19 +196,35 @@ class CombatResolver:
                     
                     # End of round, increment counter
                     round_num += 1
-                    state["round"] = round_num
+                    
+                    # Update round in state dictionary (defensive approach)
+                    try:
+                        state["round"] = round_num
+                    except Exception as e:
+                        print(f"[CombatResolver] Error updating round: {e}")
+                        # This might mean state was corrupted, recreate it
+                        state = {
+                            "round": round_num,
+                            "current_turn_index": 0,
+                            "combatants": combatants
+                        }
                     
                     # Update active combatants (some may have died during the round)
-                    active_combatants = [i for i in sorted(range(len(combatants)), 
-                                        key=lambda i: -combatants[i].get("initiative", 0)) 
-                                        if combatants[i].get("hp", 0) > 0]
+                    try:
+                        active_combatants = [i for i in sorted(range(len(combatants)), 
+                                            key=lambda i: -int(combatants[i].get("initiative", 0))) 
+                                            if combatants[i].get("hp", 0) > 0]
+                    except Exception as e:
+                        print(f"[CombatResolver] Error updating active combatants: {e}")
+                        active_combatants = [i for i in range(len(combatants)) if combatants[i].get("hp", 0) > 0]
                 
                 # Prepare final summary
                 survivors = [c for c in combatants if c.get("hp", 0) > 0]
                 summary = {
                     "narrative": f"Combat ended after {round_num-1} rounds. Survivors: {[c.get('name', 'Unknown') for c in survivors]}",
                     "updates": combatants,
-                    "log": log
+                    "log": log,
+                    "rounds": round_num-1
                 }
                 
                 if round_num > max_rounds:
