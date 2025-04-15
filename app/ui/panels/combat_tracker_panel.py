@@ -839,6 +839,75 @@ class DeathSavesDialog(QDialog):
             "failures": sum(1 for c in self.failure_checks if c.isChecked())
         }
 
+# --- Concentration Dialog (Moved Here) --- 
+class ConcentrationDialog(QDialog):
+    """Dialog for concentration checks when taking damage"""
+    def __init__(self, parent=None, combatant_name="", dc=10):
+        super().__init__(parent)
+        self.setWindowTitle("Concentration Check")
+        self.combatant_name = combatant_name
+        self.dc = dc
+        self.save_result = 0
+        self._setup_ui()
+    
+    def _setup_ui(self):
+        layout = QVBoxLayout()
+        
+        # Information label
+        info_label = QLabel(f"{self.combatant_name} must make a concentration check (DC {self.dc})")
+        layout.addWidget(info_label)
+        
+        # Save roll input
+        save_layout = QHBoxLayout()
+        save_layout.addWidget(QLabel("Save Roll:"))
+        self.save_spin = QSpinBox()
+        self.save_spin.setRange(1, 30)
+        self.save_spin.setValue(10)
+        save_layout.addWidget(self.save_spin)
+        
+        # Roll button
+        roll_button = QPushButton("Roll")
+        roll_button.clicked.connect(self._roll_save)
+        save_layout.addWidget(roll_button)
+        
+        layout.addLayout(save_layout)
+        
+        # Result display
+        self.result_label = QLabel("")
+        layout.addWidget(self.result_label)
+        
+        # Buttons
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        
+        self.setLayout(layout)
+    
+    def _roll_save(self):
+        """Roll a d20 for the save"""
+        roll = random.randint(1, 20)
+        self.save_spin.setValue(roll)
+        self._update_result()
+    
+    def _update_result(self):
+        """Update the result label"""
+        value = self.save_spin.value()
+        if value >= self.dc:
+            self.result_label.setText(f"Success! ({value} ≥ {self.dc})")
+            self.result_label.setStyleSheet("color: green;")
+        else:
+            self.result_label.setText(f"Failure! ({value} < {self.dc})")
+            self.result_label.setStyleSheet("color: red;")
+    
+    def get_save_result(self):
+        """Get the final save roll result"""
+        return self.save_spin.value()
+
+# --- Main Panel Class --- 
+
 class CombatTrackerPanel(BasePanel):
     """Panel for tracking combat initiative, HP, and conditions"""
     
@@ -1764,44 +1833,34 @@ class CombatTrackerPanel(BasePanel):
             if not item:
                 return
                 
-            # Handle initiative changes (column 1)
-            if column == 1:  # Initiative column
-                # Check if the initiative was actually changed
+            # Only sort if the Initiative column (column 1) changed
+            if column == 1:
                 try:
-                    # Convert to int (ignore if not a valid number)
-                    new_initiative = int(item.text()) if item.text() else 0
-                    
-                    # Only sort if we have more than one combatant
+                    # Validate the initiative value
+                    int(item.text()) # Try converting to int
                     if self.initiative_table.rowCount() > 1:
                         self._sort_initiative()
                 except (ValueError, TypeError):
-                    # Not a valid number, reset to 0
-                    item.setText("0")
-            
-            # Handle Max HP changes (column 3)
-            elif column == 3:  # Max HP column
-                # Update current HP if it's higher than max
+                    item.setText("0") # Reset invalid input
+
+            # Handle Max HP changes (column 3) without sorting
+            elif column == 3:
                 hp_item = self.initiative_table.item(row, 2)
                 max_hp_item = self.initiative_table.item(row, 3)
-                
                 if hp_item and max_hp_item:
                     try:
                         current_hp = int(hp_item.text())
                         max_hp = int(max_hp_item.text())
-                        
-                        # If current HP is higher than max, cap it
                         if current_hp > max_hp:
                             hp_item.setText(str(max_hp))
                     except (ValueError, TypeError):
-                        pass
-            
-            # Update combatant data if we have a combat data dictionary
+                        pass # Ignore if values aren't integers
+
+            # Update combatant data dictionary if it exists
             if row in self.combatants:
-                # Just update the HP and status to match what's shown in the table
                 self._update_combatant_hp_and_status(row)
         
         finally:
-            # Always restore signals
             self.initiative_table.blockSignals(False)
     
     def _update_combatant_hp_and_status(self, row):
@@ -2354,15 +2413,6 @@ class CombatTrackerPanel(BasePanel):
                 "Add monsters from the Monster Panel."
             )
             return
-        # REMOVED: The check that required a player if only monsters were present.
-        # elif not has_player:
-        #     QMessageBox.warning(
-        #         self, 
-        #         "Cannot Start Combat", 
-        #         "You need at least one player character to run combat.\\n\\n"
-        #         "Add a character using the form below, or import from the Player Characters panel."
-        #     )
-        #     return
 
         # Confirm the user wants to proceed
         confirm = QMessageBox.question(
@@ -2653,109 +2703,110 @@ class CombatTrackerPanel(BasePanel):
         Args:
             combatants: List of combatant dictionaries with updated values
         """
-        # Loop through combatants and update corresponding rows
-        for combatant in combatants:
-            name = combatant.get("name", "")
-            if not name:
-                continue
-                
-            # Skip special target names like "Nearest Enemy"
-            if name in ["Nearest Enemy", "Enemy", "Target"] or "Enemy" in name:
-                print(f"[CombatTracker] Skipping special target name: {name}")
-                continue
-                
-            # Find the row with this combatant
-            found_row = -1
-            for row in range(self.initiative_table.rowCount()):
-                name_item = self.initiative_table.item(row, 0)
-                if name_item and name_item.text() == name:
-                    found_row = row
-                    break
+        # Block signals during programmatic updates
+        self.initiative_table.blockSignals(True)
+        try:
+            # Loop through combatants and update corresponding rows
+            for combatant in combatants:
+                name = combatant.get("name", "")
+                if not name:
+                    continue
                     
-            if found_row >= 0:
-                # Update HP
-                if "hp" in combatant:
-                    hp_item = self.initiative_table.item(found_row, 2)
-                    if hp_item:
-                        old_hp = hp_item.text()
-                        new_hp = ""
-                        hp_value = combatant["hp"]
-                        
-                        # Handle different HP update formats
-                        if isinstance(hp_value, int) or hp_value.isdigit():
-                            # Direct HP value
-                            new_hp = str(hp_value)
-                        elif isinstance(hp_value, str) and "reduce" in hp_value.lower():
-                            # "reduce by X" format
-                            import re
-                            damage_match = re.search(r'\d+', hp_value)
-                            if damage_match and old_hp and old_hp.isdigit():
-                                damage = int(damage_match.group(0))
-                                current_hp = int(old_hp)
-                                new_hp = str(max(0, current_hp - damage))
-                        
-                        if new_hp and old_hp != new_hp:
-                            hp_item.setText(new_hp)
-                            print(f"[CombatTracker] Updated {name} HP from {old_hp} to {new_hp}")
-                
-                # Update status
-                if "status" in combatant:
-                    status_item = self.initiative_table.item(found_row, 5)
-                    if status_item:
-                        old_status = status_item.text()
-                        new_status = combatant["status"]
-                        if old_status != new_status:
-                            status_item.setText(new_status)
-                            print(f"[CombatTracker] Updated {name} status from '{old_status}' to '{new_status}'")
-                            
-                            # If status is Dead, mark for removal later (don't remove yet to avoid index issues)
-                            if new_status.lower() == "dead":
-                                # Log death
-                                self._log_combat_action(
-                                    "Status", 
-                                    name, 
-                                    "has died", 
-                                    result="Removed from combat"
-                                )
-                
-                # Update concentration if present
-                if "concentration" in combatant:
-                    conc_item = self.initiative_table.item(found_row, 6)
-                    if conc_item:
-                        new_state = Qt.Checked if combatant["concentration"] else Qt.Unchecked
-                        if conc_item.checkState() != new_state:
-                            conc_item.setCheckState(new_state)
-                
-                # Handle death saves if present
-                if "death_saves" in combatant:
-                    # Store for later tracking
-                    self.death_saves[found_row] = combatant["death_saves"]
+                # Skip special target names like "Nearest Enemy"
+                if name in ["Nearest Enemy", "Enemy", "Target"] or "Enemy" in name:
+                    print(f"[CombatTracker] Skipping special target name: {name}")
+                    continue
                     
-                    # Display in status (if not already shown)
-                    status_item = self.initiative_table.item(found_row, 5)
-                    if status_item:
-                        current_status = status_item.text()
-                        successes = combatant["death_saves"].get("successes", 0)
-                        failures = combatant["death_saves"].get("failures", 0)
+                # Find the row with this combatant
+                found_row = -1
+                for row in range(self.initiative_table.rowCount()):
+                    name_item = self.initiative_table.item(row, 0)
+                    if name_item and name_item.text() == name:
+                        found_row = row
+                        break
                         
-                        # If status doesn't already mention death saves, add them
-                        if "death save" not in current_status.lower():
-                            death_saves_text = f"Death Saves: {successes}S/{failures}F"
-                            if current_status:
-                                new_status = f"{current_status}, {death_saves_text}"
-                            else:
-                                new_status = death_saves_text
-                            status_item.setText(new_status)
+                if found_row >= 0:
+                    # Update HP
+                    if "hp" in combatant:
+                        hp_item = self.initiative_table.item(found_row, 2)
+                        if hp_item:
+                            old_hp = hp_item.text()
+                            new_hp = ""
+                            hp_value = combatant["hp"]
                             
-                        # Log death save progress
-                        self._log_combat_action(
-                            "Death Save", 
-                            name, 
-                            "death saves", 
-                            result=f"{successes} successes, {failures} failures"
-                        )
+                            # Handle different HP update formats
+                            if isinstance(hp_value, int) or hp_value.isdigit():
+                                # Direct HP value
+                                new_hp = str(hp_value)
+                            elif isinstance(hp_value, str) and "reduce" in hp_value.lower():
+                                # "reduce by X" format
+                                import re
+                                damage_match = re.search(r'\d+', hp_value)
+                                if damage_match and old_hp and old_hp.isdigit():
+                                    damage = int(damage_match.group(0))
+                                    current_hp = int(old_hp)
+                                    new_hp = str(max(0, current_hp - damage))
+                            
+                            if new_hp and old_hp != new_hp:
+                                hp_item.setText(new_hp)
+                                print(f"[CombatTracker] Updated {name} HP from {old_hp} to {new_hp}")
+                    
+                    # Update status
+                    if "status" in combatant:
+                        status_item = self.initiative_table.item(found_row, 5)
+                        if status_item:
+                            old_status = status_item.text()
+                            new_status = combatant["status"]
+                            if old_status != new_status:
+                                status_item.setText(new_status)
+                                print(f"[CombatTracker] Updated {name} status from '{old_status}' to '{new_status}'")
+                                
+                                # If status is Dead, mark for removal later (don't remove yet to avoid index issues)
+                                # This logic is now deferred to _cleanup_dead_combatants
+                                # if new_status.lower() == "dead":
+                                #     pass # Handled by cleanup
+                    
+                    # Update concentration if present
+                    if "concentration" in combatant:
+                        conc_item = self.initiative_table.item(found_row, 6)
+                        if conc_item:
+                            new_state = Qt.Checked if combatant["concentration"] else Qt.Unchecked
+                            if conc_item.checkState() != new_state:
+                                conc_item.setCheckState(new_state)
+                    
+                    # Handle death saves if present
+                    if "death_saves" in combatant:
+                        # Store for later tracking
+                        self.death_saves[found_row] = combatant["death_saves"]
+                        
+                        # Display in status (if not already shown)
+                        status_item = self.initiative_table.item(found_row, 5)
+                        if status_item:
+                            current_status = status_item.text()
+                            successes = combatant["death_saves"].get("successes", 0)
+                            failures = combatant["death_saves"].get("failures", 0)
+                            
+                            # If status doesn't already mention death saves, add them
+                            if "death save" not in current_status.lower():
+                                death_saves_text = f"Death Saves: {successes}S/{failures}F"
+                                if current_status:
+                                    new_status = f"{current_status}, {death_saves_text}"
+                                else:
+                                    new_status = death_saves_text
+                                status_item.setText(new_status)
+                                
+                            # Log death save progress
+                            self._log_combat_action(
+                                "Death Save", 
+                                name, 
+                                "death saves", 
+                                result=f"{successes} successes, {failures} failures"
+                            )
+        finally:
+            # Ensure signals are unblocked
+            self.initiative_table.blockSignals(False)
         
-        # Ensure the table is updated visually
+        # Ensure the table is updated visually - moved outside the loop
         self.initiative_table.viewport().update()
         from PySide6.QtWidgets import QApplication
         QApplication.processEvents()
@@ -2871,10 +2922,14 @@ class CombatTrackerPanel(BasePanel):
             # Handle error appropriately, maybe show an error message
             error = f"Failed to parse combat result data. JSON: {result_json}"
             
+        # Apply final HP/Status updates from the result (but don't remove rows yet)
         self._process_resolution_ui(result, error)
-        print("[CombatTracker] _process_and_sort_final_resolution: UI processed, now sorting.")
-        self._sort_initiative()
-        print("[CombatTracker] _process_and_sort_final_resolution: Sorting complete.")
+
+        # Cleanup dead combatants AFTER applying final state
+        self._cleanup_dead_combatants()
+
+        print(f"[CombatTracker] _process_and_sort_final_resolution: UI processed and cleaned up.")
+        # REMOVED: self._sort_initiative() - No need to sort after combat ends
 
     def _process_resolution_ui(self, result, error):
         """Process the combat resolution result in the main GUI thread and show user-facing output."""
@@ -2979,112 +3034,126 @@ class CombatTrackerPanel(BasePanel):
         rows_to_remove = []
         update_summaries = []
         
-        for update_index, update in enumerate(updates):
-            name_to_find = update.get("name")
-            if not name_to_find:
-                continue
+        # Block signals during updates to prevent unexpected handlers
+        self.initiative_table.blockSignals(True)
+        try:
+            for update_index, update in enumerate(updates):
+                name_to_find = update.get("name")
+                if not name_to_find:
+                    continue
+                    
+                print(f"[CombatTracker] Processing update for {name_to_find}: {update}")
+                # Find the row for the combatant
+                found_row = -1
+                for row in range(self.initiative_table.rowCount()):
+                    name_item = self.initiative_table.item(row, 0)
+                    if name_item and name_item.text() == name_to_find:
+                        found_row = row
+                        break
                 
-            print(f"[CombatTracker] Processing update for {name_to_find}: {update}")
-            # Find the row for the combatant
-            found_row = -1
-            for row in range(self.initiative_table.rowCount()):
-                name_item = self.initiative_table.item(row, 0)
-                if name_item and name_item.text() == name_to_find:
-                    found_row = row
-                    break
-            
-            if found_row != -1:
-                print(f"[CombatTracker] Found {name_to_find} at row {found_row}")
-                # Apply HP update
-                if "hp" in update:
-                    hp_item = self.initiative_table.item(found_row, 2)
-                    if hp_item:
-                        old_hp = hp_item.text()
-                        new_hp = str(update["hp"])
-                        hp_item.setText(new_hp)
-                        print(f"[CombatTracker] Set {name_to_find} HP to {new_hp} in row {found_row} (was {old_hp})")
-                        # Force a UI update after each HP change
-                        self.initiative_table.viewport().update()
-                        from PySide6.QtWidgets import QApplication
-                        QApplication.processEvents()
-                        update_summaries.append(f"- {name_to_find}: HP changed from {old_hp} to {new_hp}")
-                        # Handle death/unconscious status if HP reaches 0
-                        if update["hp"] <= 0 and "status" not in update:
-                            # Add Unconscious status
-                            status_item = self.initiative_table.item(found_row, 5)  # Status is now column 5
-                            if status_item:
-                                current_statuses = []
-                                if status_item.text():
-                                    current_statuses = [s.strip() for s in status_item.text().split(',')]
-                                
-                                # Only add if not already present
-                                if "Unconscious" not in current_statuses:
-                                    current_statuses.append("Unconscious")
-                                    status_item.setText(', '.join(current_statuses))
-                                    update_summaries.append(f"- {name_to_find}: Added 'Unconscious' status due to 0 HP")
-                        
-                # Apply Status update
-                if "status" in update:
-                    status_item = self.initiative_table.item(found_row, 5)
-                    if status_item:
-                        old_status_text = status_item.text()
-                        old_statuses = [s.strip() for s in old_status_text.split(',')] if old_status_text else []
-                        
-                        new_status = update["status"]
-                        
-                        # Handle different status update formats
-                        if isinstance(new_status, list):
-                            # If status is a list, replace all existing statuses
-                            new_statuses = new_status
-                            status_item.setText(', '.join(new_statuses))
-                            update_summaries.append(f"- {name_to_find}: Status changed from '{old_status_text}' to '{', '.join(new_statuses)}'")
-                        elif new_status == "clear":
-                            # Special case to clear all statuses
-                            status_item.setText("")
-                            update_summaries.append(f"- {name_to_find}: All statuses cleared (was '{old_status_text}')")
-                        elif new_status.startswith("+"):
-                            # Add a status (e.g., "+Poisoned")
-                            status_to_add = new_status[1:].strip()
-                            if status_to_add and status_to_add not in old_statuses:
-                                old_statuses.append(status_to_add)
-                                status_item.setText(', '.join(old_statuses))
-                                update_summaries.append(f"- {name_to_find}: Added '{status_to_add}' status")
-                        elif new_status.startswith("-"):
-                            # Remove a status (e.g., "-Poisoned")
-                            status_to_remove = new_status[1:].strip()
-                            if status_to_remove and status_to_remove in old_statuses:
-                                old_statuses.remove(status_to_remove)
-                                status_item.setText(', '.join(old_statuses))
-                                update_summaries.append(f"- {name_to_find}: Removed '{status_to_remove}' status")
-                        else:
-                            # Otherwise, directly set the new status (backward compatibility)
-                            status_item.setText(new_status)
-                            update_summaries.append(f"- {name_to_find}: Status changed from '{old_status_text}' to '{new_status}'")
-                        
-                        # If status contains "Dead" or "Fled", mark for removal
-                        current_statuses = status_item.text().split(',')
-                        if any(s.strip() in ["Dead", "Fled"] for s in current_statuses):
-                            rows_to_remove.append(found_row)
-        
+                if found_row != -1:
+                    print(f"[CombatTracker] Found {name_to_find} at row {found_row}")
+                    # Apply HP update
+                    if "hp" in update:
+                        hp_item = self.initiative_table.item(found_row, 2)
+                        if hp_item:
+                            old_hp = hp_item.text()
+                            # Clamp HP to minimum 0 for display, even if update is negative
+                            new_hp_value = max(0, int(update["hp"])) 
+                            new_hp = str(new_hp_value)
+                            hp_item.setText(new_hp)
+                            print(f"[CombatTracker] Set {name_to_find} HP to {new_hp} in row {found_row} (was {old_hp}, update value: {update['hp']})")
+                            update_summaries.append(f"- {name_to_find}: HP changed from {old_hp} to {new_hp}")
+                            # Handle death/unconscious status if HP reaches 0
+                            # Use the original update value for the logic check, not the clamped one
+                            if int(update["hp"]) <= 0 and "status" not in update:
+                                # Add Unconscious status
+                                status_item = self.initiative_table.item(found_row, 5)  # Status is now column 5
+                                if status_item:
+                                    current_statuses = []
+                                    if status_item.text():
+                                        current_statuses = [s.strip() for s in status_item.text().split(',')]
+                                    
+                                    # Only add if not already present
+                                    if "Unconscious" not in current_statuses:
+                                        current_statuses.append("Unconscious")
+                                        status_item.setText(', '.join(current_statuses))
+                                        update_summaries.append(f"- {name_to_find}: Added 'Unconscious' status due to 0 HP")
+                            
+                    # Apply Status update
+                    if "status" in update:
+                        status_item = self.initiative_table.item(found_row, 5)
+                        if status_item:
+                            old_status_text = status_item.text()
+                            old_statuses = [s.strip() for s in old_status_text.split(',')] if old_status_text else []
+                            
+                            new_status = update["status"]
+                            
+                            # Handle different status update formats
+                            if isinstance(new_status, list):
+                                # If status is a list, replace all existing statuses
+                                new_statuses = new_status
+                                status_item.setText(', '.join(new_statuses))
+                                update_summaries.append(f"- {name_to_find}: Status changed from '{old_status_text}' to '{', '.join(new_statuses)}'")
+                            elif new_status == "clear":
+                                # Special case to clear all statuses
+                                status_item.setText("")
+                                update_summaries.append(f"- {name_to_find}: All statuses cleared (was '{old_status_text}')")
+                            elif new_status.startswith("+"):
+                                # Add a status (e.g., "+Poisoned")
+                                status_to_add = new_status[1:].strip()
+                                if status_to_add and status_to_add not in old_statuses:
+                                    old_statuses.append(status_to_add)
+                                    status_item.setText(', '.join(old_statuses))
+                                    update_summaries.append(f"- {name_to_find}: Added '{status_to_add}' status")
+                            elif new_status.startswith("-"):
+                                # Remove a status (e.g., "-Poisoned")
+                                status_to_remove = new_status[1:].strip()
+                                if status_to_remove and status_to_remove in old_statuses:
+                                    old_statuses.remove(status_to_remove)
+                                    status_item.setText(', '.join(old_statuses))
+                                    update_summaries.append(f"- {name_to_find}: Removed '{status_to_remove}' status")
+                            else:
+                                # Otherwise, directly set the new status (backward compatibility)
+                                status_item.setText(new_status)
+                                update_summaries.append(f"- {name_to_find}: Status changed from '{old_status_text}' to '{new_status}'")
+                            
+                            # If status contains "Dead" or "Fled", mark for removal
+                            current_statuses = status_item.text().split(',')
+                            if any(s.strip() in ["Dead", "Fled"] for s in current_statuses):
+                                rows_to_remove.append(found_row)
+        finally:
+            # Ensure signals are unblocked even if an error occurs
+            self.initiative_table.blockSignals(False)
+
         # Remove combatants marked for removal (in reverse order)
         if rows_to_remove:
-            for row in sorted(list(set(rows_to_remove)), reverse=True):
-                self.initiative_table.removeRow(row)
-                # Adjust current turn if needed
-                if row < self.current_turn:
-                    self.current_turn -= 1
-                elif row == self.current_turn:
-                    self._update_highlight()
-            
-                # Clean up tracking
-                self.death_saves.pop(row, None)
-                if row in self.concentrating:
-                    self.concentrating.remove(row)
-            
-            # Reset highlight if current turn was removed or index shifted
-            self._update_highlight()
+            # Block signals again during row removal for safety
+            self.initiative_table.blockSignals(True)
+            try:
+                for row in sorted(list(set(rows_to_remove)), reverse=True):
+                    self.initiative_table.removeRow(row)
+                    # Adjust current turn if needed
+                    turn_adjusted = False
+                    if row < self.current_turn:
+                        self.current_turn -= 1
+                        turn_adjusted = True
+                    elif row == self.current_turn:
+                        # If removing the current turn, reset it (e.g., to -1 or 0 if combatants remain)
+                        self.current_turn = 0 if self.initiative_table.rowCount() > 0 else -1
+                        turn_adjusted = True
+    
+                    # Clean up tracking
+                    self.death_saves.pop(row, None)
+                    self.concentrating.discard(row) # Use discard for sets
+                    self.combatants.pop(row, None) # Clean up combatants dict
+                
+                # Update highlight ONCE after all removals are done
+                self._update_highlight()
+            finally:
+                 self.initiative_table.blockSignals(False) # Unblock after removals
         
-        # Ensure the UI table is refreshed after all updates
+        # Ensure the UI table is refreshed after all updates and removals
         self.initiative_table.viewport().update()
         from PySide6.QtWidgets import QApplication
         QApplication.processEvents()
@@ -3780,598 +3849,6 @@ class CombatTrackerPanel(BasePanel):
             # Force the UI to update one more time
             QApplication.processEvents()  # Process pending events to ensure UI updates
     
-    def add_character(self, character):
-        """Add a player character from character panel to the tracker"""
-        if not character:
-            return
-            
-        # Helper function to get attribute from either dict or object
-        def get_attr(obj, attr, default=None, alt_attrs=None):
-            """Get attribute from object or dict, trying alternate attribute names if specified"""
-            alt_attrs = alt_attrs or []
-            
-            if isinstance(obj, dict):
-                # Try the main attribute name first
-                if attr in obj:
-                    return obj[attr]
-                
-                # Try alternative attribute names
-                for alt_attr in alt_attrs:
-                    if alt_attr in obj:
-                        return obj[alt_attr]
-                
-                return default
-            
-            # Try getattr for object access
-            if hasattr(obj, attr):
-                return getattr(obj, attr)
-            
-            # Try alternative attributes for objects
-            for alt_attr in alt_attrs:
-                if hasattr(obj, alt_attr):
-                    return getattr(obj, alt_attr)
-            
-            return default
-            
-        # Get character name
-        name = get_attr(character, "name", "Unknown Character")
-        
-        # Get initiative bonus
-        initiative_bonus = get_attr(character, "initiative_bonus", 0)
-        
-        # Roll initiative with the bonus
-        initiative_roll = random.randint(1, 20) + initiative_bonus
-        
-        # Get HP and AC
-        current_hp = get_attr(character, "current_hp", 10)
-        max_hp = get_attr(character, "max_hp", current_hp)
-        ac = get_attr(character, "armor_class", 10)
-        
-        # Add to tracker
-        row = self._add_combatant(name, initiative_roll, current_hp, max_hp, ac, "character")
-        
-        # Store character data for future reference
-        if row >= 0:
-            self.combatants[row] = character
-            
-        # Log to combat log
-        self._log_combat_action("Setup", "DM", "added character", name, f"(Initiative: {initiative_roll})")
-        
-        return row
-
-    def _remove_selected(self):
-        """Remove selected combatants from the initiative order"""
-        selected_rows = sorted([index.row() for index in 
-                               self.initiative_table.selectionModel().selectedRows()], reverse=True)
-        
-        if not selected_rows:
-            return
-        
-        # Ask for confirmation if multiple rows selected
-        if len(selected_rows) > 1:
-            confirm = QMessageBox.question(
-                self,
-                "Confirm Removal",
-                f"Remove {len(selected_rows)} combatants?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
-            )
-            if confirm != QMessageBox.Yes:
-                return
-        
-        # Remove rows from table (in reverse order to avoid index issues)
-        for row in selected_rows:
-            name = self.initiative_table.item(row, 0).text()
-            self.initiative_table.removeRow(row)
-            
-            # Also remove from tracking collections
-            self.concentrating.discard(row)
-            if row in self.death_saves:
-                del self.death_saves[row]
-                
-            # Remove from combatants dictionary if present
-            if row in self.combatants:
-                del self.combatants[row]
-            
-            # Log removal
-            self._log_combat_action("Setup", "DM", "removed", name, "from combat")
-        
-        # Adjust current turn index if needed
-        if self.combat_started:
-            # If we removed the current turn, move to the next
-            if self.current_turn in selected_rows:
-                if self.initiative_table.rowCount() > 0:
-                    # Set to previous turn, then _next_turn will advance
-                    self.current_turn = (self.current_turn - 1) % self.initiative_table.rowCount()
-                    self._next_turn()
-                else:
-                    # No combatants left, reset
-                    self.combat_started = False
-                    self.current_turn = -1
-            # Otherwise, just adjust for removed rows
-            elif self.current_turn >= 0:
-                # Count how many removed rows are before current
-                removed_before = sum(1 for r in selected_rows if r < self.current_turn)
-                self.current_turn -= removed_before
-                
-        # Update the highlight
-        self._update_highlight()
-        
-        # Update and rebuild combatant index mapping
-        new_combatants = {}
-        # Reindex combatants dictionary to match new row indices
-        for old_row, combatant in self.combatants.items():
-            # Skip removed rows
-            if old_row in selected_rows:
-                continue
-                
-            # Calculate new row index
-            new_row = old_row - sum(1 for r in selected_rows if r < old_row)
-            new_combatants[new_row] = combatant
-                
-        self.combatants = new_combatants
-        
-        # Adjust concentrating and death_saves mappings
-        new_concentrating = set()
-        for row in self.concentrating:
-            if row not in selected_rows:
-                new_row = row - sum(1 for r in selected_rows if r < row)
-                new_concentrating.add(new_row)
-        self.concentrating = new_concentrating
-        
-        new_death_saves = {}
-        for row, saves in self.death_saves.items():
-            if row not in selected_rows:
-                new_row = row - sum(1 for r in selected_rows if r < row)
-                new_death_saves[new_row] = saves
-        self.death_saves = new_death_saves
-
-    def _view_combatant_details(self, row):
-        """Show the details for the combatant at the given row"""
-        if not self.initiative_table.item(row, 0):
-            return
-            
-        name_item = self.initiative_table.item(row, 0)
-        combatant_name = name_item.text()
-        combatant_type = name_item.data(Qt.UserRole)
-        
-        # If type is None or empty, try to get it from the type column (index 6)
-        if not combatant_type and self.initiative_table.item(row, 6):
-            combatant_type = self.initiative_table.item(row, 6).text().lower()
-            # Store it back in the name item for future use
-            name_item.setData(Qt.UserRole, combatant_type)
-            
-        # If still None, default to custom
-        if not combatant_type:
-            combatant_type = "custom"
-            
-        print(f"[Combat Tracker] Viewing details for {combatant_type} '{combatant_name}'")
-        
-        # Redirect to appropriate panel based on combatant type
-        if combatant_type == "monster":
-            # Get the monster panel and view the monster
-            monster_panel = self.get_panel("monster")
-            if monster_panel:
-                # Use the panel manager to show the panel
-                if hasattr(self.app_state, 'panel_manager'):
-                    panel_manager = self.app_state.panel_manager
-                    panel_manager.show_panel("monster")
-                    
-                    # Now search and select the monster
-                    result = monster_panel.search_and_select_monster(combatant_name)
-                    if not result:
-                        # If monster not found, show a message and use the dialog fallback
-                        print(f"[Combat Tracker] Monster '{combatant_name}' not found in monster browser")
-                        self._show_combatant_dialog(row, combatant_name, combatant_type)
-                else:
-                    print("[Combat Tracker] No panel_manager found in app_state")
-                    self._show_combatant_dialog(row, combatant_name, combatant_type)
-            else:
-                # Fallback to dialog if panel not found
-                self._show_combatant_dialog(row, combatant_name, combatant_type)
-        elif combatant_type == "character":
-            # Get the character panel and view the character
-            character_panel = self.get_panel("player_character")
-            if character_panel:
-                # Use the panel manager to show the panel
-                if hasattr(self.app_state, 'panel_manager'):
-                    panel_manager = self.app_state.panel_manager
-                    panel_manager.show_panel("player_character")
-                    
-                    # Now search and select the character
-                    result = character_panel.select_character_by_name(combatant_name)
-                    if not result:
-                        # If character not found, show a message and use the dialog fallback
-                        print(f"[Combat Tracker] Character '{combatant_name}' not found in character panel")
-                        self._show_combatant_dialog(row, combatant_name, combatant_type)
-                else:
-                    print("[Combat Tracker] No panel_manager found in app_state")
-                    self._show_combatant_dialog(row, combatant_name, combatant_type)
-            else:
-                # Fallback to dialog if panel not found
-                self._show_combatant_dialog(row, combatant_name, combatant_type)
-        else:
-            # For custom entries, use the dialog approach
-            self._show_combatant_dialog(row, combatant_name, combatant_type)
-            
-    def _show_combatant_dialog(self, row, combatant_name, combatant_type):
-        """Show a dialog with combatant details when we can't redirect to another panel"""
-        print(f"[Combat Tracker] Showing dialog for {combatant_type} '{combatant_name}'")
-        
-        # Get basic data from the initiative table
-        combatant_data = {
-            "name": combatant_name,
-            "initiative": int(self.initiative_table.item(row, 1).text()) if self.initiative_table.item(row, 1) else 0,
-            "hp": int(self.initiative_table.item(row, 2).text()) if self.initiative_table.item(row, 2) else 0,
-            "max_hp": int(self.initiative_table.item(row, 3).text()) if self.initiative_table.item(row, 3) else 0,
-            "ac": int(self.initiative_table.item(row, 4).text()) if self.initiative_table.item(row, 4) else 0,
-            "status": self.initiative_table.item(row, 5).text() if self.initiative_table.item(row, 5) else ""
-        }
-        
-        # For monsters, try to get the full data from the stored combatants dictionary
-        if combatant_type == "monster":
-            for combatant_row, stored_data in self.combatants.items():
-                if hasattr(stored_data, 'name') and stored_data.name == combatant_name:
-                    combatant_data = stored_data
-                    break
-                elif isinstance(stored_data, dict) and stored_data.get('name') == combatant_name:
-                    combatant_data = stored_data
-                    break
-        
-        print(f"[CombatDetailsDialog] Received data for {combatant_type}: {combatant_data}")
-        dialog = CombatantDetailsDialog(self, combatant_data, combatant_type)
-        dialog.exec()
-
-    def _toggle_details_pane(self):
-        """Toggle the visibility of the details pane"""
-        self.show_details_pane = self.toggle_details_btn.isChecked()
-        
-        if self.show_details_pane:
-            self.toggle_details_btn.setText("Hide Details")
-            self.details_widget.show()
-            # If we have a selected combatant, update details
-            if self.current_details_combatant:
-                self._update_details_pane()
-            else:
-                # If nothing selected but initiative table has rows, select the first row
-                if self.initiative_table.rowCount() > 0:
-                    self.initiative_table.selectRow(0)
-        else:
-            self.toggle_details_btn.setText("Show Details")
-            self.details_widget.hide()
-    
-    def _update_details_pane(self):
-        """Update the details pane with the current combatant's information"""
-        if not self.current_details_combatant:
-            self.name_label.setText("No combatant selected")
-            return
-            
-        # Helper to get attributes safely 
-        def get_attr(obj, attr, default=None, alt_attrs=None):
-            """Get attribute from dict or object"""
-            alt_attrs = alt_attrs or []
-            
-            if isinstance(obj, dict):
-                if attr in obj:
-                    return obj[attr]
-                for alt in alt_attrs:
-                    if alt in obj:
-                        return obj[alt]
-            else:
-                if hasattr(obj, attr):
-                    return getattr(obj, attr)
-                for alt in alt_attrs:
-                    if hasattr(obj, alt):
-                        return getattr(obj, alt)
-            return default
-        
-        # Format ability score with modifier
-        def format_ability(score):
-            if score is None:
-                return "-"
-            mod = (score - 10) // 2
-            mod_str = f"+{mod}" if mod >= 0 else str(mod)
-            return f"{score} ({mod_str})"
-        
-        # Clear previous data
-        self._clear_details_layouts()
-        
-        # Update basic info
-        name = get_attr(self.current_details_combatant, "name", "Unknown")
-        self.name_label.setText(name)
-        self.details_title.setText(f"{name} Details")
-        
-        # Type info depends on combatant type
-        type_text = ""
-        if self.current_details_type == "monster":
-            size = get_attr(self.current_details_combatant, "size", "")
-            type_val = get_attr(self.current_details_combatant, "type", "")
-            alignment = get_attr(self.current_details_combatant, "alignment", "")
-            
-            if size and type_val:
-                type_text = f"{size} {type_val}"
-                if alignment:
-                    type_text += f", {alignment}"
-        else:  # character
-            race = get_attr(self.current_details_combatant, "race", "")
-            character_class = get_attr(self.current_details_combatant, "character_class", "", ["class"])
-            level = get_attr(self.current_details_combatant, "level", "")
-            
-            parts = []
-            if level:
-                parts.append(f"Level {level}")
-            if race:
-                parts.append(race)
-            if character_class:
-                parts.append(character_class)
-                
-            type_text = " ".join(parts)
-            
-        self.type_label.setText(type_text)
-        
-        # AC
-        ac = get_attr(self.current_details_combatant, "armor_class", "-", ["ac", "AC"])
-        self.ac_details_label.setText(str(ac))
-        
-        # HP
-        hp_text = ""
-        if self.current_details_type == "monster":
-            hp = get_attr(self.current_details_combatant, "hit_points", "-", ["hp", "HP"])
-            hp_text = str(hp)
-        else:  # character
-            current_hp = get_attr(self.current_details_combatant, "current_hp", "-", ["hp"])
-            max_hp = get_attr(self.current_details_combatant, "max_hp", "-", ["maximum_hp"])
-            if current_hp is not None and max_hp is not None:
-                hp_text = f"{current_hp}/{max_hp}"
-                
-                temp_hp = get_attr(self.current_details_combatant, "temp_hp", 0, ["temporary_hp"])
-                # Check if temp_hp can be converted to int and is positive
-                try:
-                    temp_hp_value = int(temp_hp)
-                    if temp_hp_value > 0:
-                        hp_text += f" (+{temp_hp_value})"
-                except (ValueError, TypeError):
-                    # If temp_hp can't be converted to int, ignore it
-                    pass
-        
-        self.hp_details_label.setText(hp_text)
-        
-        # Speed
-        speed = get_attr(self.current_details_combatant, "speed", "-")
-        self.speed_label.setText(str(speed))
-        
-        # Ability scores
-        ability_scores = get_attr(self.current_details_combatant, "ability_scores", {})
-        
-        if ability_scores:
-            # Use different mappings depending on what format the data is in
-            if isinstance(ability_scores, dict):
-                # Check if using short names (STR) or long names (strength)
-                if any(k in ability_scores for k in ["STR", "DEX", "CON", "INT", "WIS", "CHA"]):
-                    # Short names
-                    self.str_label.setText(f"STR\n{format_ability(ability_scores.get('STR'))}")
-                    self.dex_label.setText(f"DEX\n{format_ability(ability_scores.get('DEX'))}")
-                    self.con_label.setText(f"CON\n{format_ability(ability_scores.get('CON'))}")
-                    self.int_label.setText(f"INT\n{format_ability(ability_scores.get('INT'))}")
-                    self.wis_label.setText(f"WIS\n{format_ability(ability_scores.get('WIS'))}")
-                    self.cha_label.setText(f"CHA\n{format_ability(ability_scores.get('CHA'))}")
-                else:
-                    # Long names
-                    self.str_label.setText(f"STR\n{format_ability(ability_scores.get('strength', ability_scores.get('str')))}")
-                    self.dex_label.setText(f"DEX\n{format_ability(ability_scores.get('dexterity', ability_scores.get('dex')))}")
-                    self.con_label.setText(f"CON\n{format_ability(ability_scores.get('constitution', ability_scores.get('con')))}")
-                    self.int_label.setText(f"INT\n{format_ability(ability_scores.get('intelligence', ability_scores.get('int')))}")
-                    self.wis_label.setText(f"WIS\n{format_ability(ability_scores.get('wisdom', ability_scores.get('wis')))}")
-                    self.cha_label.setText(f"CHA\n{format_ability(ability_scores.get('charisma', ability_scores.get('cha')))}")
-        
-        # Actions & Features
-        # Actions
-        actions = get_attr(self.current_details_combatant, "actions", [])
-        if actions:
-            for action in actions:
-                action_name = get_attr(action, "name", "")
-                action_desc = get_attr(action, "desc", "")
-                
-                if action_name and action_desc:
-                    action_label = QLabel(f"<b>{action_name}</b>: {action_desc}")
-                    action_label.setWordWrap(True)
-                    self.actions_layout.addWidget(action_label)
-        
-        # Features/Traits
-        traits = get_attr(self.current_details_combatant, "special_abilities", [])
-        if not traits:  # Try alternate names
-            traits = get_attr(self.current_details_combatant, "traits", [])
-        if not traits:
-            traits = get_attr(self.current_details_combatant, "features", [])
-        
-        if traits:
-            for trait in traits:
-                if isinstance(trait, dict):
-                    trait_name = get_attr(trait, "name", "")
-                    trait_desc = get_attr(trait, "desc", "")
-                    
-                    if trait_name and trait_desc:
-                        trait_label = QLabel(f"<b>{trait_name}</b>: {trait_desc}")
-                        trait_label.setWordWrap(True)
-                        self.traits_layout.addWidget(trait_label)
-                elif isinstance(trait, str):
-                    # If it's just a string, add it directly
-                    trait_label = QLabel(trait)
-                    trait_label.setWordWrap(True)
-                    self.traits_layout.addWidget(trait_label)
-        
-        # Spells
-        spells = get_attr(self.current_details_combatant, "spells", [])
-        if spells:
-            for spell in spells:
-                if isinstance(spell, dict):
-                    spell_name = get_attr(spell, "name", "")
-                    spell_desc = get_attr(spell, "desc", "")
-                    
-                    if spell_name:
-                        spell_label = QLabel(f"<b>{spell_name}</b>")
-                        if spell_desc:
-                            spell_label.setText(f"<b>{spell_name}</b>: {spell_desc}")
-                        spell_label.setWordWrap(True)
-                        self.spells_layout.addWidget(spell_label)
-                elif isinstance(spell, str):
-                    # If it's just a string, add it directly
-                    spell_label = QLabel(spell)
-                    spell_label.setWordWrap(True)
-                    self.spells_layout.addWidget(spell_label)
-        
-        # Final spacing
-        self.actions_layout.addStretch()
-        self.traits_layout.addStretch()
-        self.spells_layout.addStretch()
-        
-        # Force tab widget to update and be visible
-        self.actions_tab.setVisible(True)
-        self.actions_tab.show()
-        self.actions_tab.adjustSize()
-        
-        # Make sure the details pane refreshes
-        self.details_content.setWidget(self.stats_widget)
-        self.details_content.adjustSize()
-        self.details_widget.adjustSize()
-        self.details_widget.update()
-    
-    def _clear_details_layouts(self):
-        """Clear action, trait, and spell layouts"""
-        # Clear actions
-        while self.actions_layout.count():
-            item = self.actions_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        
-        # Clear traits
-        while self.traits_layout.count():
-            item = self.traits_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        
-        # Clear spells
-        while self.spells_layout.count():
-            item = self.spells_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-    
-    def _on_selection_changed(self):
-        """Handle when the selection in the initiative table changes"""
-        selected_rows = self.initiative_table.selectedItems()
-        if not selected_rows:
-            return
-            
-        # Get the selected row
-        row = selected_rows[0].row()
-        
-        # If details pane is visible, update it with the selected combatant
-        if self.show_details_pane:
-            self._view_combatant_details(row)
-    
-    def get_panel(self, panel_id):
-        """Get a panel from the panel manager"""
-        # Try to get from the app_state panel manager
-        if hasattr(self.app_state, 'panel_manager'):
-            panel_manager = self.app_state.panel_manager
-            # First check if the panel manager has a get_panel_widget method
-            if hasattr(panel_manager, 'get_panel_widget'):
-                return panel_manager.get_panel_widget(panel_id)
-            # Otherwise try the get_panel method which returns a dock widget
-            elif hasattr(panel_manager, 'get_panel'):
-                panel_dock = panel_manager.get_panel(panel_id)
-                if panel_dock:
-                    return panel_dock.widget()
-        # If not found, use the BasePanel's get_panel method from parent class
-        return super().get_panel(panel_id)
-    
-    def closeEvent(self, event):
-        """Handle cleanup when panel is closed"""
-        # Disconnect signals to avoid errors
-        self.hp_delegate.hpChanged.disconnect()
-        self.init_delegate.initChanged.disconnect()
-        
-        # Call parent closeEvent
-        super().closeEvent(event)
-
-    def _fix_missing_types(self):
-        """Fix any missing combatant types for existing entries"""
-        # Check if we need to fix any missing types
-        fix_count = 0
-        
-        for row in range(self.initiative_table.rowCount()):
-            # Get the current type
-            type_item = self.initiative_table.item(row, 6)
-            if not type_item or not type_item.text():
-                name_item = self.initiative_table.item(row, 0)
-                name = name_item.text() if name_item else "Unknown"
-                
-                # Try to infer type
-                inferred_type = ""
-                
-                # First, check if we have combatant data
-                if row in self.combatants:
-                    data = self.combatants[row]
-                    if isinstance(data, dict):
-                        if any(k in data for k in ["monster_id", "size", "challenge_rating", "hit_points"]):
-                            inferred_type = "monster"
-                        elif any(k in data for k in ["character_class", "level", "race"]):
-                            inferred_type = "character"
-                
-                # If still unknown, use name-based heuristics
-                if not inferred_type:
-                    monster_names = ["goblin", "ogre", "dragon", "troll", "zombie", "skeleton", 
-                                    "ghoul", "ghast", "ghost", "demon", "devil", "elemental"]
-                    lower_name = name.lower()
-                    
-                    # Check for common monster names
-                    if any(monster in lower_name for monster in monster_names):
-                        inferred_type = "monster"
-                    # Check for NPC tag
-                    elif "(npc)" in lower_name:
-                        inferred_type = "character"
-                    else:
-                        # Default to monster if other heuristics fail
-                        inferred_type = "monster"
-                
-                # Set the inferred type
-                if not type_item:
-                    type_item = QTableWidgetItem()
-                    self.initiative_table.setItem(row, 6, type_item)
-                
-                type_item.setText(inferred_type)
-                fix_count += 1
-                print(f"[CombatTracker] Fixed missing type for '{name}' - set to '{inferred_type}'")
-        
-        if fix_count > 0:
-            print(f"[CombatTracker] Fixed types for {fix_count} combatants")
-        
-        return fix_count
-
-    def _toggle_concentration(self, row):
-        """Toggle concentration state for a combatant"""
-        conc_item = self.initiative_table.item(row, 6)  # Concentration is now column 6
-        if conc_item:
-            # Toggle check state
-            current_state = conc_item.checkState()
-            new_state = Qt.Unchecked if current_state == Qt.Checked else Qt.Checked
-            conc_item.setCheckState(new_state)
-            
-            # Update tracking set
-            if new_state == Qt.Checked:
-                self.concentrating.add(row)
-            else:
-                self.concentrating.discard(row)
-                
-            # Log concentration change
-            name_item = self.initiative_table.item(row, 0)
-            if name_item:
-                name = name_item.text()
-                if new_state == Qt.Checked:
-                    self._log_combat_action("Status Effect", name, "began concentrating")
-                else:
-                    self._log_combat_action("Status Effect", name, "ended concentration")
-    
     def _apply_damage(self, is_healing=False):
         """Apply damage or healing to selected combatants"""
         # Get selected rows
@@ -4663,68 +4140,100 @@ class CombatTrackerPanel(BasePanel):
                     "", ""
                 )
 
-class ConcentrationDialog(QDialog):
-    """Dialog for concentration checks when taking damage"""
-    def __init__(self, parent=None, combatant_name="", dc=10):
-        super().__init__(parent)
-        self.setWindowTitle("Concentration Check")
-        self.combatant_name = combatant_name
-        self.dc = dc
-        self.save_result = 0
-        self._setup_ui()
-    
-    def _setup_ui(self):
-        layout = QVBoxLayout()
+    def _cleanup_dead_combatants(self):
+        """Iterate through the table and remove combatants marked as Dead or Fled."""
+        rows_to_remove = []
+        for row in range(self.initiative_table.rowCount()):
+            status_item = self.initiative_table.item(row, 5) # Status column
+            if status_item:
+                # Check status case-insensitively
+                statuses = [s.strip().lower() for s in status_item.text().split(',')]
+                if "dead" in statuses or "fled" in statuses:
+                    rows_to_remove.append(row)
+
+        if not rows_to_remove:
+            print("[CombatTracker] Cleanup: No dead/fled combatants found.")
+            return # Nothing to remove
+
+        print(f"[CombatTracker] Cleanup: Removing {len(rows_to_remove)} dead/fled combatants.")
         
-        # Information label
-        info_label = QLabel(f"{self.combatant_name} must make a concentration check (DC {self.dc})")
-        layout.addWidget(info_label)
-        
-        # Save roll input
-        save_layout = QHBoxLayout()
-        save_layout.addWidget(QLabel("Save Roll:"))
-        self.save_spin = QSpinBox()
-        self.save_spin.setRange(1, 30)
-        self.save_spin.setValue(10)
-        save_layout.addWidget(self.save_spin)
-        
-        # Roll button
-        roll_button = QPushButton("Roll")
-        roll_button.clicked.connect(self._roll_save)
-        save_layout.addWidget(roll_button)
-        
-        layout.addLayout(save_layout)
-        
-        # Result display
-        self.result_label = QLabel("")
-        layout.addWidget(self.result_label)
-        
-        # Buttons
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-        
-        self.setLayout(layout)
-    
-    def _roll_save(self):
-        """Roll a d20 for the save"""
-        roll = random.randint(1, 20)
-        self.save_spin.setValue(roll)
-        self._update_result()
-    
-    def _update_result(self):
-        """Update the result label"""
-        value = self.save_spin.value()
-        if value >= self.dc:
-            self.result_label.setText(f"Success! ({value} ≥ {self.dc})")
-            self.result_label.setStyleSheet("color: green;")
-        else:
-            self.result_label.setText(f"Failure! ({value} < {self.dc})")
-            self.result_label.setStyleSheet("color: red;")
-    
-    def get_save_result(self):
-        """Get the final save roll result"""
-        return self.save_spin.value()
+        # Block signals during row removal for safety
+        self.initiative_table.blockSignals(True)
+        turn_adjusted = False
+        try:
+            # --- Remove Rows Phase --- 
+            for row in sorted(rows_to_remove, reverse=True):
+                # Log removal before actually removing
+                name_item = self.initiative_table.item(row, 0)
+                name = name_item.text() if name_item else f"Row {row}"
+                print(f"[CombatTracker] Cleanup: Removing row {row} ({name})")
+                self._log_combat_action("Setup", "DM", "removed dead/fled combatant", name)
+
+                self.initiative_table.removeRow(row)
+                
+                # --- State Adjustment Phase (after each removal) ---
+                # Adjust current turn index if it was affected by the removal
+                if row < self.current_turn:
+                    self.current_turn -= 1
+                    turn_adjusted = True
+                    print(f"[CombatTracker] Cleanup: Adjusted current_turn to {self.current_turn} (was < {row})")
+                elif row == self.current_turn:
+                    # If removing the current turn, reset it (e.g., to 0 or -1)
+                    self.current_turn = 0 if self.initiative_table.rowCount() > 0 else -1
+                    turn_adjusted = True
+                    print(f"[CombatTracker] Cleanup: Reset current_turn to {self.current_turn} (was == {row})")
+
+                # Clean up tracking dictionaries immediately for this specific row
+                # Use pop with default None to avoid errors if key missing
+                self.death_saves.pop(row, None)
+                self.concentrating.discard(row) # discard handles missing keys safely
+                self.combatants.pop(row, None)
+                
+        finally:
+            self.initiative_table.blockSignals(False) # Unblock after removals
+            print("[CombatTracker] Cleanup: Finished removing rows.")
+            
+        # --- Re-indexing Phase (after ALL removals) --- 
+        # Only reindex if rows were actually removed
+        if rows_to_remove:
+            print("[CombatTracker] Cleanup: Re-indexing remaining combatant data.")
+            new_combatants = {}
+            new_concentrating = set()
+            new_death_saves = {}
+            
+            # Map old rows to new rows efficiently
+            current_row_count = self.initiative_table.rowCount()
+            old_to_new_map = {}
+            original_indices = sorted(self.combatants.keys()) # Get keys before modifying
+            
+            current_new_row = 0
+            for old_row in range(max(original_indices) + 1): # Iterate through potential old indices
+                if old_row not in rows_to_remove and old_row in original_indices:
+                    old_to_new_map[old_row] = current_new_row
+                    current_new_row += 1
+
+            # Apply the mapping
+            for old_row, new_row in old_to_new_map.items():
+                if old_row in self.combatants:
+                    new_combatants[new_row] = self.combatants[old_row]
+                if old_row in self.concentrating:
+                    new_concentrating.add(new_row)
+                if old_row in self.death_saves:
+                    new_death_saves[new_row] = self.death_saves[old_row]
+                     
+            self.combatants = new_combatants
+            self.concentrating = new_concentrating
+            self.death_saves = new_death_saves
+            print(f"[CombatTracker] Cleanup: Re-indexing complete. New combatants dict size: {len(self.combatants)}")
+            
+        # --- Final UI Update Phase --- 
+        # Update highlight ONLY if turn was adjusted OR the table is now empty
+        if turn_adjusted or self.initiative_table.rowCount() == 0:
+            print("[CombatTracker] Cleanup: Updating highlight.")
+            self._update_highlight()
+            
+        # Final UI refresh
+        print("[CombatTracker] Cleanup: Refreshing viewport.")
+        self.initiative_table.viewport().update()
+        QApplication.processEvents()
+        print("[CombatTracker] Cleanup: Finished.")

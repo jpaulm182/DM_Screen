@@ -241,52 +241,70 @@ class CombatResolver:
                                 for i, c in enumerate(combatants):
                                     if c.get("name") == target_name:
                                         # Update HP if specified
+                                        hp_changed = False
                                         if "hp" in update:
                                             # Check if the update is a string like "reduce by 5"
                                             hp_update = update["hp"]
+                                            current_hp = c.get("hp", 0)
+                                            new_hp = current_hp # Default to current HP
+
                                             if isinstance(hp_update, str) and "reduce" in hp_update.lower():
                                                 # Extract damage amount
                                                 import re
                                                 damage_match = re.search(r'\d+', hp_update)
                                                 if damage_match:
                                                     damage = int(damage_match.group(0))
-                                                    current_hp = c.get("hp", 0)
-                                                    c["hp"] = max(0, current_hp - damage)
-                                                    print(f"[CombatResolver] Reduced {target_name}'s HP by {damage} to {c['hp']}")
+                                                    new_hp = max(0, current_hp - damage)
+                                                    print(f"[CombatResolver] Reduced {target_name}'s HP by {damage} to {new_hp}")
                                             else:
                                                 try:
-                                                    c["hp"] = int(update["hp"])
+                                                    new_hp = int(update["hp"])
                                                 except (ValueError, TypeError):
                                                     print(f"[CombatResolver] Invalid HP value: {update['hp']}")
-                                                    
-                                            # Check if monster reached 0 HP
-                                            if c["hp"] <= 0 and c.get("type", "").lower() == "monster":
-                                                c["status"] = "Dead"
-                                                print(f"[CombatResolver] Monster {c.get('name', 'Unknown')} died")
-                                            # Check if character reached 0 HP
-                                            elif c["hp"] <= 0 and c.get("type", "").lower() != "monster":
-                                                c["status"] = "Unconscious"
-                                                print(f"[CombatResolver] Character {c.get('name', 'Unknown')} fell unconscious")
-                                                # Initialize death saves
-                                                if "death_saves" not in c:
-                                                    c["death_saves"] = {"successes": 0, "failures": 0}
-                                                    
+                                                    new_hp = current_hp # Keep current HP if update is invalid
+
+                                            # Apply the new HP if it changed
+                                            if new_hp != current_hp:
+                                                c["hp"] = new_hp
+                                                hp_changed = True
+
                                         # Update status if specified
+                                        status_updated_by_llm = False
                                         if "status" in update:
                                             c["status"] = update["status"]
+                                            status_updated_by_llm = True
+                                            print(f"[CombatResolver] Updated {target_name}'s status to '{c['status']}' from LLM")
+
+                                        # If HP changed to 0 or below AND status wasn't explicitly set by LLM, apply default status
+                                        if hp_changed and c["hp"] <= 0 and not status_updated_by_llm:
+                                            if c.get("type", "").lower() == "monster":
+                                                c["status"] = "Dead" # Default for monsters
+                                                print(f"[CombatResolver] Monster {c.get('name', 'Unknown')} died (default status)")
+                                            else:
+                                                c["status"] = "Unconscious" # Default for PCs
+                                                print(f"[CombatResolver] Character {c.get('name', 'Unknown')} fell unconscious (default status)")
+                                                # Initialize death saves only if status is now Unconscious
+                                                if "death_saves" not in c:
+                                                    c["death_saves"] = {"successes": 0, "failures": 0}
+
+                                        # Initialize death saves if status IS Unconscious (regardless of how it was set)
+                                        if c.get("status", "").lower() == "unconscious" and c.get("type", "").lower() != "monster":
+                                            if "death_saves" not in c:
+                                                c["death_saves"] = {"successes": 0, "failures": 0}
+
                                         # Update limited-use abilities if specified
                                         if "limited_use" in update:
                                             if "limited_use" not in c:
                                                 c["limited_use"] = {}
                                             for ability, state in update["limited_use"].items():
                                                 c["limited_use"][ability] = state
-                                        # Update death saves if specified
+                                        # Update death saves if specified (allow LLM to override default init)
                                         if "death_saves" in update:
                                             if "death_saves" not in c:
                                                 c["death_saves"] = {"successes": 0, "failures": 0}
                                             c["death_saves"].update(update["death_saves"])
-                                            
-                                            # Check for death save completion
+
+                                            # Check for death save completion immediately after update
                                             if c["death_saves"].get("successes", 0) >= 3:
                                                 c["status"] = "Stable"
                                                 print(f"[CombatResolver] {c.get('name', 'Unknown')} stabilized")
