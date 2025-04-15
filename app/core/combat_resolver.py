@@ -11,14 +11,23 @@ import json
 import re
 import time
 
-class CombatResolver:
+# Import QObject and Signal for thread-safe communication
+from PySide6.QtCore import QObject, Signal
+
+# Inherit from QObject
+class CombatResolver(QObject):
     """
     Handles the logic for resolving combat using an LLM, with proper
     UI feedback and dice-rolling integration.
     """
+    # Define a signal to emit results thread-safely
+    # It will carry the result dictionary (or None) and error string (or None)
+    resolution_complete = Signal(object, object)
 
     def __init__(self, llm_service: LLMService):
         """Initialize the CombatResolver with the LLM service."""
+        # Call QObject initializer
+        super().__init__()
         self.llm_service = llm_service
 
     def resolve_combat_turn_by_turn(self, combat_state, dice_roller, callback, update_ui_callback=None):
@@ -28,9 +37,11 @@ class CombatResolver:
         Args:
             combat_state: Dictionary with current combat state (combatants, round, etc.)
             dice_roller: Function that rolls dice (takes expression, returns result)
-            callback: Function called with final result or error
+            callback: Function called with final result or error (DEPRECATED - Use resolution_complete signal)
             update_ui_callback: Function called after each turn to update UI (optional)
         """
+        # NOTE: The 'callback' argument is now effectively unused, relying on the signal instead.
+        # We keep it for now to avoid breaking the calling signature immediately, but it should be removed later.
         import copy
         import threading
         
@@ -61,7 +72,8 @@ class CombatResolver:
         # Pre-validate the combat state before starting the thread
         combatants = state_copy.get("combatants", [])
         if not combatants:
-            callback(None, "No combatants in the combat state.")
+            # Emit signal with error
+            self.resolution_complete.emit(None, "No combatants in the combat state.")
             return
             
         # Validate that we have at least one monster and one character
@@ -80,7 +92,8 @@ class CombatResolver:
                 characters.append(c)
         
         if not monsters:
-            callback(None, "No monsters in the combat. Add at least one monster from the monster panel.")
+            # Emit signal with error
+            self.resolution_complete.emit(None, "No monsters in the combat. Add at least one monster from the monster panel.")
             return
             
         print(f"[CombatResolver] Combat validation passed: {len(monsters)} monsters and {len(characters)} characters")
@@ -93,7 +106,8 @@ class CombatResolver:
                 # Ensure state is a dictionary, not a string or other type
                 if not isinstance(state, dict):
                     print(f"[CombatResolver] Error: state is not a dictionary in run_resolution, type: {type(state)}")
-                    callback(None, f"Invalid combat state: {type(state)}")
+                    # Emit signal with error
+                    self.resolution_complete.emit(None, f"Invalid combat state: {type(state)}")
                     return
                 
                 # Extract combat state - defensively get values with defaults
@@ -399,12 +413,14 @@ class CombatResolver:
                 if round_num > max_rounds:
                     summary["narrative"] += " (Stopped due to round limit; possible LLM error)"
                     
-                callback(summary, None)
+                # Emit signal with summary result and no error
+                self.resolution_complete.emit(summary, None)
                 
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                callback(None, f"Error in turn-by-turn resolution: {str(e)}")
+                # Emit signal with no result and the error message
+                self.resolution_complete.emit(None, f"Error in turn-by-turn resolution: {str(e)}")
         
         # Run in a background thread
         threading.Thread(target=run_resolution).start()
