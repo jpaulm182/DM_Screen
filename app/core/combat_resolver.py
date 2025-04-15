@@ -58,6 +58,37 @@ class CombatResolver:
         
         log = []  # Combat log for transparency
         
+        # Pre-validate the combat state before starting the thread
+        combatants = state_copy.get("combatants", [])
+        if not combatants:
+            callback(None, "No combatants in the combat state.")
+            return
+            
+        # Validate that we have at least one monster and one character
+        monsters = [c for c in combatants if c.get("type", "").lower() == "monster" and c.get("hp", 0) > 0]
+        characters = [c for c in combatants if c.get("type", "").lower() != "monster" and c.get("name", "") != "Add your party here!"]
+        
+        # Handle the special placeholder "Add your party here!" by converting it to a real character
+        for c in combatants:
+            if c.get("name", "") == "Add your party here!":
+                c["name"] = "Player Character"
+                c["type"] = "character"
+                c["hp"] = max(20, c.get("hp", 20))
+                c["max_hp"] = c.get("max_hp", c["hp"])
+                print("[CombatResolver] Converted placeholder to Player Character")
+                # Add to characters list
+                characters.append(c)
+        
+        if not monsters:
+            callback(None, "No monsters in the combat. Add at least one monster from the monster panel.")
+            return
+            
+        if not characters:
+            callback(None, "No player characters in the combat. Add at least one character.")
+            return
+            
+        print(f"[CombatResolver] Combat validation passed: {len(monsters)} monsters and {len(characters)} characters")
+        
         def run_resolution():
             try:
                 # Use state_copy from outer scope
@@ -92,9 +123,27 @@ class CombatResolver:
                 
                 max_rounds = 50  # Failsafe to prevent infinite loops
                 
-                # Main combat loop - continue until only one combatant remains or max rounds reached
-                while len([c for c in combatants if c.get("hp", 0) > 0]) > 1 and round_num <= max_rounds:
+                # Main combat loop - continue until only one type of combatant remains or max rounds reached
+                while round_num <= max_rounds:
                     print(f"[CombatResolver] Starting round {round_num}")
+                    
+                    # Check if combat should end
+                    remaining_monsters = [c for c in combatants if c.get("type", "").lower() == "monster" and c.get("hp", 0) > 0 and c.get("status", "").lower() != "dead"]
+                    remaining_characters = [c for c in combatants if c.get("type", "").lower() != "monster" and (c.get("hp", 0) > 0 or c.get("status", "").lower() == "unconscious" or c.get("status", "").lower() == "stable")]
+                    
+                    print(f"[CombatResolver] Combat state check: {len(remaining_monsters)} monsters and {len(remaining_characters)} characters remaining")
+                    
+                    # Add death saves check for characters
+                    characters_with_failed_saves = []
+                    for c in combatants:
+                        if c.get("type", "").lower() != "monster" and "death_saves" in c:
+                            if c["death_saves"].get("failures", 0) >= 3:
+                                characters_with_failed_saves.append(c)
+                    
+                    # End combat if all monsters are dead or all characters are dead/failed saves
+                    if not remaining_monsters or not remaining_characters:
+                        print(f"[CombatResolver] Combat ending: Monsters alive={len(remaining_monsters)}, Characters alive={len(remaining_characters)}")
+                        break
                     
                     # Process each combatant's turn in initiative order
                     for idx in active_combatants:
@@ -104,16 +153,54 @@ class CombatResolver:
                             
                         combatant = combatants[idx]
                         
-                        # Skip dead/unconscious combatants
-                        if combatant.get("hp", 0) <= 0:
+                        # Get the type and determine if it's a monster or character
+                        combatant_type = combatant.get("type", "").lower()
+                        is_monster = combatant_type == "monster"
+                        
+                        # Skip dead monsters completely (but not unconscious characters)
+                        if is_monster and (combatant.get("hp", 0) <= 0 or combatant.get("status", "").lower() == "dead"):
+                            print(f"[CombatResolver] Skipping dead monster: {combatant.get('name', 'Unknown')}")
                             continue
                             
+                        # Characters who are unconscious make death saves instead of normal actions
+                        if not is_monster and combatant.get("hp", 0) <= 0 and combatant.get("status", "").lower() in ["unconscious", ""]:
+                            self._process_death_save(combatant)
+                            
+                            # Create and add a log entry for the death save
+                            turn_log_entry = {
+                                "round": round_num,
+                                "turn": idx,
+                                "actor": combatant.get("name", "Unknown"),
+                                "action": "Makes a death saving throw",
+                                "dice": [{"expression": "1d20", "result": "See death saves", "purpose": "Death Save"}],
+                                "result": f"Current death saves: {combatant.get('death_saves', {}).get('successes', 0)} successes, {combatant.get('death_saves', {}).get('failures', 0)} failures"
+                            }
+                            log.append(turn_log_entry)
+                            
+                            # Update the UI for death saves
+                            if update_ui_callback:
+                                combat_display_state = {
+                                    "round": round_num,
+                                    "current_turn_index": idx,
+                                    "combatants": combatants,
+                                    "latest_action": turn_log_entry
+                                }
+                                update_ui_callback(combat_display_state)
+                                time.sleep(0.5)
+                                
+                            continue
+                            
+                        # Process normal turn for conscious combatants
                         turn_result = self._process_turn(combatants, idx, round_num, dice_roller)
                         
                         if not turn_result:
-                            # Error or timeout processing turn
-                            callback(None, f"Error processing turn for {combatant.get('name', 'Unknown')}")
-                            return
+                            # Error or timeout processing turn - create a basic result to continue
+                            print(f"[CombatResolver] Error processing turn for {combatant.get('name', 'Unknown')} - using fallback")
+                            turn_result = {
+                                "action": f"{combatant.get('name', 'Unknown')} takes no action due to confusion.",
+                                "narrative": f"{combatant.get('name', 'Unknown')} looks confused and takes no action this turn.",
+                                "updates": []
+                            }
                             
                         # Add turn to log
                         turn_log_entry = {
@@ -166,6 +253,19 @@ class CombatResolver:
                                                     c["hp"] = int(update["hp"])
                                                 except (ValueError, TypeError):
                                                     print(f"[CombatResolver] Invalid HP value: {update['hp']}")
+                                                    
+                                            # Check if monster reached 0 HP
+                                            if c["hp"] <= 0 and c.get("type", "").lower() == "monster":
+                                                c["status"] = "Dead"
+                                                print(f"[CombatResolver] Monster {c.get('name', 'Unknown')} died")
+                                            # Check if character reached 0 HP
+                                            elif c["hp"] <= 0 and c.get("type", "").lower() != "monster":
+                                                c["status"] = "Unconscious"
+                                                print(f"[CombatResolver] Character {c.get('name', 'Unknown')} fell unconscious")
+                                                # Initialize death saves
+                                                if "death_saves" not in c:
+                                                    c["death_saves"] = {"successes": 0, "failures": 0}
+                                                    
                                         # Update status if specified
                                         if "status" in update:
                                             c["status"] = update["status"]
@@ -175,6 +275,19 @@ class CombatResolver:
                                                 c["limited_use"] = {}
                                             for ability, state in update["limited_use"].items():
                                                 c["limited_use"][ability] = state
+                                        # Update death saves if specified
+                                        if "death_saves" in update:
+                                            if "death_saves" not in c:
+                                                c["death_saves"] = {"successes": 0, "failures": 0}
+                                            c["death_saves"].update(update["death_saves"])
+                                            
+                                            # Check for death save completion
+                                            if c["death_saves"].get("successes", 0) >= 3:
+                                                c["status"] = "Stable"
+                                                print(f"[CombatResolver] {c.get('name', 'Unknown')} stabilized")
+                                            elif c["death_saves"].get("failures", 0) >= 3:
+                                                c["status"] = "Dead"
+                                                print(f"[CombatResolver] {c.get('name', 'Unknown')} died from failed death saves")
                         
                         # Update the UI
                         if update_ui_callback:
@@ -189,10 +302,21 @@ class CombatResolver:
                             # Small delay to let UI update and for more natural combat flow
                             time.sleep(0.5)
                             
-                        # After each turn, check if combat is over (only one combatant left)
-                        remaining = [c for c in combatants if c.get("hp", 0) > 0]
-                        if len(remaining) <= 1:
+                        # After each turn, check if combat is over
+                        remaining_monsters = [c for c in combatants if c.get("type", "").lower() == "monster" and c.get("hp", 0) > 0 and c.get("status", "").lower() != "dead"]
+                        remaining_characters = [c for c in combatants if c.get("type", "").lower() != "monster" and (c.get("hp", 0) > 0 or c.get("status", "").lower() == "unconscious" or c.get("status", "").lower() == "stable")]
+                        
+                        if not remaining_monsters or not remaining_characters:
+                            print(f"[CombatResolver] Combat ending after turn: Monsters alive={len(remaining_monsters)}, Characters alive={len(remaining_characters)}")
                             break
+                    
+                    # If no more enemies of one type, end combat
+                    remaining_monsters = [c for c in combatants if c.get("type", "").lower() == "monster" and c.get("hp", 0) > 0 and c.get("status", "").lower() != "dead"]
+                    remaining_characters = [c for c in combatants if c.get("type", "").lower() != "monster" and (c.get("hp", 0) > 0 or c.get("status", "").lower() == "unconscious" or c.get("status", "").lower() == "stable")]
+                    
+                    if not remaining_monsters or not remaining_characters:
+                        print(f"[CombatResolver] Combat ending after round: Monsters alive={len(remaining_monsters)}, Characters alive={len(remaining_characters)}")
+                        break
                     
                     # End of round, increment counter
                     round_num += 1
@@ -213,11 +337,14 @@ class CombatResolver:
                     try:
                         active_combatants = [i for i in sorted(range(len(combatants)), 
                                             key=lambda i: -int(combatants[i].get("initiative", 0))) 
-                                            if combatants[i].get("hp", 0) > 0]
+                                            if combatants[i].get("hp", 0) > 0 or (
+                                                combatants[i].get("status", "").lower() in ["unconscious", "stable"] and 
+                                                combatants[i].get("type", "").lower() != "monster"
+                                            )]
                     except Exception as e:
                         print(f"[CombatResolver] Error updating active combatants: {e}")
                         active_combatants = [i for i in range(len(combatants)) if combatants[i].get("hp", 0) > 0]
-                
+
                 # Prepare final summary
                 survivors = [c for c in combatants if c.get("hp", 0) > 0]
                 summary = {
@@ -255,6 +382,17 @@ class CombatResolver:
         """
         active_combatant = combatants[active_idx]
         print(f"[CombatResolver] Processing turn for {active_combatant.get('name', 'Unknown')} (round {round_num})")
+        
+        # Skip if combatant is dead or has status "Dead"
+        if active_combatant.get("hp", 0) <= 0 and active_combatant.get("status", "").lower() == "dead":
+            print(f"[CombatResolver] Skipping turn for {active_combatant.get('name', 'Unknown')}: dead or 0 HP")
+            # Return a minimal result to avoid None return which would error
+            return {
+                "action": f"{active_combatant.get('name', 'Unknown')} is unconscious/dead and skips their turn.",
+                "narrative": f"{active_combatant.get('name', 'Unknown')} is unconscious/dead and skips their turn.",
+                "dice": [],
+                "updates": []
+            }
         
         # 1. Create a prompt for the LLM to decide the action
         prompt = self._create_decision_prompt(combatants, active_idx, round_num)
@@ -491,25 +629,34 @@ Resolve the outcome of the action based on the dice results. Follow standard D&D
 2. For attack rolls of 20, it's a critical hit (double damage dice)
 3. For attack rolls of 1, it's an automatic miss
 4. Apply damage to appropriate targets when attacks hit
-5. Update status effects as needed (unconscious at 0 HP, etc.)
+5. Update status effects as needed
 6. Track usage of limited-use abilities
+
+# HP AND CONDITION RULES
+- When a monster reaches 0 HP, it dies and is removed from combat
+- When a character (PC) reaches 0 HP, they become unconscious and must make death saves
+- Each failed death save brings a character closer to death
+- If a character has 3 failed death saves, they die
+- If a character has 3 successful death saves, they stabilize
 
 # RESPONSE FORMAT
 Respond with a JSON object containing these fields:
-- "narrative": An engaging, concise description of what happened and the outcome
+- "narrative": An engaging, descriptive account of what happened including current HP values
 - "updates": An array of combatant updates, each with:
   * "name": The combatant's name
   * "hp": The new HP value (if changed)
   * "status": New status (if changed)
-  * "limited_use": Updates to limited-use abilities (if any were used)
+  * "limited_use": Updates to limited-use abilities (if used)
+  * "death_saves": For unconscious characters, include status of death saves
 
 Example response:
 {
-  "narrative": "The Hobgoblin Captain's longsword slashes across the Fighter's armor, finding a gap and drawing blood (8 damage). The follow-up shield bash misses as the Fighter deftly steps aside.",
+  "narrative": "The Hobgoblin Captain's longsword slashes across the Fighter's armor, finding a gap and drawing blood (8 damage, reducing Fighter to 24/32 HP). The fighter grimaces but remains ready for battle. The follow-up shield bash misses as the Fighter deftly steps aside.",
   "updates": [
     {
       "name": "Fighter",
-      "hp": 24
+      "hp": 24,
+      "status": "Wounded"
     },
     {
       "name": "Hobgoblin Captain",
@@ -520,11 +667,54 @@ Example response:
   ]
 }
 
+IMPORTANT: Always include CURRENT HP values in your narrative to help players track the battle state.
 Your response MUST be valid JSON that can be parsed, with no extra text before or after.
 For this combat to be interesting, attacks should often hit and do damage. 
 A roll of 15 or higher almost always hits average AC targets (around 14-16).
 """
         return prompt
+
+    def _process_death_save(self, combatant):
+        """Process a death save for an unconscious character"""
+        import random
+        
+        # Set up death saves tracking if not present
+        if "death_saves" not in combatant:
+            combatant["death_saves"] = {
+                "successes": 0,
+                "failures": 0
+            }
+        
+        # Roll a d20 for the death save
+        roll = random.randint(1, 20)
+        
+        # Natural 20: regain 1 hit point
+        if roll == 20:
+            combatant["hp"] = 1
+            combatant["status"] = "Conscious"
+            print(f"[CombatResolver] {combatant['name']} rolled a natural 20 on death save and regains consciousness with 1 HP!")
+            return
+        
+        # Natural 1: two failures
+        if roll == 1:
+            combatant["death_saves"]["failures"] += 2
+            print(f"[CombatResolver] {combatant['name']} rolled a natural 1 on death save - two failures! Now at {combatant['death_saves']['failures']} failures.")
+        # 10 or higher: success
+        elif roll >= 10:
+            combatant["death_saves"]["successes"] += 1
+            print(f"[CombatResolver] {combatant['name']} succeeded on death save with {roll}! Now at {combatant['death_saves']['successes']} successes.")
+        # Below 10: failure
+        else:
+            combatant["death_saves"]["failures"] += 1
+            print(f"[CombatResolver] {combatant['name']} failed death save with {roll}! Now at {combatant['death_saves']['failures']} failures.")
+        
+        # Check results
+        if combatant["death_saves"]["successes"] >= 3:
+            combatant["status"] = "Stable"
+            print(f"[CombatResolver] {combatant['name']} is now stable after 3 successful death saves!")
+        elif combatant["death_saves"]["failures"] >= 3:
+            combatant["status"] = "Dead"
+            print(f"[CombatResolver] {combatant['name']} has died after 3 failed death saves!")
 
     # Keep legacy methods for backwards compatibility
     def resolve_combat_async(self, combat_state, callback):

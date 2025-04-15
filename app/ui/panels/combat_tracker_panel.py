@@ -2322,6 +2322,44 @@ class CombatTrackerPanel(BasePanel):
             QMessageBox.warning(self, "Error", "Combat Resolver service not available.")
             return
 
+        # Check if we have at least one player character and one monster
+        has_player = False
+        has_monster = False
+        
+        for row in range(self.initiative_table.rowCount()):
+            type_item = self.initiative_table.item(row, 7)  # Type column
+            if type_item:
+                combatant_type = type_item.text().lower()
+                if combatant_type == "monster":
+                    has_monster = True
+                elif combatant_type in ["character", "pc"]:
+                    has_player = True
+        
+        if not has_monster and not has_player:
+            QMessageBox.warning(
+                self, 
+                "Cannot Start Combat", 
+                "You need at least one monster and one player character to run combat.\n\n"
+                "Add monsters from the Monster Panel and add player characters using the form below."
+            )
+            return
+        elif not has_monster:
+            QMessageBox.warning(
+                self, 
+                "Cannot Start Combat", 
+                "You need at least one monster to run combat.\n\n"
+                "Add monsters from the Monster Panel."
+            )
+            return
+        elif not has_player:
+            QMessageBox.warning(
+                self, 
+                "Cannot Start Combat", 
+                "You need at least one player character to run combat.\n\n"
+                "Add a character using the form below, or import from the Player Characters panel."
+            )
+            return
+
         # Confirm the user wants to proceed
         confirm = QMessageBox.question(
             self,
@@ -2391,6 +2429,9 @@ class CombatTrackerPanel(BasePanel):
         # Show the live combat log
         self.combat_log_widget.show()
         
+        # Add initial state to the combat log
+        self._add_initial_combat_state_to_log(combat_state)
+        
         # Define the UI update callback
         def update_ui(turn_state):
             """Update UI after each turn."""
@@ -2440,15 +2481,18 @@ class CombatTrackerPanel(BasePanel):
                             result=result
                         )
                     
-                    # Update the live combat log
+                    # Update the live combat log with high contrast colors
                     if self.combat_log_widget:
                         # Add the turn info to the combat log
-                        turn_text = f"<b>Round {round_num} - {actor}'s Turn:</b><br>{action}<br>"
+                        turn_text = f"<div style='margin-bottom:10px;'>"
+                        turn_text += f"<h4 style='color:#000088; margin:0;'>Round {round_num} - {actor}'s Turn:</h4>"
+                        turn_text += f"<p style='color:#000000; margin-top:5px;'>{action}</p>"
                         if result:
-                            turn_text += f"<b>Result:</b> {result}<br>"
+                            turn_text += f"<p style='color:#000000; margin-top:5px;'><strong>Result:</strong> {result}</p>"
                         if dice_summary:
-                            turn_text += f"<b>Dice:</b><br>{dice_summary.replace('\n', '<br>')}<br>"
-                        turn_text += "<hr>"
+                            dice_html = dice_summary.replace('\n', '<br>')
+                            turn_text += f"<p style='color:#000000; margin-top:5px;'><strong>Dice:</strong><br>{dice_html}</p>"
+                        turn_text += f"<hr style='border:1px solid #cccccc; margin:10px 0;'></div>"
                         
                         # Append to the live combat log
                         self.combat_log_widget.log_text.append(turn_text)
@@ -2478,6 +2522,45 @@ class CombatTrackerPanel(BasePanel):
             self._handle_resolution_result,
             update_ui
         )
+        
+    def _add_initial_combat_state_to_log(self, combat_state):
+        """Add initial combat state to the log at the start of combat"""
+        if not self.combat_log_widget:
+            return
+            
+        # Get combatants and build a summary
+        combatants = combat_state.get("combatants", [])
+        if not combatants:
+            return
+            
+        # Create summary HTML with better contrast colors
+        html = "<h3 style='color: #000088;'>Initial Combat State</h3>"
+        html += "<p style='color: #000000;'>Combatants in initiative order:</p>"
+        html += "<ul style='color: #000000;'>"
+        
+        # Sort by initiative
+        sorted_combatants = sorted(combatants, key=lambda c: -c.get("initiative", 0))
+        
+        for c in sorted_combatants:
+            name = c.get("name", "Unknown")
+            hp = c.get("hp", 0)
+            max_hp = c.get("max_hp", hp)
+            ac = c.get("ac", 10)
+            initiative = c.get("initiative", 0)
+            combatant_type = c.get("type", "unknown")
+            
+            # Different display for monsters vs characters with better styling
+            if combatant_type.lower() == "monster":
+                html += f"<li><strong style='color: #880000;'>{name}</strong> (Monster) - Initiative: {initiative}, AC: {ac}, HP: {hp}/{max_hp}</li>"
+            else:
+                html += f"<li><strong style='color: #000088;'>{name}</strong> (PC) - Initiative: {initiative}, AC: {ac}, HP: {hp}/{max_hp}</li>"
+                
+        html += "</ul>"
+        html += "<p style='color: #000000;'><strong>Combat begins now!</strong></p>"
+        html += "<hr style='border: 1px solid #000088;'>"
+        
+        # Add to the log
+        self.combat_log_widget.log_text.append(html)
     
     def _create_live_combat_log(self):
         """Create a live combat log widget that displays during combat resolution"""
@@ -2489,27 +2572,29 @@ class CombatTrackerPanel(BasePanel):
         self.combat_log_widget.setWindowFlags(
             self.combat_log_widget.windowFlags() | Qt.Tool | Qt.WindowStaysOnTopHint
         )
-        self.combat_log_widget.setMinimumSize(400, 400)
+        self.combat_log_widget.setMinimumSize(500, 500)
         
         # Create layout
         layout = QVBoxLayout(self.combat_log_widget)
         
-        # Add text display for combat log
+        # Add text display for combat log with improved contrast
         self.combat_log_widget.log_text = QTextEdit()
         self.combat_log_widget.log_text.setReadOnly(True)
         self.combat_log_widget.log_text.setStyleSheet("""
             QTextEdit { 
-                background-color: #f5f5f5;
+                background-color: white;
+                color: #000000;
                 font-family: Arial, sans-serif;
-                font-size: 12px;
+                font-size: 14px;
+                font-weight: 500;
             }
         """)
         layout.addWidget(self.combat_log_widget.log_text)
         
         # Add header text
-        header_text = "<h2>Combat In Progress</h2>"
-        header_text += "<p>Watch as the battle unfolds turn by turn!</p>"
-        header_text += "<hr>"
+        header_text = "<h2 style='color: #000088;'>Combat In Progress</h2>"
+        header_text += "<p style='color: #000000;'><strong>Watch as the battle unfolds turn by turn! Combat details will appear here and in popups.</strong></p>"
+        header_text += "<hr style='border: 1px solid #000088;'>"
         self.combat_log_widget.log_text.setHtml(header_text)
         
         # Add a close button that just hides the dialog (combat continues)
@@ -2525,11 +2610,23 @@ class CombatTrackerPanel(BasePanel):
         Show turn result from the main thread (safe way to show dialogs).
         This is connected to the show_turn_result_signal.
         """
-        message = f"Action: {action}"
+        # Ensure we have content to display
+        if not action and not result:
+            print("[CombatTracker] Warning: Empty turn result, not showing dialog")
+            return
+            
+        # Build message with available information
+        message = ""
+        if action:
+            message += f"Action: {action}\n\n"
         if result:
-            message += f"\n\nResult: {result}"
+            message += f"Result: {result}\n\n"
         if dice_summary:
-            message += f"\n\nDice Rolls:\n{dice_summary}"
+            message += f"Dice Rolls:\n{dice_summary}"
+            
+        # Ensure the message is not empty
+        if not message.strip():
+            message = "No action taken this turn."
             
         # Use a non-modal dialog so it doesn't block the UI updates
         from PySide6.QtWidgets import QMessageBox
@@ -2606,6 +2703,16 @@ class CombatTrackerPanel(BasePanel):
                         if old_status != new_status:
                             status_item.setText(new_status)
                             print(f"[CombatTracker] Updated {name} status from '{old_status}' to '{new_status}'")
+                            
+                            # If status is Dead, mark for removal later (don't remove yet to avoid index issues)
+                            if new_status.lower() == "dead":
+                                # Log death
+                                self._log_combat_action(
+                                    "Status", 
+                                    name, 
+                                    "has died", 
+                                    result="Removed from combat"
+                                )
                 
                 # Update concentration if present
                 if "concentration" in combatant:
@@ -2614,6 +2721,35 @@ class CombatTrackerPanel(BasePanel):
                         new_state = Qt.Checked if combatant["concentration"] else Qt.Unchecked
                         if conc_item.checkState() != new_state:
                             conc_item.setCheckState(new_state)
+                
+                # Handle death saves if present
+                if "death_saves" in combatant:
+                    # Store for later tracking
+                    self.death_saves[found_row] = combatant["death_saves"]
+                    
+                    # Display in status (if not already shown)
+                    status_item = self.initiative_table.item(found_row, 5)
+                    if status_item:
+                        current_status = status_item.text()
+                        successes = combatant["death_saves"].get("successes", 0)
+                        failures = combatant["death_saves"].get("failures", 0)
+                        
+                        # If status doesn't already mention death saves, add them
+                        if "death save" not in current_status.lower():
+                            death_saves_text = f"Death Saves: {successes}S/{failures}F"
+                            if current_status:
+                                new_status = f"{current_status}, {death_saves_text}"
+                            else:
+                                new_status = death_saves_text
+                            status_item.setText(new_status)
+                            
+                        # Log death save progress
+                        self._log_combat_action(
+                            "Death Save", 
+                            name, 
+                            "death saves", 
+                            result=f"{successes} successes, {failures} failures"
+                        )
         
         # Ensure the table is updated visually
         self.initiative_table.viewport().update()
@@ -2714,9 +2850,19 @@ class CombatTrackerPanel(BasePanel):
             self.combat_log_widget.hide()
         
         if error:
-            QMessageBox.critical(self, "Fast Resolve Error", f"Error resolving combat: {error}")
+            error_msg = error
+            
+            # Make error messages more user-friendly
+            if "No player characters" in error:
+                error_msg = "No player characters in the combat. Add at least one character."
+            elif "No monsters" in error:
+                error_msg = "No monsters in the combat. Add monsters from the Monster Panel."
+            
+            # Show the error message
+            QMessageBox.critical(self, "Fast Resolve Error", f"Error resolving combat: {error_msg}")
             return
-        
+            
+        # Rest of the method (handling successful resolution) remains the same
         if result:
             # Log resolution result
             narrative = result.get("narrative", "No narrative provided.")
@@ -2738,15 +2884,43 @@ class CombatTrackerPanel(BasePanel):
             # Get stats about the combat
             round_count = result.get("rounds", 0)
             turn_count = len(action_log) if action_log else 0
-            survivors = [c.get("name", "Unknown") for c in updates if c.get("hp", 0) > 0]
+            
+            # Instead of just listing survivors by name, include their HP and status
+            survivors_details = []
+            for c in updates:
+                if c.get("hp", 0) > 0 or c.get("status", "").lower() in ["stable", "unconscious"]:
+                    status_text = f" ({c.get('status', 'OK')})" if c.get("status") else ""
+                    death_saves_text = ""
+                    
+                    # Include death saves info if present
+                    if "death_saves" in c:
+                        successes = c["death_saves"].get("successes", 0)
+                        failures = c["death_saves"].get("failures", 0)
+                        death_saves_text = f" [Death Saves: {successes}S/{failures}F]"
+                        
+                    survivors_details.append(f"{c.get('name', 'Unknown')}: {c.get('hp', 0)} HP{status_text}{death_saves_text}")
             
             # Build user-facing summary
             summary_text = f"Combat Resolved:\n\n{narrative}\n\n"
             summary_text += f"Duration: {round_count} rounds, {turn_count} turns\n\n"
-            summary_text += f"Survivors: {', '.join(survivors)}\n\n"
+            
+            # Include survivors with details
+            if survivors_details:
+                summary_text += "Survivors:\n"
+                for survivor in survivors_details:
+                    summary_text += f"- {survivor}\n"
+            else:
+                summary_text += "No survivors!\n"
+                
+            # Add in casualties list (combatants with status Dead)
+            casualties = [c.get('name', 'Unknown') for c in updates if c.get('status', '').lower() == 'dead']
+            if casualties:
+                summary_text += "\nCasualties:\n"
+                for casualty in casualties:
+                    summary_text += f"- {casualty}\n"
             
             if update_summary:
-                summary_text += "Final Updates:\n" + "\n".join(update_summary)
+                summary_text += "\nFinal Updates:\n" + "\n".join(update_summary)
                 
             if num_removed > 0:
                 summary_text += f"\nRemoved {num_removed} fallen combatants."
