@@ -34,11 +34,11 @@ LLM Integration
         * ✅ Custom magic item creation with balanced mechanics
         * ✅ Interactive tavern and shop scenes with dynamic NPCs
         * ✅ Session prep assistance with encounter and location planning
-        * ✅ Fast combat resolution with detailed narrative results
+        * ⚠️ Fast combat resolution with detailed narrative results (needs refactoring)
     - 🔄 Context-aware generation utilizing:
         * ✅ Campaign history and notes
         * ✅ Player character data and backgrounds
-        * ⚠️ Previous session outcomes
+        * ✅ Previous session outcomes
         * ✅ World information and lore
         * ✅ Party composition and capabilities
         * ✅ Balanced rewards based on party level
@@ -94,7 +94,7 @@ Core Features
         * ✅ Narrative context and tactical suggestions
     - 🔄 Game Element Creation:
         * ✅ Custom monsters with balanced abilities
-        * 🔄 Plot hooks tied to campaign themes
+        * ✅ Plot hooks tied to campaign themes
         * ✅ Shop inventories with unique items
         * ✅ Interactive NPCs with consistent personalities
 
@@ -107,27 +107,27 @@ Core Features
     - ✅ Session timer with break reminders
     - 🔄 LLM-assisted features:
         * ✅ Session note summarization
-        * 🔄 Session recaps for players
+        * ✅ Session recaps for players
         * ✅ Character insights based on background
-        * 🔄 Character-specific plot elements
+        * ✅ Character-specific plot elements
 
 5. Advanced Features
     - ✅ Dice roller with custom formulas
     - ✅ Weather system with effects on gameplay
     - ✅ LLM-powered advanced functions:
         * ✅ Fast combat resolution with narrative results
-        * 🔄 Custom tables generated from text prompts
-        * 🔄 Combat narration based on actions and results
+        * ✅ Custom tables generated from text prompts
+        * ✅ Combat narration based on actions and results
 
 6. Data Management
     - ✅ Local storage for custom content
     - ✅ Enhanced data structure for LLM content storage
     - ✅ Campaign-specific LLM content organization
-    - ⚠️ Fallback options when offline for LLM-dependent features
+    - ✅ Fallback options when offline for LLM-dependent features
     - ✅ Optimized campaign context processing for LLM responses
-    - 🔜 Optional cloud sync
+    - 🔄 Optional cloud sync
     - ✅ Regular auto-save
-    - 🔜 Data export in common formats
+    - 🔄 Data export in common formats
 
 Technical Framework
 
@@ -139,7 +139,7 @@ Technical Framework
     - ✅ Template system for consistent outputs
     - ✅ Feedback and refinement mechanism
     - ✅ Caching system to minimize API costs
-    - 🔄 Fallback functionality for offline operation
+    - ✅ Fallback functionality for offline operation
 
 2. Content Generation System:
     - ✅ Stateful prompting preserving context between generations
@@ -174,18 +174,24 @@ Next Implementation Steps:
 6. ✅ Develop initial NPC generator using LLM
 7. ✅ Create rules clarification module using LLM
 8. ✅ Implement monster stat block extraction and formatting
-9. 🔄 Add font size adjustment for accessibility
+9. ✅ Add font size adjustment for accessibility
 10. ✅ Enhance Monster panel with custom monster creation
 11. ✅ Develop Location Generator panel for dynamic location creation
-12. ✅ Implement combat narration and fast resolution system
+12. ⚠️ Implement combat narration and fast resolution system (needs refactoring)
 13. ✅ Create treasure generator with balanced rewards
 14. ✅ Build encounter generator with party composition awareness
-15. 🔜 Implement session recap generation for players
-16. 🔜 Add character-specific plot element generation
-17. 🔜 Create custom table generator from text prompts
-18. 🔜 Implement data export in common formats
-19. 🔜 Add optional cloud sync functionality
-20. 🔜 Develop fallback options for offline LLM-dependent features
+15. ✅ Implement session recap generation for players
+16. ✅ Add character-specific plot element generation
+17. ✅ Create custom table generator from text prompts
+18. 🔄 Implement data export in common formats
+19. 🔄 Add optional cloud sync functionality
+20. ✅ Develop fallback options for offline LLM-dependent features
+21. 🔄 Refactor combat resolution system:
+    * 🔄 Create dice roller API interface for LLM
+    * 🔄 Implement turn-by-turn processing
+    * 🔄 Develop state management for combat entities
+    * 🔄 Build resource and effect tracking
+    * 🔄 Integrate with combat tracker UI
 
 Player Character Quick Reference Specification:
 - ✅ Store basic character information (name, race, class, level)
@@ -199,21 +205,41 @@ Player Character Quick Reference Specification:
 - ✅ LLM-generated character insights and plot elements
 
 Fast Combat Resolution System (LLM-powered):
--  Single-click resolution of entire combat encounters
--  Round-by-round narrative breakdown with key moments
--  Tactical decision-making based on character/monster capabilities
--  Resource and status effect tracking
--  Detailed aftermath summary
--  Options to customize resolution detail level
--  Manual override for key decision points
--  Turn-based combat tracker integration
--  Dice roller integration for attack rolls and damage
--  Combat action logging system
--  Action history with timestamps
--  Manual HP adjustment logging (damage and healing)
--  Status effect application tracking
--  Initiative order changes tracking
--  Visual combat timeline
+- ⚠️ Single-click resolution of entire combat encounters (needs refactoring)
+- 🔄 Round-by-round narrative breakdown with key moments
+- ⚠️ Tactical decision-making based on character/monster capabilities (needs improvement)
+- 🔄 Resource and status effect tracking
+- ✅ Detailed aftermath summary
+- ✅ Options to customize resolution detail level
+- 🔄 Manual override for key decision points
+- 🔄 Turn-based combat tracker integration (needs proper dice roller integration)
+- 🔄 Dice roller integration for attack rolls and damage (needs refactoring)
+- ✅ Combat action logging system
+- ✅ Action history with timestamps
+- ✅ Manual HP adjustment logging (damage and healing)
+- ✅ Status effect application tracking
+- ✅ Initiative order changes tracking
+- ✅ Visual combat timeline
+
+## REFACTOR NEEDED: Fast Combat Resolution System
+The current fast combat resolution system needs a comprehensive refactor to address the following issues:
+- ⚠️ Turn-by-turn stat accuracy needs improvement
+- ⚠️ Integration with dice roller for proper randomness
+- ⚠️ Proper application of character abilities and traits
+- ⚠️ Accurate enemy AI decision-making
+- ⚠️ Handling of complex combat interactions
+- ⚠️ Resource management and tracking
+
+The refactored system should:
+- 🔜 Use the dice roller API for all randomized outcomes
+- 🔜 Maintain statistical accuracy on all rolls and checks
+- 🔜 Process each turn independently with proper state management
+- 🔜 Allow LLM to request specific dice rolls via dedicated interface
+- 🔜 Support saving throws, ability checks, and conditional modifiers
+- 🔜 Track resources, spell slots, and limited-use abilities
+- 🔜 Support interrupts like reactions and opportunity attacks
+- 🔜 Properly calculate and apply damage with resistance/vulnerability
+- 🔜 Integrate with existing combat tracker data structure
 
 Location Generator Panel:
 - ✅ Generate detailed locations with descriptions, NPCs, and points of interest
@@ -237,13 +263,22 @@ Development Priorities
     2. ✅ Persistent storage for generated content 
     3. ✅ Basic content generation modules (NPCs, rules clarification)
     4. ✅ Monster stat block extraction and formatting
-    5. ✅ Fast combat resolution system
+    5. ⚠️ Fast combat resolution system (needs refactoring)
     6. ✅ Location generator panel
     7. ✅ Treasure generator panel
     8. ✅ Core reference functionality enhancements
-    9. 🔄 Campaign management tools expansion
-    10. 🔄 Advanced LLM generation features
-    11. 🔄 Accessibility improvements
+    9. ✅ Campaign management tools expansion
+    10. ✅ Advanced LLM generation features
+    11. ✅ Accessibility improvements
+    12. 🔄 Cloud synchronization features
+    13. 🔄 Data export/import capabilities
+    14. 🔜 Virtual tabletop system integration
+    15. 🔜 Image generation integration
+    16. 🔄 Combat resolution system refactor:
+        * 🔄 Turn-by-turn statistical accuracy
+        * 🔄 Proper dice roller integration
+        * 🔄 Combat state management
+        * 🔄 Resource tracking and management
 
 Success Metrics
     - ✅ Reduced lookup time vs. physical DM screen
@@ -252,7 +287,8 @@ Success Metrics
     - ✅ Regular user engagement
     - ✅ Quality and usability of LLM-generated content
     - ✅ Time saved using AI-assisted content generation
-    - ✅ Reduction in combat resolution time while maintaining narrative quality
+    - ⚠️ Reduction in combat resolution time while maintaining narrative quality and statistical accuracy
+    - 🔄 Accurate application of game rules in automated systems
 
 Future Considerations
     - 🔜 Voice-to-text for hands-free LLM prompting
@@ -264,11 +300,21 @@ Future Considerations
     - 🔜 Content sharing system for LLM-generated material
 
 Accessibility Requirements
-    - 🔄 Screen reader compatibility
+    - ✅ Screen reader compatibility
     - ✅ Keyboard navigation
     - ✅ Color blind friendly design
-    - 🔄 Font size/contrast adjustments
-    - 🔜 Multi-language support
-    - 🔜 Voice-controlled LLM prompting for accessibility
+    - ✅ Font size/contrast adjustments
+    - 🔄 Multi-language support
+    - 🔄 Voice-controlled LLM prompting for accessibility
+
+## NEW SECTION: Performance Optimization
+    - ✅ Response caching for frequently used LLM prompts
+    - ✅ Efficient token usage in LLM prompts
+    - ✅ Local database query optimization
+    - ✅ UI rendering performance improvements
+    - 🔄 Memory usage optimization for long sessions
+    - 🔄 Startup time reduction
+    - 🔜 Background processing for non-critical LLM tasks
+    - 🔜 Batch processing for related content generation
 
 This specification will be regularly updated based on user feedback and emerging needs in the D&D community.
