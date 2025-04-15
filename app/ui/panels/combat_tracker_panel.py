@@ -2837,7 +2837,25 @@ class CombatTrackerPanel(BasePanel):
         """Handle the result from the combat resolver (runs in background thread!)."""
         # *** CRITICAL: DO NOT update UI directly here! ***
         # Emit signal to pass data safely to the main GUI thread.
-        self.resolution_complete.emit(result, error)
+        # Use QMetaObject.invokeMethod to ensure the signal emission happens
+        # from the main thread, which is safer for complex scenarios.
+        print("[CombatTracker] _handle_resolution_result: Queuing final UI update.")
+        QMetaObject.invokeMethod(
+            self, 
+            "_process_and_sort_final_resolution", 
+            Qt.QueuedConnection,
+            Q_ARG(dict, result if result else {}), # Pass empty dict if None
+            Q_ARG(str, error if error else "")     # Pass empty string if None
+        )
+
+    @Slot(dict, str) # Slot to receive the final result on the main thread
+    def _process_and_sort_final_resolution(self, result, error):
+        """Process the final combat result AND sort the table afterwards."""
+        print("[CombatTracker] _process_and_sort_final_resolution: Starting final UI update.")
+        self._process_resolution_ui(result, error)
+        print("[CombatTracker] _process_and_sort_final_resolution: UI processed, now sorting.")
+        self._sort_initiative()
+        print("[CombatTracker] _process_and_sort_final_resolution: Sorting complete.")
 
     def _process_resolution_ui(self, result, error):
         """Process the combat resolution result in the main GUI thread and show user-facing output."""
