@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QLabel, QCheckBox, QMenu, QMessageBox, QDialog, QDialogButtonBox,
     QGroupBox, QWidget, QStyledItemDelegate, QStyle, QToolButton,
     QTabWidget, QScrollArea, QFormLayout, QFrame, QSplitter, QApplication,
-    QSizePolicy
+    QSizePolicy, QTextEdit
 )
 from PySide6.QtCore import Qt, QTimer, Signal, Slot, QSize
 from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QBrush, QPalette
@@ -1846,10 +1846,7 @@ class CombatTrackerPanel(BasePanel):
                 elif not status and self.combatants[row]['conditions']:
                     self.combatants[row]['conditions'] = []
             elif hasattr(self.combatants[row], 'conditions'):
-                if status and status not in self.combatants[row].conditions:
-                    self.combatants[row].conditions.append(status)
-                elif not status and self.combatants[row].conditions:
-                    self.combatants[row].conditions = []
+                pass
     
     def _next_turn(self):
         """Move to the next combatant's turn"""
@@ -2303,7 +2300,7 @@ class CombatTrackerPanel(BasePanel):
             self._sort_initiative()
     
     def _fast_resolve_combat(self):
-        """Use LLM to resolve the current combat encounter."""
+        """Use LLM to resolve the current combat encounter (turn-by-turn, rule-correct)."""
         # Log fast resolve request
         self._log_combat_action(
             "Other", 
@@ -2321,14 +2318,29 @@ class CombatTrackerPanel(BasePanel):
         if not combat_state or not combat_state.get("combatants"):
             QMessageBox.information(self, "Fast Resolve", "No combatants in the tracker to resolve.")
             return
-            
+        
         # Disable button while processing
         self.fast_resolve_button.setEnabled(False)
         self.fast_resolve_button.setText("Resolving...")
 
-        # Call the resolver asynchronously
-        self.app_state.combat_resolver.resolve_combat_async(
+        # --- Dice roller function ---
+        def dice_roller(expr):
+            """Parse and roll a dice expression like '1d20+5'. Returns the integer result."""
+            import re, random
+            match = re.match(r"(\d*)d(\d+)([+-]\d+)?", expr.replace(' ', ''))
+            if not match:
+                return 0
+            num, die, mod = match.groups()
+            num = int(num) if num else 1
+            die = int(die)
+            mod = int(mod) if mod else 0
+            total = sum(random.randint(1, die) for _ in range(num)) + mod
+            return total
+
+        # Call the new turn-by-turn resolver
+        self.app_state.combat_resolver.resolve_combat_turn_by_turn_async(
             combat_state,
+            dice_roller,
             self._handle_resolution_result
         )
     
@@ -2361,7 +2373,7 @@ class CombatTrackerPanel(BasePanel):
         self.resolution_complete.emit(result, error)
 
     def _process_resolution_ui(self, result, error):
-        """Process the combat resolution result in the main GUI thread."""
+        """Process the combat resolution result in the main GUI thread and show user-facing output."""
         # Re-enable button
         self.fast_resolve_button.setEnabled(True)
         self.fast_resolve_button.setText("Fast Resolve")
@@ -2369,11 +2381,12 @@ class CombatTrackerPanel(BasePanel):
         if error:
             QMessageBox.critical(self, "Fast Resolve Error", f"Error resolving combat: {error}")
             return
-            
+        
         if result:
             # Log resolution result
             narrative = result.get("narrative", "No narrative provided.")
             updates = result.get("updates", [])
+            action_log = result.get("log", [])
             
             self._log_combat_action(
                 "Other", 
@@ -2381,11 +2394,9 @@ class CombatTrackerPanel(BasePanel):
                 "resolved combat with AI", 
                 result=f"Applied {len(updates)} updates"
             )
-            
-            # Then log each update
+            # Log each update (internally)
             for update in updates:
                 name = update.get("name", "Unknown")
-                
                 if "hp" in update:
                     self._log_combat_action(
                         "Damage" if update["hp"] < 0 else "Healing", 
@@ -2394,7 +2405,6 @@ class CombatTrackerPanel(BasePanel):
                         name, 
                         f"New HP: {update['hp']}"
                     )
-                
                 if "status" in update:
                     self._log_combat_action(
                         "Status Effect", 
@@ -2403,17 +2413,47 @@ class CombatTrackerPanel(BasePanel):
                         name, 
                         update["status"]
                     )
-            
-            # Apply updates first
+            # Apply updates to the table
             num_removed, update_summary = self._apply_combat_updates(updates)
             
-            # Display results in a more informative message box
+            # --- NEW: Write turn-by-turn log entries to the combat log panel ---
+            combat_log = self._get_combat_log()
+            if combat_log and action_log:
+                for entry in action_log:
+                    # Each entry is expected to be a dict with keys: turn, actor, action, dice, result
+                    # We'll use 'Other' as the category for now, but this could be improved
+                    category = "Other"
+                    actor = entry.get("actor", "Unknown")
+                    action = entry.get("action", "")
+                    result_str = entry.get("result", "")
+                    # Optionally include dice results in the result string
+                    dice_results = entry.get("dice", [])
+                    if dice_results:
+                        dice_strs = [f"{d['expr']}: {d['result']}" for d in dice_results]
+                        result_str = f"{result_str} (Dice: {', '.join(dice_strs)})" if result_str else f"Dice: {', '.join(dice_strs)}"
+                    # Add the log entry
+                    combat_log.add_log_entry(
+                        category,
+                        actor,
+                        action,
+                        None,  # No target info in this log format
+                        result_str,
+                        entry.get("round"),
+                        entry.get("turn")
+                    )
+            # --- END NEW ---
+            
+            # Build user-facing summary
             summary_text = f"Combat Resolved:\n\n{narrative}\n\nApplied {len(updates)} updates:"
             if update_summary:
                 summary_text += "\n" + "\n".join(update_summary)
             if num_removed > 0:
                 summary_text += f"\nRemoved {num_removed} combatants."
-                
+            # If there is a turn-by-turn log, add a summary
+            if action_log:
+                summary_text += f"\n\nTurn-by-turn log written to Combat Log panel."
+            
+            # Show results in a message box
             QMessageBox.information(
                 self,
                 "Fast Resolve Result",
