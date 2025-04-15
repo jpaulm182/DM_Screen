@@ -2313,6 +2313,17 @@ class CombatTrackerPanel(BasePanel):
             QMessageBox.warning(self, "Error", "Combat Resolver service not available.")
             return
 
+        # Confirm the user wants to proceed
+        confirm = QMessageBox.question(
+            self,
+            "Start Turn-by-Turn Combat",
+            "This will run combat turn-by-turn with the AI controlling all combatants.\n\nYou'll see the combat unfold in real time. Continue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes
+        )
+        if confirm != QMessageBox.Yes:
+            return
+
         # Gather current combat state
         combat_state = self._gather_combat_state()
         if not combat_state or not combat_state.get("combatants"):
@@ -2335,14 +2346,149 @@ class CombatTrackerPanel(BasePanel):
             die = int(die)
             mod = int(mod) if mod else 0
             total = sum(random.randint(1, die) for _ in range(num)) + mod
+            
+            # Log the roll to the combat log
+            self._log_combat_action(
+                "Dice", 
+                "AI", 
+                f"rolled {expr}", 
+                result=f"Result: {total}"
+            )
+            
             return total
 
-        # Call the new turn-by-turn resolver
-        self.app_state.combat_resolver.resolve_combat_turn_by_turn_async(
+        # Use the new turn-by-turn resolver
+        self._fast_resolve_turn_by_turn(combat_state, dice_roller)
+
+    def _fast_resolve_turn_by_turn(self, combat_state, dice_roller):
+        """
+        Run combat resolution turn-by-turn with UI updates after each turn.
+        
+        Args:
+            combat_state: Current combat state dictionary
+            dice_roller: Function to roll dice expressions
+        """
+        # Define the UI update callback
+        def update_ui(turn_state):
+            """Update UI after each turn."""
+            # Extract state
+            round_num = turn_state.get("round", 1)
+            current_idx = turn_state.get("current_turn_index", 0)
+            combatants = turn_state.get("combatants", [])
+            latest_action = turn_state.get("latest_action", {})
+            
+            # Update round counter
+            self.round_spin.setValue(round_num)
+            
+            # Update current turn highlight
+            self.current_turn = current_idx
+            self._update_highlight()
+            
+            # Apply combatant updates to the table
+            if combatants:
+                self._update_combatants_in_table(combatants)
+            
+            # Log the action to combat log
+            if latest_action:
+                actor = latest_action.get("actor", "Unknown")
+                action = latest_action.get("action", "")
+                result = latest_action.get("result", "")
+                dice = latest_action.get("dice", [])
+                
+                # Create a descriptive result string
+                result_str = result
+                if dice:
+                    dice_strs = [f"{d.get('purpose', 'Roll')}: {d.get('expression', '')} = {d.get('result', '')}" 
+                                 for d in dice]
+                    dice_summary = "\n".join(dice_strs)
+                    self._log_combat_action(
+                        "Turn", 
+                        actor, 
+                        action, 
+                        result=f"{result}\n\nDice Rolls:\n{dice_summary}"
+                    )
+                else:
+                    self._log_combat_action(
+                        "Turn", 
+                        actor, 
+                        action, 
+                        result=result
+                    )
+                
+                # Show a popup with the turn result
+                QMessageBox.information(
+                    self,
+                    f"Turn: {actor} (Round {round_num})",
+                    f"Action: {action}\n\nResult: {result}\n\n" + 
+                    (f"Dice Rolls:\n{dice_summary}" if dice else "")
+                )
+            
+            # Process any UI events to ensure the table updates
+            from PySide6.QtWidgets import QApplication
+            QApplication.processEvents()
+
+        # Call the resolver with our UI update callback
+        self.app_state.combat_resolver.resolve_combat_turn_by_turn(
             combat_state,
             dice_roller,
-            self._handle_resolution_result
+            self._handle_resolution_result,
+            update_ui
         )
+    
+    def _update_combatants_in_table(self, combatants):
+        """
+        Update the initiative table with new combatant data.
+        
+        Args:
+            combatants: List of combatant dictionaries with updated values
+        """
+        # Loop through combatants and update corresponding rows
+        for combatant in combatants:
+            name = combatant.get("name", "")
+            if not name:
+                continue
+                
+            # Find the row with this combatant
+            found_row = -1
+            for row in range(self.initiative_table.rowCount()):
+                name_item = self.initiative_table.item(row, 0)
+                if name_item and name_item.text() == name:
+                    found_row = row
+                    break
+                    
+            if found_row >= 0:
+                # Update HP
+                if "hp" in combatant:
+                    hp_item = self.initiative_table.item(found_row, 2)
+                    if hp_item:
+                        old_hp = hp_item.text()
+                        new_hp = str(combatant["hp"])
+                        if old_hp != new_hp:
+                            hp_item.setText(new_hp)
+                            print(f"[CombatTracker] Updated {name} HP from {old_hp} to {new_hp}")
+                
+                # Update status
+                if "status" in combatant:
+                    status_item = self.initiative_table.item(found_row, 5)
+                    if status_item:
+                        old_status = status_item.text()
+                        new_status = combatant["status"]
+                        if old_status != new_status:
+                            status_item.setText(new_status)
+                            print(f"[CombatTracker] Updated {name} status from '{old_status}' to '{new_status}'")
+                
+                # Update concentration if present
+                if "concentration" in combatant:
+                    conc_item = self.initiative_table.item(found_row, 6)
+                    if conc_item:
+                        new_state = Qt.Checked if combatant["concentration"] else Qt.Unchecked
+                        if conc_item.checkState() != new_state:
+                            conc_item.setCheckState(new_state)
+        
+        # Ensure the table is updated visually
+        self.initiative_table.viewport().update()
+        from PySide6.QtWidgets import QApplication
+        QApplication.processEvents()
     
     def _gather_combat_state(self):
         """Gather the current state of the combat from the table."""
@@ -2421,17 +2567,21 @@ class CombatTrackerPanel(BasePanel):
             if combat_log and action_log:
                 for entry in action_log:
                     # Each entry is expected to be a dict with keys: turn, actor, action, dice, result
-                    # We'll use 'Other' as the category for now, but this could be improved
-                    category = "Other"
+                    # We'll use 'Turn' as the category for clarity
+                    category = "Turn"
                     actor = entry.get("actor", "Unknown")
                     action = entry.get("action", "")
+                    # Compose result string: LLM narrative + dice rolls
                     result_str = entry.get("result", "")
-                    # Optionally include dice results in the result string
                     dice_results = entry.get("dice", [])
                     if dice_results:
                         dice_strs = [f"{d['expr']}: {d['result']}" for d in dice_results]
-                        result_str = f"{result_str} (Dice: {', '.join(dice_strs)})" if result_str else f"Dice: {', '.join(dice_strs)}"
-                    # Add the log entry
+                        dice_summary = f"Dice: {', '.join(dice_strs)}"
+                        if result_str:
+                            result_str = f"{result_str} | {dice_summary}"
+                        else:
+                            result_str = dice_summary
+                    # Add the log entry for every turn, even if no HP/status changed
                     combat_log.add_log_entry(
                         category,
                         actor,
@@ -2452,6 +2602,30 @@ class CombatTrackerPanel(BasePanel):
             # If there is a turn-by-turn log, add a summary
             if action_log:
                 summary_text += f"\n\nTurn-by-turn log written to Combat Log panel."
+                
+                # Display the last few significant actions in a separate message box
+                # so the user can see what happened without checking the log
+                if len(action_log) > 0:
+                    log_summary = "Last Few Combat Actions:\n\n"
+                    # Get up to the last 5 actions with dice rolls
+                    interesting_actions = []
+                    for entry in reversed(action_log):
+                        if entry.get("dice") and len(interesting_actions) < 5:
+                            actor = entry.get("actor", "Unknown")
+                            action = entry.get("action", "")
+                            result = entry.get("result", "")
+                            dice = entry.get("dice", [])
+                            dice_str = ", ".join([f"{d['expr']}: {d['result']}" for d in dice]) if dice else ""
+                            
+                            interesting_actions.append(f"{actor} - {action}\nDice: {dice_str}\nResult: {result}\n")
+                    
+                    if interesting_actions:
+                        log_summary += "\n".join(interesting_actions)
+                        QMessageBox.information(
+                            self,
+                            "Combat Actions",
+                            log_summary
+                        )
             
             # Show results in a message box
             QMessageBox.information(
@@ -2466,6 +2640,7 @@ class CombatTrackerPanel(BasePanel):
         Returns:
             tuple: (number_of_rows_removed, list_of_summary_strings)
         """
+        print(f"[CombatTracker] Applying {len(updates)} combat updates from LLM")
         rows_to_remove = []
         update_summaries = []
         
@@ -2474,6 +2649,7 @@ class CombatTrackerPanel(BasePanel):
             if not name_to_find:
                 continue
                 
+            print(f"[CombatTracker] Processing update for {name_to_find}: {update}")
             # Find the row for the combatant
             found_row = -1
             for row in range(self.initiative_table.rowCount()):
@@ -2483,6 +2659,7 @@ class CombatTrackerPanel(BasePanel):
                     break
             
             if found_row != -1:
+                print(f"[CombatTracker] Found {name_to_find} at row {found_row}")
                 # Apply HP update
                 if "hp" in update:
                     hp_item = self.initiative_table.item(found_row, 2)
@@ -2490,6 +2667,11 @@ class CombatTrackerPanel(BasePanel):
                         old_hp = hp_item.text()
                         new_hp = str(update["hp"])
                         hp_item.setText(new_hp)
+                        print(f"[CombatTracker] Set {name_to_find} HP to {new_hp} in row {found_row} (was {old_hp})")
+                        # Force a UI update after each HP change
+                        self.initiative_table.viewport().update()
+                        from PySide6.QtWidgets import QApplication
+                        QApplication.processEvents()
                         update_summaries.append(f"- {name_to_find}: HP changed from {old_hp} to {new_hp}")
                         # Handle death/unconscious status if HP reaches 0
                         if update["hp"] <= 0 and "status" not in update:
@@ -2567,6 +2749,10 @@ class CombatTrackerPanel(BasePanel):
             # Reset highlight if current turn was removed or index shifted
             self._update_highlight()
         
+        # Ensure the UI table is refreshed after all updates
+        self.initiative_table.viewport().update()
+        from PySide6.QtWidgets import QApplication
+        QApplication.processEvents()
         return len(rows_to_remove), update_summaries
 
     def _get_combat_log(self):

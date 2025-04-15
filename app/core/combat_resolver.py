@@ -2,330 +2,515 @@
 Core component for resolving combat encounters using LLM.
 
 This class takes the current combat state and uses an LLM to generate
-narrative results, update combatant statuses, and potentially make
-tactical decisions.
+tactical decisions, which are then executed with dice rolls and
+properly reflected in the UI.
 """
 
 from app.core.llm_service import LLMService
-import json # Import json for parsing
+import json
 import re
+import time
 
 class CombatResolver:
     """
-    Handles the logic for resolving combat using an LLM.
+    Handles the logic for resolving combat using an LLM, with proper
+    UI feedback and dice-rolling integration.
     """
 
     def __init__(self, llm_service: LLMService):
         """Initialize the CombatResolver with the LLM service."""
         self.llm_service = llm_service
 
-    def resolve_combat_async(self, combat_state: dict, callback):
+    def resolve_combat_turn_by_turn(self, combat_state, dice_roller, callback, update_ui_callback=None):
         """
-        Asynchronously resolve the combat using the LLM.
-
-        Args:
-            combat_state: A dictionary representing the current state of the combat 
-                          (combatants, round, environment, etc.).
-            callback: A function to call with the results (narrative, updates) 
-                      or an error message.
-        """
-        print("CombatResolver.resolve_combat_async called with state:", combat_state)
+        Resolve combat turn-by-turn, with proper UI feedback.
         
-        # 1. Construct a detailed prompt based on combat_state.
-        prompt = self._create_combat_prompt(combat_state)
-        
-        # 2. Call self.llm_service.generate_completion_async.
-        # Ensure LLM service and method exist
-        if not hasattr(self.llm_service, 'generate_completion_async'):
-            callback(None, "LLM service is not available or does not support async generation.")
-            return
-            
-        try:
-            # Get the first available model ID
-            available_models = self.llm_service.get_available_models()
-            if not available_models:
-                callback(None, "No LLM models are available or configured. Please check API keys.")
-                return
-            model_id = available_models[0]["id"] # Use the ID of the first available model
-                 
-            print(f"--- Combat Resolver Prompt (Model: {model_id}) ---")
-            print(prompt)
-            print("---------------------------------------------")
-
-            # 3. Call the LLM service, passing _handle_llm_response as the callback
-            self.llm_service.generate_completion_async(
-                model=model_id,
-                messages=[{"role": "user", "content": prompt}],
-                callback=lambda response, error: self._handle_llm_response(response, error, callback),
-                temperature=0.6, # Slightly lower temp for more predictable combat results
-                max_tokens=1000 # Adjust as needed
-            )
-        except Exception as e:
-            callback(None, f"Error calling LLM service: {str(e)}")
-
-    def resolve_combat_turn_by_turn_async(self, combat_state: dict, dice_roller, callback):
-        """
-        Asynchronously resolve combat turn-by-turn using the LLM and dice roller.
         Args:
-            combat_state: The current combat state dict (combatants, round, etc.)
-            dice_roller: A callable that takes a dice expression (e.g., '1d20+5') and returns the result.
-            callback: Function to call with the final results or error.
+            combat_state: Dictionary with current combat state (combatants, round, etc.)
+            dice_roller: Function that rolls dice (takes expression, returns result)
+            callback: Function called with final result or error
+            update_ui_callback: Function called after each turn to update UI (optional)
         """
         import copy
         import threading
         
-        # Make a deep copy of the combat state to avoid mutating the original
+        # Make a deep copy to avoid mutating the original
         state = copy.deepcopy(combat_state)
-        log = []  # Log of actions for transparency
+        log = []  # Combat log for transparency
         
         def run_resolution():
             try:
+                # Extract combat state
                 round_num = state.get("round", 1)
                 combatants = state.get("combatants", [])
-                initiative_order = sorted(range(len(combatants)), key=lambda i: -combatants[i]["initiative"])  # Descending
-                active_combatants = [i for i in initiative_order if combatants[i]["hp"] > 0]
-                turn_idx = state.get("current_turn_index", 0)
+                active_combatants = sorted(range(len(combatants)), 
+                                          key=lambda i: -combatants[i].get("initiative", 0))
                 
-                # Main combat loop
-                while len([c for c in combatants if c["hp"] > 0]) > 1:
+                max_rounds = 50  # Failsafe to prevent infinite loops
+                
+                # Main combat loop - continue until only one combatant remains or max rounds reached
+                while len([c for c in combatants if c.get("hp", 0) > 0]) > 1 and round_num <= max_rounds:
+                    print(f"[CombatResolver] Starting round {round_num}")
+                    
+                    # Process each combatant's turn in initiative order
                     for idx in active_combatants:
-                        c = combatants[idx]
-                        if c["hp"] <= 0:
-                            continue  # Skip dead/unconscious
-                        # Build prompt for LLM to decide action
-                        prompt = self._create_turn_prompt(state, idx)
-                        print(f"[CombatResolver] About to call LLM for action suggestion for {c['name']} (turn {idx})")
-                        # Get LLM action suggestion (sync for simplicity)
-                        action = self.llm_service.generate_completion(
-                            model=self.llm_service.get_available_models()[0]["id"],
-                            messages=[{"role": "user", "content": prompt}],
-                            temperature=0.5,
-                            max_tokens=400
-                        )
-                        print(f"[CombatResolver] Received LLM action suggestion for {c['name']} (turn {idx})")
-                        print(f"[CombatResolver] Raw LLM action response for {c['name']} (turn {idx}): {action!r}")
-                        # Parse action and dice requests
-                        # For simplicity, expect LLM to output a JSON with {"action": ..., "dice": ["1d20+5", ...]}
-                        try:
-                            # Extract the first {...} JSON block from the response
-                            json_match = re.search(r'\{[\s\S]*\}', action)
-                            if json_match:
-                                json_str = json_match.group(0)
-                                action_data = json.loads(json_str)
-                            else:
-                                callback(None, f"Could not find JSON in LLM action response: {action}")
-                                return
-                        except Exception:
-                            callback(None, f"LLM action parse error: {action}")
+                        combatant = combatants[idx]
+                        
+                        # Skip dead/unconscious combatants
+                        if combatant.get("hp", 0) <= 0:
+                            continue
+                            
+                        turn_result = self._process_turn(combatants, idx, round_num, dice_roller)
+                        
+                        if not turn_result:
+                            # Error or timeout processing turn
+                            callback(None, f"Error processing turn for {combatant.get('name', 'Unknown')}")
                             return
-                        # Roll dice as requested
-                        dice_results = []
-                        for expr in action_data.get("dice", []):
-                            result = dice_roller(expr)
-                            dice_results.append({"expr": expr, "result": result})
-                        # Build result prompt for LLM to narrate and apply outcome
-                        result_prompt = self._create_result_prompt(state, idx, action_data, dice_results)
-                        print(f"[CombatResolver] About to call LLM for result narration for {c['name']} (turn {idx})")
-                        result = self.llm_service.generate_completion(
-                            model=self.llm_service.get_available_models()[0]["id"],
-                            messages=[{"role": "user", "content": result_prompt}],
-                            temperature=0.5,
-                            max_tokens=400
-                        )
-                        print(f"[CombatResolver] Received LLM result narration for {c['name']} (turn {idx})")
-                        print(f"[CombatResolver] Raw LLM result narration for {c['name']} (turn {idx}): {result!r}")
-                        try:
-                            # Extract the first {...} JSON block from the response
-                            json_match = re.search(r'\{[\s\S]*\}', result)
-                            if json_match:
-                                json_str = json_match.group(0)
-                                result_data = json.loads(json_str)
-                            else:
-                                callback(None, f"Could not find JSON in LLM result: {result}")
-                                return
-                        except Exception:
-                            callback(None, f"LLM result parse error: {result}")
-                            return
-                        # Apply updates to combatants
-                        for update in result_data.get("updates", []):
-                            for c2 in combatants:
-                                if c2["name"] == update["name"]:
-                                    if "hp" in update:
-                                        c2["hp"] = update["hp"]
-                                    if "status" in update:
-                                        c2["status"] = update["status"]
-                        # Log the action
-                        log.append({
+                            
+                        # Add turn to log
+                        turn_log_entry = {
+                            "round": round_num,
                             "turn": idx,
-                            "actor": c["name"],
-                            "action": action_data.get("action", ""),
-                            "dice": dice_results,
-                            "result": result_data.get("narrative", "")
-                        })
-                        # Remove dead combatants from active list
-                        active_combatants = [i for i in initiative_order if combatants[i]["hp"] > 0]
-                        if len(active_combatants) <= 1:
+                            "actor": combatant.get("name", "Unknown"),
+                            "action": turn_result.get("action", ""),
+                            "dice": turn_result.get("dice", []),
+                            "result": turn_result.get("narrative", "")
+                        }
+                        log.append(turn_log_entry)
+                        
+                        # Apply combatant updates
+                        if "updates" in turn_result:
+                            for update in turn_result["updates"]:
+                                target_name = update.get("name")
+                                for i, c in enumerate(combatants):
+                                    if c.get("name") == target_name:
+                                        # Update HP if specified
+                                        if "hp" in update:
+                                            c["hp"] = update["hp"]
+                                        # Update status if specified
+                                        if "status" in update:
+                                            c["status"] = update["status"]
+                                        # Update limited-use abilities if specified
+                                        if "limited_use" in update:
+                                            if "limited_use" not in c:
+                                                c["limited_use"] = {}
+                                            for ability, state in update["limited_use"].items():
+                                                c["limited_use"][ability] = state
+                        
+                        # Update the UI
+                        if update_ui_callback:
+                            combat_display_state = {
+                                "round": round_num,
+                                "current_turn_index": idx,
+                                "combatants": combatants,
+                                "latest_action": turn_log_entry
+                            }
+                            # Give the UI a chance to update between turns
+                            update_ui_callback(combat_display_state)
+                            # Small delay to let UI update and for more natural combat flow
+                            time.sleep(0.5)
+                            
+                        # After each turn, check if combat is over (only one combatant left)
+                        remaining = [c for c in combatants if c.get("hp", 0) > 0]
+                        if len(remaining) <= 1:
                             break
+                    
+                    # End of round, increment counter
                     round_num += 1
                     state["round"] = round_num
+                    
+                    # Update active combatants (some may have died during the round)
+                    active_combatants = [i for i in sorted(range(len(combatants)), 
+                                        key=lambda i: -combatants[i].get("initiative", 0)) 
+                                        if combatants[i].get("hp", 0) > 0]
+                
                 # Prepare final summary
-                survivors = [c for c in combatants if c["hp"] > 0]
+                survivors = [c for c in combatants if c.get("hp", 0) > 0]
                 summary = {
-                    "narrative": f"Combat ended after {round_num} rounds. Survivors: {[c['name'] for c in survivors]}",
+                    "narrative": f"Combat ended after {round_num-1} rounds. Survivors: {[c.get('name', 'Unknown') for c in survivors]}",
                     "updates": combatants,
                     "log": log
                 }
+                
+                if round_num > max_rounds:
+                    summary["narrative"] += " (Stopped due to round limit; possible LLM error)"
+                    
                 callback(summary, None)
+                
             except Exception as e:
-                callback(None, f"Error in turn-by-turn resolution: {e}")
+                import traceback
+                traceback.print_exc()
+                callback(None, f"Error in turn-by-turn resolution: {str(e)}")
+        
         # Run in a background thread
         threading.Thread(target=run_resolution).start()
 
-    def _create_combat_prompt(self, combat_state: dict) -> str:
-        """Construct the prompt for the LLM based on combat state."""
-        round_num = combat_state.get("round", 1)
-        turn_idx = combat_state.get("current_turn_index", 0)
-        combatants = combat_state.get("combatants", [])
+    def _process_turn(self, combatants, active_idx, round_num, dice_roller):
+        """
+        Process a single combatant's turn with LLM.
         
-        current_combatant_name = "N/A"
-        if 0 <= turn_idx < len(combatants):
-            current_combatant_name = combatants[turn_idx].get("name", "Unknown")
-
-        combatant_lines = []
-        for combatant in combatants:
-            name = combatant.get("name", "Unknown")
-            hp = combatant.get("hp", 0)
-            max_hp = combatant.get("max_hp") or hp # Use current HP if max_hp is missing
-            ac = combatant.get("ac", 10)
-            status = combatant.get("status", "OK")
-            conc = combatant.get("concentration", False)
-            notes = combatant.get("notes", "")
+        Args:
+            combatants: List of all combatants
+            active_idx: Index of active combatant
+            round_num: Current round number
+            dice_roller: Function to roll dice
             
-            line = f"- Name: {name}\n  HP: {hp}/{max_hp}\n  AC: {ac}\n  Status: {status}\n  Concentrating: {conc}\n  Notes: {notes}"
-            combatant_lines.append(line)
+        Returns:
+            Dictionary with turn results or None if error
+        """
+        active_combatant = combatants[active_idx]
+        print(f"[CombatResolver] Processing turn for {active_combatant.get('name', 'Unknown')} (round {round_num})")
+        
+        # 1. Create a prompt for the LLM to decide the action
+        prompt = self._create_decision_prompt(combatants, active_idx, round_num)
+        
+        # 2. Get action decision from LLM
+        print(f"[CombatResolver] Requesting action decision from LLM for {active_combatant.get('name', 'Unknown')}")
+        try:
+            model_id = self.llm_service.get_available_models()[0]["id"]
+            decision_response = self.llm_service.generate_completion(
+                model=model_id,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=800
+            )
+            print(f"[CombatResolver] Received LLM decision for {active_combatant.get('name', 'Unknown')}")
+            print(f"[CombatResolver] Raw decision response: {decision_response!r}")
+        except Exception as e:
+            print(f"[CombatResolver] Error getting LLM decision: {str(e)}")
+            return None
             
-        combatants_str = "\n".join(combatant_lines)
+        # 3. Parse the LLM's decision
+        try:
+            # Extract the first JSON object from the response
+            json_match = re.search(r'\{[\s\S]*\}', decision_response)
+            if not json_match:
+                print(f"[CombatResolver] Could not find JSON in LLM decision response")
+                return None
+                
+            json_str = json_match.group(0)
+            decision = json.loads(json_str)
+            
+            # Validate required fields
+            if "action" not in decision or "dice_requests" not in decision:
+                print(f"[CombatResolver] Missing required fields in decision: {decision}")
+                return None
+                
+            action = decision["action"]
+            dice_requests = decision.get("dice_requests", [])
+        except Exception as e:
+            print(f"[CombatResolver] Error parsing LLM decision: {str(e)}")
+            return None
+            
+        # 4. Roll dice as requested
+        dice_results = []
+        for req in dice_requests:
+            expression = req.get("expression", "")
+            purpose = req.get("purpose", "")
+            if expression:
+                try:
+                    result = dice_roller(expression)
+                    dice_results.append({
+                        "expression": expression,
+                        "result": result,
+                        "purpose": purpose
+                    })
+                    print(f"[CombatResolver] Rolled {expression} for {purpose}: {result}")
+                except Exception as e:
+                    print(f"[CombatResolver] Error rolling dice: {str(e)}")
+                    return None
+        
+        # 5. Send dice results to LLM for resolution
+        resolution_prompt = self._create_resolution_prompt(
+            combatants, active_idx, round_num, action, dice_results)
+            
+        try:
+            print(f"[CombatResolver] Requesting resolution from LLM for {active_combatant.get('name', 'Unknown')}")
+            resolution_response = self.llm_service.generate_completion(
+                model=model_id,
+                messages=[{"role": "user", "content": resolution_prompt}],
+                temperature=0.7,
+                max_tokens=800
+            )
+            print(f"[CombatResolver] Received LLM resolution for {active_combatant.get('name', 'Unknown')}")
+            print(f"[CombatResolver] Raw resolution response: {resolution_response!r}")
+        except Exception as e:
+            print(f"[CombatResolver] Error getting LLM resolution: {str(e)}")
+            return None
+            
+        # 6. Parse the resolution
+        try:
+            # Extract the first JSON object from the response
+            json_match = re.search(r'\{[\s\S]*\}', resolution_response)
+            if not json_match:
+                print(f"[CombatResolver] Could not find JSON in LLM resolution response")
+                return None
+                
+            json_str = json_match.group(0)
+            resolution = json.loads(json_str)
+            
+            # Add the original action and dice rolls to the resolution
+            resolution["action"] = action
+            resolution["dice"] = dice_results
+            
+            return resolution
+        except Exception as e:
+            print(f"[CombatResolver] Error parsing LLM resolution: {str(e)}")
+            return None
+            
+    def _create_decision_prompt(self, combatants, active_idx, round_num):
+        """
+        Create a prompt for the LLM to decide the action for a combatant.
+        
+        Args:
+            combatants: List of all combatants
+            active_idx: Index of active combatant
+            round_num: Current round number
+            
+        Returns:
+            Prompt string
+        """
+        active = combatants[active_idx]
 
         prompt = f"""
-You are a Dungeons & Dragons 5e Dungeon Master AI. Resolve the current combat encounter based on the state provided below. Provide a brief, engaging narrative summary of the likely outcome of the combat, focusing on the key actions and results. Then, provide a JSON object containing updates to the combatants' status.
+You are the combat AI for a D&D 5e game, serving as the tactical decision-maker.
 
-**IMPORTANT: Your entire response MUST be ONLY the JSON object specified below, with no introductory text, code block formatting, or any characters outside the JSON structure.**
+# COMBAT STATE
+Round: {round_num}
+Active combatant: {active.get('name', 'Unknown')} (currently taking their turn)
+
+# ACTIVE COMBATANT DETAILS
+Name: {active.get('name', 'Unknown')}
+HP: {active.get('hp', 0)}/{active.get('max_hp', active.get('hp', 0))}
+AC: {active.get('ac', 10)}
+Type: {active.get('type', 'Unknown')}
+Status: {active.get('status', 'OK')}
+
+Abilities: {active.get('abilities', 'Standard abilities')}
+Skills: {active.get('skills', 'Standard skills')}
+Equipment: {active.get('equipment', 'Standard equipment')}
+"""
+
+        # Add information about limited-use abilities if available
+        if "limited_use" in active:
+            prompt += "\nLimited-use abilities:\n"
+            for ability, state in active.get("limited_use", {}).items():
+                prompt += f"- {ability}: {state}\n"
+                
+        # Add other combatants
+        prompt += "\n# OTHER COMBATANTS\n"
+        for i, c in enumerate(combatants):
+            if i == active_idx:
+                continue
+            prompt += f"- {c.get('name', 'Unknown')} (HP: {c.get('hp', 0)}/{c.get('max_hp', c.get('hp', 0))}, AC: {c.get('ac', 10)}, Status: {c.get('status', 'OK')})\n"
+            
+        # Add instructions for the LLM
+        prompt += """
+# YOUR TASK
+Decide the most appropriate action for the active combatant this turn. Consider:
+1. Current HP and status
+2. Tactical position and opponent state
+3. Available abilities, especially limited-use ones
+4. D&D 5e rules for actions, bonus actions, and movement
+5. Make smart, consistent tactical decisions as a competent combatant would
+
+# RESPONSE FORMAT
+Respond with a JSON object containing these fields:
+- "action": A detailed description of what the combatant does, including targets and tactics
+- "dice_requests": An array of dice expressions needed to resolve the action, each with:
+  * "expression": The dice expression (e.g., "1d20+5")
+  * "purpose": What this roll is for (e.g., "Attack roll against Goblin")
+
+Example response:
+{
+  "action": "The Hobgoblin Captain makes a multiattack with its longsword and shield against the Fighter, focusing on dealing damage while maintaining defensive positioning.",
+  "dice_requests": [
+    {"expression": "1d20+5", "purpose": "Longsword attack roll"},
+    {"expression": "1d8+3", "purpose": "Longsword damage if hit"},
+    {"expression": "1d20+5", "purpose": "Shield bash attack roll"},
+    {"expression": "1d4+3", "purpose": "Shield bash damage if hit"}
+  ]
+}
+
+Your response MUST be valid JSON that can be parsed, with no extra text before or after.
+"""
+        return prompt
+
+    def _create_resolution_prompt(self, combatants, active_idx, round_num, action, dice_results):
+        """
+        Create a prompt for the LLM to resolve the action based on dice results.
+        
+        Args:
+            combatants: List of all combatants
+            active_idx: Index of active combatant
+            round_num: Current round number
+            action: Action description from decision phase
+            dice_results: Results of all dice rolls
+            
+        Returns:
+            Prompt string
+        """
+        active = combatants[active_idx]
+        
+        prompt = f"""
+You are the combat AI for a D&D 5e game, serving as the battle narrator and rules arbiter.
+
+# COMBAT STATE
+Round: {round_num}
+Active combatant: {active.get('name', 'Unknown')} (currently taking their turn)
+
+# ACTIVE COMBATANT DETAILS
+Name: {active.get('name', 'Unknown')}
+HP: {active.get('hp', 0)}/{active.get('max_hp', active.get('hp', 0))}
+AC: {active.get('ac', 10)}
+Type: {active.get('type', 'Unknown')}
+Status: {active.get('status', 'OK')}
+
+# ACTION TAKEN
+{action}
+
+# DICE RESULTS
+"""
+        # Add all dice results
+        for roll in dice_results:
+            prompt += f"- {roll['purpose']}: {roll['expression']} = {roll['result']}\n"
+            
+        # Add other combatants
+        prompt += "\n# OTHER COMBATANTS\n"
+        for i, c in enumerate(combatants):
+            if i == active_idx:
+                continue
+            prompt += f"- {c.get('name', 'Unknown')} (HP: {c.get('hp', 0)}/{c.get('max_hp', c.get('hp', 0))}, AC: {c.get('ac', 10)}, Status: {c.get('status', 'OK')})\n"
+            
+        # Add limited-use abilities if any
+        if "limited_use" in active:
+            prompt += "\n# LIMITED-USE ABILITIES\n"
+            for ability, state in active.get("limited_use", {}).items():
+                prompt += f"- {ability}: {state}\n"
+                
+        # Add instructions for resolution
+        prompt += """
+# YOUR TASK
+Resolve the outcome of the action based on the dice results. Follow standard D&D 5e rules:
+1. Compare attack rolls to AC to determine hits
+2. For attack rolls of 20, it's a critical hit (double damage dice)
+3. For attack rolls of 1, it's an automatic miss
+4. Apply damage to appropriate targets when attacks hit
+5. Update status effects as needed (unconscious at 0 HP, etc.)
+6. Track usage of limited-use abilities
+
+# RESPONSE FORMAT
+Respond with a JSON object containing these fields:
+- "narrative": An engaging, concise description of what happened and the outcome
+- "updates": An array of combatant updates, each with:
+  * "name": The combatant's name
+  * "hp": The new HP value (if changed)
+  * "status": New status (if changed)
+  * "limited_use": Updates to limited-use abilities (if any were used)
+
+Example response:
+{
+  "narrative": "The Hobgoblin Captain's longsword slashes across the Fighter's armor, finding a gap and drawing blood (8 damage). The follow-up shield bash misses as the Fighter deftly steps aside.",
+  "updates": [
+    {
+      "name": "Fighter",
+      "hp": 24
+    },
+    {
+      "name": "Hobgoblin Captain",
+      "limited_use": {
+        "Leadership Ability": "Used (0/1 remaining)"
+      }
+    }
+  ]
+}
+
+Your response MUST be valid JSON that can be parsed, with no extra text before or after.
+For this combat to be interesting, attacks should often hit and do damage. 
+A roll of 15 or higher almost always hits average AC targets (around 14-16).
+"""
+        return prompt
+
+    # Keep legacy methods for backwards compatibility
+    def resolve_combat_async(self, combat_state, callback):
+        # Legacy method retained for backwards compatibility
+        print("Legacy resolve_combat_async called - consider using resolve_combat_turn_by_turn instead")
+        # Create a simplified prompt
+        prompt = self._create_combat_prompt(combat_state)
+        
+        try:
+            # Get available models
+            available_models = self.llm_service.get_available_models()
+            if not available_models:
+                callback(None, "No LLM models available. Check your API keys.")
+                return
+            model_id = available_models[0]["id"]
+            
+            # Call the LLM service
+            self.llm_service.generate_completion_async(
+                model=model_id,
+                messages=[{"role": "user", "content": prompt}],
+                callback=lambda response, error: self._handle_llm_response(response, error, callback),
+                temperature=0.7,
+                max_tokens=1000
+            )
+        except Exception as e:
+            callback(None, f"Error calling LLM service: {str(e)}")
+            
+    def resolve_combat_turn_by_turn_async(self, combat_state, dice_roller, callback):
+        # Redirect to the new implementation
+        self.resolve_combat_turn_by_turn(combat_state, dice_roller, callback)
+        
+    # Keep legacy methods for backwards compatibility
+    def _create_combat_prompt(self, combat_state):
+        # Simplified legacy prompt creation
+        round_num = combat_state.get("round", 1)
+        combatants = combat_state.get("combatants", [])
+        
+        combatant_str = "\n".join([
+            f"- {c.get('name', 'Unknown')}: HP {c.get('hp', 0)}/{c.get('max_hp', c.get('hp', 0))}, AC {c.get('ac', 10)}, Status: {c.get('status', 'OK')}"
+            for c in combatants
+        ])
+        
+        prompt = f"""
+You are a Dungeons & Dragons 5e Dungeon Master. Resolve this combat encounter with a brief narrative and status updates.
 
 Combat State:
 Round: {round_num}
-Current Turn: Combatant '{current_combatant_name}' (Index {turn_idx})
-
 Combatants:
-{combatants_str}
+{combatant_str}
 
-Instructions:
-1. Analyze the combat state, considering HP, AC, status, and typical creature/character behavior. Assume standard tactics unless notes suggest otherwise. Prioritize actions for the current combatant if relevant, but resolve the overall likely outcome.
-2. Generate a concise narrative summary (2-4 sentences) describing the resolution.
-3. Generate a JSON object under the key \"updates\" containing a list of combatants whose state changed. Each entry should be a dictionary with at least a \"name\" key matching a combatant. Include \"hp\" and/or \"status\" keys ONLY if they changed. **If status becomes \"Dead\", HP should be 0.** Possible statuses include \"Unconscious\", \"Dead\", \"Fled\", or specific D&D conditions if applicable.
-
-**Your response must start with `{{` and end with `}}`.**
-
-Example Output Format:
+Response format:
 {{
-  \"narrative\": \"The adventurers press their advantage. The fighter cleaves through the lead goblin, while the remaining goblins, seeing their leader fall, turn and flee into the darkness.\",
-  \"updates\": [
-    {{\"name\": \"Goblin Boss\", \"hp\": 0, \"status\": \"Dead\"}},
-    {{\"name\": \"Goblin 1\", \"status\": \"Fled\"}},
-    {{\"name\": \"Goblin 2\", \"status\": \"Fled\"}}
+  "narrative": "Brief description of combat outcome",
+  "updates": [
+    {{"name": "Combatant1", "hp": 25, "status": "OK"}},
+    ...
   ]
 }}
 
-Combat Details for Resolution:
-
-Round: {round_num}
-Current Turn Index: {turn_idx}
-
-Combatants List:
-{combatants_str}
+Return ONLY the JSON object with no other text.
 """
         return prompt
 
-    def _create_turn_prompt(self, state, idx):
-        """
-        Create a prompt for the LLM to decide the action for a single combatant's turn.
-        """
-        combatants = state.get("combatants", [])
-        c = combatants[idx]
-        # Include stats, skills, abilities, inventory, and visible state
-        prompt = f"""
-You are a D&D 5e DM AI. It is {c['name']}'s turn. Here are their stats and the combat state:
-
-Combatant:
-Name: {c['name']}
-HP: {c['hp']}/{c.get('max_hp', c['hp'])}
-AC: {c.get('ac', 10)}
-Status: {c.get('status', 'OK')}
-Inventory: {c.get('inventory', 'Unknown')}
-Abilities: {c.get('abilities', 'Unknown')}
-Skills: {c.get('skills', 'Unknown')}
-
-Other Combatants:
-"""
-        for i, other in enumerate(combatants):
-            if i == idx:
-                continue
-            prompt += f"- {other['name']} (HP: {other['hp']}, AC: {other.get('ac', 10)}, Status: {other.get('status', 'OK')})\n"
-        prompt += "\nWhat is the most likely action for this turn? Output a JSON with 'action' (string) and 'dice' (list of dice expressions needed for this action, e.g., ['1d20+5', '1d8+3'])."
-        return prompt
-
-    def _create_result_prompt(self, state, idx, action_data, dice_results):
-        """
-        Create a prompt for the LLM to narrate and apply the outcome of the action, given the dice results.
-        """
-        combatants = state.get("combatants", [])
-        c = combatants[idx]
-        prompt = f"""
-You are a D&D 5e DM AI. {c['name']} attempted the following action: {action_data.get('action', '')}.
-Here are the dice results: {dice_results}.
-Here is the current combat state:
-"""
-        for other in combatants:
-            prompt += f"- {other['name']} (HP: {other['hp']}, AC: {other.get('ac', 10)}, Status: {other.get('status', 'OK')})\n"
-        prompt += "\nNarrate the outcome in 1-2 sentences, and output a JSON with 'narrative' and 'updates' (list of dicts with 'name', 'hp', and/or 'status' for changed combatants)."
-        return prompt
-
-    def _handle_llm_response(self, response: str | None, error: str | None, original_callback):
-        """Parse the LLM response and call the original callback."""
+    def _handle_llm_response(self, response, error, callback):
+        # Legacy handler for backward compatibility
         if error:
-            original_callback(None, f"LLM Error: {error}")
+            callback(None, f"LLM Error: {error}")
             return
             
         if not response:
-             original_callback(None, "LLM returned an empty response.")
-             return
+            callback(None, "Empty response from LLM")
+            return
              
         try:
-            # The response should be a JSON string directly
-            # Clean up potential markdown code blocks if present
-            if response.strip().startswith("```json"):
-                response = response.strip()[7:]
-            if response.strip().endswith("```"):
-                response = response.strip()[:-3]
-                
-            parsed_result = json.loads(response.strip())
-            
-            # Basic validation of the parsed structure
-            if "narrative" not in parsed_result or "updates" not in parsed_result:
-                 raise ValueError("LLM response missing 'narrative' or 'updates' key.")
-            if not isinstance(parsed_result["updates"], list):
-                 raise ValueError("'updates' key must contain a list.")
-                 
-            original_callback(parsed_result, None)
-            
-        except json.JSONDecodeError as json_err:
-            error_msg = f"Failed to parse LLM JSON response: {json_err}\nResponse received:\n{response}"
-            print(error_msg) # Log the problematic response
-            original_callback(None, error_msg)
-        except ValueError as val_err:
-             error_msg = f"Invalid LLM response structure: {val_err}\nResponse received:\n{response}"
-             print(error_msg) # Log the problematic response
-             original_callback(None, error_msg)
+            # Extract JSON from response
+            json_match = re.search(r'\{[\s\S]*\}', response)
+            if json_match:
+                json_str = json_match.group(0)
+                result = json.loads(json_str)
+                callback(result, None)
+            else:
+                callback(None, f"Could not find JSON in LLM response: {response}")
         except Exception as e:
-            error_msg = f"Unexpected error handling LLM response: {str(e)}\nResponse received:\n{response}"
-            print(error_msg) # Log the problematic response
-            original_callback(None, error_msg) 
+            callback(None, f"Error parsing LLM response: {str(e)}\nResponse: {response}") 
