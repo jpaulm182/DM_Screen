@@ -341,58 +341,32 @@ class CombatResolver(QObject):
                                         # Update HP if specified
                                         hp_changed = False
                                         if "hp" in update:
-                                            # Check if the update is a string like "reduce by 5"
-                                            hp_update = update["hp"]
-                                            current_hp = c.get("hp", 0)
-                                            new_hp = current_hp # Default to current HP
-
-                                            if isinstance(hp_update, str):
-                                                # Check for "reduce by X" format
-                                                if "reduce" in hp_update.lower():
-                                                    import re
-                                                    damage_match = re.search(r'\d+', hp_update)
-                                                    if damage_match:
-                                                        damage = int(damage_match.group(0))
-                                                        new_hp = max(0, current_hp - damage)
-                                                        print(f"[CombatResolver] Reduced {target_name}'s HP by {damage} to {new_hp}")
-                                                # Check for numbers in strings, e.g. "24" or "24 HP"
-                                                else:
-                                                    import re
-                                                    num_match = re.search(r'\d+', hp_update)
-                                                    if num_match:
-                                                        try:
-                                                            new_hp = int(num_match.group(0))
-                                                            print(f"[CombatResolver] Extracted HP value {new_hp} from string '{hp_update}'")
-                                                        except ValueError:
-                                                            print(f"[CombatResolver] Failed to extract HP value from '{hp_update}'")
-                                            else:
-                                                try:
-                                                    new_hp = int(hp_update)
-                                                except (ValueError, TypeError):
-                                                    print(f"[CombatResolver] Invalid HP value: {hp_update}")
-                                                    new_hp = current_hp # Keep current HP if update is invalid
+                                            # Ensure HP is an integer using our helper function
+                                            try:
+                                                # Find the current HP for this combatant
+                                                current_hp = c.get("hp", 0)
                                                 
-                                            # Verify the HP change is reasonable
-                                            max_hp = c.get("max_hp", current_hp)
-                                            if new_hp > max_hp * 1.5:  # HP should not exceed max_hp by too much (allowing some healing over max)
-                                                print(f"[CombatResolver] WARNING: Unreasonable HP change for {target_name}: {current_hp} -> {new_hp} (max: {max_hp})")
-                                                new_hp = current_hp  # Revert to current HP
-                                            elif new_hp < -10:  # HP should not go too far below 0
-                                                print(f"[CombatResolver] WARNING: Unreasonable negative HP for {target_name}: {new_hp}")
-                                                new_hp = 0  # Cap at 0
-
-                                            # Apply the new HP if it changed
-                                            if new_hp != current_hp:
-                                                c["hp"] = new_hp
-                                                hp_changed = True
-                                                print(f"[CombatResolver] Set {target_name}'s HP to {new_hp} (was {current_hp})")
+                                                # Process the HP update
+                                                processed_hp = self._process_hp_update(
+                                                    target_name=target_name,
+                                                    hp_update=update["hp"],
+                                                    current_hp=current_hp
+                                                )
                                                 
-                                                # Track HP changes for debugging
-                                                hp_changes[target_name] = {
-                                                    "before": current_hp,
-                                                    "after": new_hp,
-                                                    "change": new_hp - current_hp
-                                                }
+                                                # Update HP if it changed
+                                                if processed_hp != current_hp:
+                                                    c["hp"] = processed_hp
+                                                    hp_changed = True
+                                                    print(f"[CombatResolver] Set {target_name}'s HP to {processed_hp} (was {current_hp})")
+                                                    
+                                                    # Track HP changes for debugging
+                                                    hp_changes[target_name] = {
+                                                        "before": current_hp,
+                                                        "after": processed_hp,
+                                                        "change": processed_hp - current_hp
+                                                    }
+                                            except Exception as e:
+                                                print(f"[CombatResolver] Error processing HP update for {target_name}: {str(e)}")
 
                                         # Update status if specified
                                         status_updated_by_llm = False
@@ -636,26 +610,77 @@ class CombatResolver(QObject):
             
         # 3. Parse the LLM's decision
         try:
-            # Extract the first JSON object from the response
-            json_match = re.search(r'\{[\s\S]*\}', decision_response)
+            # Clean the LLM response to extract JSON properly
+            decision_text = decision_response
+            
+            # Fix 1: Strip code block markers if they exist
+            decision_text = re.sub(r'```(?:json)?\s*', '', decision_text)
+            decision_text = re.sub(r'```\s*$', '', decision_text)
+            
+            # Fix 2: Try to extract JSON even if there's other text around it
+            json_match = re.search(r'\{[\s\S]*\}', decision_text)
             if not json_match:
                 print(f"[CombatResolver] Could not find JSON in LLM decision response")
-                return None
+                # Try a fallback approach to create a minimal valid decision
+                print(f"[CombatResolver] Trying to create a fallback decision")
+                action_match = re.search(r'action["\s:]+([^"]+)"', decision_text)
+                fallback_action = "The combatant makes a basic attack." if not action_match else action_match.group(1)
                 
-            json_str = json_match.group(0)
-            decision = json.loads(json_str)
+                # Create a minimal valid decision
+                decision = {
+                    "action": fallback_action,
+                    "dice_requests": [
+                        {"expression": "1d20", "purpose": "Basic attack roll"},
+                        {"expression": "1d6", "purpose": "Basic damage roll"}
+                    ]
+                }
+            else:
+                json_str = json_match.group(0)
+                try:
+                    decision = json.loads(json_str)
+                except json.JSONDecodeError as e:
+                    print(f"[CombatResolver] JSON decode error: {e}")
+                    # Try to clean up the JSON string further
+                    cleaned_json = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas
+                    cleaned_json = re.sub(r',\s*]', ']', cleaned_json)  # Remove trailing commas in arrays
+                    try:
+                        decision = json.loads(cleaned_json)
+                    except json.JSONDecodeError:
+                        print(f"[CombatResolver] Failed to parse JSON even after cleanup, creating fallback")
+                        # Create fallback decision
+                        decision = {
+                            "action": "The combatant makes a basic attack after a parsing error.",
+                            "dice_requests": [
+                                {"expression": "1d20", "purpose": "Basic attack roll"},
+                                {"expression": "1d6", "purpose": "Basic damage roll"}
+                            ]
+                        }
             
-            # Validate required fields
-            if "action" not in decision or "dice_requests" not in decision:
-                print(f"[CombatResolver] Missing required fields in decision: {decision}")
-                return None
+            # Validate required fields and provide defaults if missing
+            if "action" not in decision:
+                print(f"[CombatResolver] Missing 'action' field in decision, adding default")
+                decision["action"] = "The combatant takes a defensive stance."
+                
+            if "dice_requests" not in decision:
+                print(f"[CombatResolver] Missing 'dice_requests' field in decision, adding default")
+                decision["dice_requests"] = []
                 
             action = decision["action"]
             dice_requests = decision.get("dice_requests", [])
+            
+            # Extra safety check to ensure dice_requests is a list
+            if not isinstance(dice_requests, list):
+                print(f"[CombatResolver] 'dice_requests' is not a list, fixing")
+                dice_requests = []
+                
         except Exception as e:
             print(f"[CombatResolver] Error parsing LLM decision: {str(e)}")
-            return None
-            
+            # Create a very simple fallback
+            action = "The combatant takes a cautious action after an error."
+            dice_requests = [
+                {"expression": "1d20", "purpose": "Basic roll"}
+            ]
+        
         # 4. Roll dice as requested
         dice_results = []
         for req in dice_requests:
@@ -694,14 +719,54 @@ class CombatResolver(QObject):
             
         # 6. Parse the resolution
         try:
-            # Extract the first JSON object from the response
-            json_match = re.search(r'\{[\s\S]*\}', resolution_response)
+            # Clean the LLM response to extract JSON properly
+            resolution_text = resolution_response
+            
+            # Fix 1: Strip code block markers if they exist
+            resolution_text = re.sub(r'```(?:json)?\s*', '', resolution_text)
+            resolution_text = re.sub(r'```\s*$', '', resolution_text)
+            
+            # Fix 2: Try to extract JSON even if there's other text around it
+            json_match = re.search(r'\{[\s\S]*\}', resolution_text)
             if not json_match:
                 print(f"[CombatResolver] Could not find JSON in LLM resolution response")
-                return None
+                # Create a fallback resolution
+                resolution = {
+                    "narrative": f"The {active_combatant.get('name', 'combatant')} attempted an action but the outcome was unclear.",
+                    "updates": []
+                }
+            else:
+                json_str = json_match.group(0)
+                try:
+                    resolution = json.loads(json_str)
+                except json.JSONDecodeError as e:
+                    print(f"[CombatResolver] JSON decode error in resolution: {e}")
+                    # Try to clean up the JSON string further
+                    cleaned_json = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas
+                    cleaned_json = re.sub(r',\s*]', ']', cleaned_json)  # Remove trailing commas in arrays
+                    try:
+                        resolution = json.loads(cleaned_json)
+                    except json.JSONDecodeError:
+                        print(f"[CombatResolver] Failed to parse resolution JSON even after cleanup, creating fallback")
+                        # Create fallback resolution
+                        resolution = {
+                            "narrative": f"The {active_combatant.get('name', 'combatant')} made an attempt, but a technical issue prevented recording the exact outcome.",
+                            "updates": []
+                        }
+            
+            # Validate required fields and provide defaults if missing
+            if "narrative" not in resolution:
+                print(f"[CombatResolver] Missing 'narrative' field in resolution, adding default")
+                resolution["narrative"] = f"The {active_combatant.get('name', 'combatant')} completed their action."
                 
-            json_str = json_match.group(0)
-            resolution = json.loads(json_str)
+            if "updates" not in resolution:
+                print(f"[CombatResolver] Missing 'updates' field in resolution, adding default")
+                resolution["updates"] = []
+                
+            # Extra safety check to ensure updates is a list
+            if not isinstance(resolution.get("updates"), list):
+                print(f"[CombatResolver] 'updates' is not a list, fixing")
+                resolution["updates"] = []
             
             # CRITICAL FIX: Completely replace the narrative HP extraction with 
             # a better approach that avoids contaminating HP values between combatants
@@ -711,15 +776,51 @@ class CombatResolver(QObject):
             # Instead, we'll only use the proper "updates" field from the LLM
             if "updates" in resolution and isinstance(resolution["updates"], list):
                 # Verify each update is properly formatted and has the necessary fields
+                verified_updates = []
                 for update in resolution["updates"]:
+                    # Skip updates without a name
                     if "name" not in update:
-                        print(f"[CombatResolver] WARNING: Update missing 'name' field: {update}")
+                        print(f"[CombatResolver] WARNING: Skipping update without 'name' field: {update}")
                         continue
                         
-                    # Just trust the HP value the LLM gives in the updates section
-                    # Only log the value for debugging
+                    # Make a safe copy of the update to ensure we don't modify the original
+                    verified_update = {"name": update["name"]}
+                    
+                    # Handle HP updates safely
                     if "hp" in update:
-                        print(f"[CombatResolver] DEBUG: Update has HP {update['hp']} for {update['name']}")
+                        # Ensure HP is an integer using our helper function
+                        try:
+                            # Find the current HP for this combatant if available
+                            current_hp = 0
+                            for c in combatants:
+                                if c.get("name") == update["name"]:
+                                    current_hp = c.get("hp", 0)
+                                    break
+                                    
+                            # Process the HP update
+                            processed_hp = self._process_hp_update(
+                                target_name=update["name"],
+                                hp_update=update["hp"],
+                                current_hp=current_hp
+                            )
+                            
+                            # Store the processed HP in the verified update
+                            verified_update["hp"] = processed_hp
+                        except Exception as e:
+                            print(f"[CombatResolver] Error validating HP update: {e}")
+                    
+                    # Copy other fields directly
+                    if "status" in update:
+                        verified_update["status"] = update["status"]
+                    if "limited_use" in update:
+                        verified_update["limited_use"] = update["limited_use"]
+                    if "death_saves" in update:
+                        verified_update["death_saves"] = update["death_saves"]
+                        
+                    verified_updates.append(verified_update)
+                
+                # Replace with verified updates
+                resolution["updates"] = verified_updates
                         
             # Add the original action and dice rolls to the resolution
             resolution["action"] = action
@@ -728,7 +829,13 @@ class CombatResolver(QObject):
             return resolution
         except Exception as e:
             print(f"[CombatResolver] Error parsing LLM resolution: {str(e)}")
-            return None
+            # Create a minimal valid resolution as fallback
+            return {
+                "narrative": f"The {active_combatant.get('name', 'combatant')} acted, but a technical error prevented recording the outcome properly.",
+                "updates": [],
+                "action": action,
+                "dice": dice_results
+            }
             
     def _create_decision_prompt(self, combatants, active_idx, round_num):
         """
@@ -1075,4 +1182,55 @@ Return ONLY the JSON object with no other text.
             else:
                 callback(None, f"Could not find JSON in LLM response: {response}")
         except Exception as e:
-            callback(None, f"Error parsing LLM response: {str(e)}\nResponse: {response}") 
+            callback(None, f"Error parsing LLM response: {str(e)}\nResponse: {response}")
+
+    def _process_hp_update(self, target_name, hp_update, current_hp):
+        """
+        Process an HP update value, handling various formats.
+        
+        Args:
+            target_name: Name of the target for logging
+            hp_update: The HP update value (could be int, string, etc.)
+            current_hp: Current HP value as integer
+            
+        Returns:
+            new_hp_value: The new HP as an integer
+        """
+        try:
+            # Default to keeping current HP
+            new_hp_value = current_hp
+            
+            # First try to convert directly to int if it's already an integer
+            if isinstance(hp_update, int):
+                new_hp_value = max(0, hp_update)
+                print(f"[CombatResolver] Integer HP value {new_hp_value} for {target_name}")
+            elif isinstance(hp_update, str):
+                # Try direct conversion if it's a simple number string
+                if hp_update.strip().isdigit():
+                    new_hp_value = max(0, int(hp_update.strip()))
+                    print(f"[CombatResolver] String digit HP value {new_hp_value} for {target_name}")
+                # Check for "reduce by X" format
+                elif "reduce" in hp_update.lower():
+                    import re
+                    damage_match = re.search(r'\d+', hp_update)
+                    if damage_match:
+                        damage = int(damage_match.group(0))
+                        new_hp_value = max(0, current_hp - damage)
+                        print(f"[CombatResolver] Reduced {target_name}'s HP by {damage} to {new_hp_value}")
+                # Try to extract any number from the string
+                else:
+                    import re
+                    match = re.search(r'\d+', hp_update)
+                    if match:
+                        extracted_hp = int(match.group(0))
+                        new_hp_value = max(0, extracted_hp)
+                        print(f"[CombatResolver] Extracted HP value {new_hp_value} from string '{hp_update}' for {target_name}")
+                    else:
+                        print(f"[CombatResolver] Warning: Could not extract HP value from '{hp_update}' for {target_name}")
+            else:
+                print(f"[CombatResolver] Warning: Unexpected HP type {type(hp_update)} for {target_name}")
+                
+            return new_hp_value
+        except Exception as e:
+            print(f"[CombatResolver] Error processing HP update for {target_name}: {str(e)}")
+            return current_hp  # Return current HP on error 
