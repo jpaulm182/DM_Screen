@@ -113,15 +113,17 @@ def generate_entity_from_selection(parent, llm_service, selected_text, entity_ty
         if default_model and any(m["id"] == default_model for m in available_models):
             model_id = default_model
         else:
-            # Otherwise prefer OpenAI GPT-4.1 or Claude 3 Sonnet if available
+            # Prefer GPT-4.1 Mini as the default if available
             for m in available_models:
-                if m["id"] == ModelInfo.OPENAI_GPT4O:
+                if m["id"] == ModelInfo.OPENAI_GPT4O_MINI:
                     model_id = m["id"]
                     break
                 elif m["id"] == ModelInfo.ANTHROPIC_CLAUDE_3_SONNET:
                     model_id = m["id"]
                     break
-
+                elif m["id"] == ModelInfo.OPENAI_GPT4O:
+                    model_id = m["id"]
+                    break
             # If neither preferred model is available, use the first available model
             if model_id is None and available_models:
                 model_id = available_models[0]["id"]

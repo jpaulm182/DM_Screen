@@ -6,7 +6,7 @@ tactical decisions, which are then executed with dice rolls and
 properly reflected in the UI.
 """
 
-from app.core.llm_service import LLMService
+from app.core.llm_service import LLMService, ModelInfo
 import json
 import re
 import time
@@ -458,7 +458,17 @@ class CombatResolver(QObject):
         # 2. Get action decision from LLM
         print(f"[CombatResolver] Requesting action decision from LLM for {active_combatant.get('name', 'Unknown')}")
         try:
-            model_id = self.llm_service.get_available_models()[0]["id"]
+            # Prefer GPT-4.1 Mini for fast combat resolution if available
+            available_models = self.llm_service.get_available_models()
+            model_id = None
+            for m in available_models:
+                if m["id"] == ModelInfo.OPENAI_GPT4O_MINI:
+                    model_id = m["id"]
+                    break
+            if not model_id:
+                # Fallback: use first available model
+                model_id = available_models[0]["id"]
+            # Now use model_id for LLM calls
             decision_response = self.llm_service.generate_completion(
                 model=model_id,
                 messages=[{"role": "user", "content": prompt}],

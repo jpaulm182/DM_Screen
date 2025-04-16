@@ -383,19 +383,26 @@ class LLMService(QObject):
             if not available_models:
                 raise ValueError("No LLM models available. Please set up API keys.")
             
-            # Prefer OpenAI GPT-4.1 if available, otherwise use the first available model
+            # Prefer OpenAI GPT-4.1 Mini if available, otherwise use the first available model
             default_model = None
             for m in available_models:
-                if m["id"] == ModelInfo.OPENAI_GPT4O:
+                # Prefer GPT-4.1 Mini as the default
+                if m["id"] == ModelInfo.OPENAI_GPT4O_MINI:
                     default_model = m["id"]
                     break
+                # Fallbacks for Anthropic or other OpenAI models
                 elif m["id"] == ModelInfo.ANTHROPIC_CLAUDE_3_SONNET:
                     default_model = m["id"]
                     break
+                elif m["id"] == ModelInfo.OPENAI_GPT4O:
+                    default_model = m["id"]
+                    break
             
+            # If no preferred model found, use the first available
             if default_model is None and available_models:
                 default_model = available_models[0]["id"]
             
+            # Set the model to the selected default
             model = default_model
         
         # Create a simple message array with the prompt as user input
