@@ -31,10 +31,10 @@ import random
 import re
 import json # Added json import
 import copy
+import time
 
 from app.ui.panels.base_panel import BasePanel
 from app.ui.panels.panel_category import PanelCategory
-from app.ui.widgets.combatant_details_widget import CombatantDetailsWidget
 
 # D&D 5e Conditions
 CONDITIONS = [
@@ -949,6 +949,9 @@ class CombatTrackerPanel(BasePanel):
         self.combatants = {} # Store combatant data, keyed by row index
         self.monster_id_counter = 0  # Counter for unique monster IDs
         
+        # Add missing property initialization
+        self.show_details_pane = False
+        
         # --- NEW: Flag to prevent sorting during LLM resolution --- 
         self._is_resolving_combat = False 
         
@@ -1048,192 +1051,112 @@ class CombatTrackerPanel(BasePanel):
         self.initiative_table.cellChanged.connect(self._handle_cell_changed)
     
     def _setup_ui(self):
-        """Set up the combat tracker panel UI"""
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(4, 4, 4, 4)
-        main_layout.setSpacing(4)
+        """Setup the UI components"""
+        layout = QVBoxLayout()
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(5)
         
-        # Create main splitter for combat tracker and details view
+        # Create a splitter to allow manual resizing between the table and log
         self.main_splitter = QSplitter(Qt.Vertical)
         
-        # Upper section: combat tracker
-        combat_tracker_widget = QWidget()
-        combat_layout = QVBoxLayout(combat_tracker_widget)
-        combat_layout.setContentsMargins(0, 0, 0, 0)
-        combat_layout.setSpacing(4)
+        # --- Initiative Table Area ---
+        table_container = QWidget()
+        table_layout = QVBoxLayout(table_container)
+        table_layout.setContentsMargins(0, 0, 0, 0)
         
-        # --- Controls Area ---
-        control_layout = self._setup_control_area()
-        combat_layout.addLayout(control_layout)
-        
-        # --- Initiative Table ---
-        self.initiative_table = QTableWidget()
-        
-        # Set table properties to ensure proper visibility
-        self.initiative_table.setAlternatingRowColors(True)
-        self.initiative_table.setShowGrid(True)
-        self.initiative_table.setGridStyle(Qt.SolidLine)
-        
-        # Make sure the table expands to fill available space
-        self.initiative_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        
-        # Set column count and headers - adding Max HP column
-        self.initiative_table.setColumnCount(8)
-        self.initiative_table.setHorizontalHeaderLabels([
-            "Name", "Init", "HP", "Max HP", "AC", "Status", "Conc", "Type"
-        ])
-        
-        # Configure header and column properties
-        header = self.initiative_table.horizontalHeader()
-        header.setVisible(True)  # Ensure header is always visible
-        header.setSectionResizeMode(0, QHeaderView.Stretch)  # Name stretches
-        
-        # Set reasonable default column widths
-        default_widths = [150, 40, 50, 50, 40, 100, 40, 60]
-        for col, width in enumerate(default_widths):
-            self.initiative_table.setColumnWidth(col, width)
-            
-        # Set other header sections to resize to content
-        for col in range(1, 8):
-            header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
-        
-        # Configure selection behavior
+        # Create initiative table
+        self.initiative_table = QTableWidget(0, 8)  # Changed to 8 columns
+        self.initiative_table.setHorizontalHeaderLabels(["Name", "Initiative", "HP", "Max HP", "AC", "Status", "Conc.", "Type"])
         self.initiative_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.initiative_table.setSelectionMode(QTableWidget.SingleSelection)
+        self.initiative_table.setSelectionMode(QTableWidget.ExtendedSelection)
+        self.initiative_table.setEditTriggers(QTableWidget.AllEditTriggers)
         
-        # Enable sorting
-        self.initiative_table.setSortingEnabled(False)  # We'll handle sorting manually
+        # Set column widths
+        self.initiative_table.setColumnWidth(0, 150)  # Name
+        self.initiative_table.setColumnWidth(1, 80)   # Initiative
+        self.initiative_table.setColumnWidth(2, 80)   # HP
+        self.initiative_table.setColumnWidth(3, 80)   # Max HP
+        self.initiative_table.setColumnWidth(4, 60)   # AC
+        self.initiative_table.setColumnWidth(5, 120)  # Status
+        self.initiative_table.setColumnWidth(6, 60)   # Concentration
+        self.initiative_table.setColumnWidth(7, 100)  # Type
         
-        # Connect signals
-        self.initiative_table.cellChanged.connect(self._handle_cell_changed)
-        self.initiative_table.cellDoubleClicked.connect(self._view_combatant_details)
+        # Set header behavior
+        header = self.initiative_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)       # Name stretches
+        header.setSectionResizeMode(5, QHeaderView.Stretch)       # Status stretches
+        header.setSectionResizeMode(1, QHeaderView.Fixed)         # Initiative fixed
+        header.setSectionResizeMode(2, QHeaderView.Fixed)         # HP fixed
+        header.setSectionResizeMode(3, QHeaderView.Fixed)         # Max HP fixed  
+        header.setSectionResizeMode(4, QHeaderView.Fixed)         # AC fixed
+        header.setSectionResizeMode(6, QHeaderView.Fixed)         # Conc fixed
+        header.setSectionResizeMode(7, QHeaderView.Fixed)         # Type fixed
+        
+        # Connect context menu
         self.initiative_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.initiative_table.customContextMenuRequested.connect(self._show_context_menu)
         
-        combat_layout.addWidget(self.initiative_table)
+        # Connect change signals
+        self.initiative_table.cellChanged.connect(self._handle_cell_changed)
         
-        # --- Add Combatant Area ---
+        # Set up the custom delegates
+        self._setup_delegates()
+        
+        # --- Control Area with three rows: Round/Timer, Buttons, Add Combatant ---
+        control_layout = self._setup_control_area()
+        table_layout.addLayout(control_layout)
+        
+        # Add add combatant controls if needed
         add_combatant_layout = self._setup_add_combatant_controls()
-        combat_layout.addLayout(add_combatant_layout)
+        table_layout.addLayout(add_combatant_layout)
         
-        # Add combat tracker widget to splitter
-        self.main_splitter.addWidget(combat_tracker_widget)
+        # Add table to layout
+        table_layout.addWidget(self.initiative_table)
         
-        # --- Combatant Details Area ---
-        self.details_widget = QWidget()
-        self.details_layout = QVBoxLayout(self.details_widget)
-        self.details_layout.setContentsMargins(0, 0, 0, 0)
+        # Add table to main splitter
+        self.main_splitter.addWidget(table_container)
         
-        # Header area with title and toggle button
-        details_header = QHBoxLayout()
-        self.details_title = QLabel("Combatant Details")
-        self.details_title.setStyleSheet("font-weight: bold; font-size: 14px;")
-        details_header.addWidget(self.details_title)
+        # --- Combat Log Area (NEW) ---
+        self.log_container = QWidget()
+        log_layout = QVBoxLayout(self.log_container)
+        log_layout.setContentsMargins(0, 0, 0, 0)
         
-        details_header.addStretch()
+        # Header for combat log
+        log_header = QHBoxLayout()
+        log_header.addWidget(QLabel("<b>Combat Log & Results</b>"))
         
-        self.toggle_details_btn = QPushButton("Show Details")
-        self.toggle_details_btn.setCheckable(True)
-        self.toggle_details_btn.setChecked(False)
-        self.toggle_details_btn.clicked.connect(self._toggle_details_pane)
-        details_header.addWidget(self.toggle_details_btn)
+        # Add clear button for log
+        clear_log_btn = QPushButton("Clear Log")
+        clear_log_btn.setMaximumWidth(100)
+        clear_log_btn.clicked.connect(self._clear_combat_log)
+        log_header.addWidget(clear_log_btn)
         
-        self.details_layout.addLayout(details_header)
+        log_layout.addLayout(log_header)
         
-        # Details content area
-        self.details_content = QScrollArea()
-        self.details_content.setWidgetResizable(True)
-        self.details_content.setFrameShape(QFrame.StyledPanel)
+        # Create text area for combat log
+        self.combat_log_text = QTextEdit()
+        self.combat_log_text.setReadOnly(True)
+        self.combat_log_text.setMinimumHeight(100)
+        self.combat_log_text.setStyleSheet("""
+            QTextEdit { 
+                background-color: white;
+                color: #000000;
+                font-family: Arial, sans-serif;
+                font-size: 12px;
+            }
+        """)
+        log_layout.addWidget(self.combat_log_text)
         
-        # Widget to contain actual stats
-        self.stats_widget = QWidget()
-        self.stats_layout = QVBoxLayout(self.stats_widget)
+        # Add log container to splitter
+        self.main_splitter.addWidget(self.log_container)
         
-        # Add component sections for the stats
-        # Basic Info
-        self.basic_info_group = QGroupBox("Basic Info")
-        basic_info_layout = QFormLayout(self.basic_info_group)
-        
-        self.name_label = QLabel("")
-        basic_info_layout.addRow("Name:", self.name_label)
-        
-        self.type_label = QLabel("")
-        basic_info_layout.addRow("Type:", self.type_label)
-        
-        self.ac_details_label = QLabel("")
-        basic_info_layout.addRow("AC:", self.ac_details_label)
-        
-        self.hp_details_label = QLabel("")
-        basic_info_layout.addRow("HP:", self.hp_details_label)
-        
-        self.speed_label = QLabel("")
-        basic_info_layout.addRow("Speed:", self.speed_label)
-        
-        self.stats_layout.addWidget(self.basic_info_group)
-        
-        # Ability Scores
-        self.abilities_group = QGroupBox("Ability Scores")
-        abilities_layout = QHBoxLayout(self.abilities_group)
-        
-        self.str_label = QLabel("STR\n-")
-        self.str_label.setAlignment(Qt.AlignCenter)
-        abilities_layout.addWidget(self.str_label)
-        
-        self.dex_label = QLabel("DEX\n-")
-        self.dex_label.setAlignment(Qt.AlignCenter)
-        abilities_layout.addWidget(self.dex_label)
-        
-        self.con_label = QLabel("CON\n-")
-        self.con_label.setAlignment(Qt.AlignCenter)
-        abilities_layout.addWidget(self.con_label)
-        
-        self.int_label = QLabel("INT\n-")
-        self.int_label.setAlignment(Qt.AlignCenter)
-        abilities_layout.addWidget(self.int_label)
-        
-        self.wis_label = QLabel("WIS\n-")
-        self.wis_label.setAlignment(Qt.AlignCenter)
-        abilities_layout.addWidget(self.wis_label)
-        
-        self.cha_label = QLabel("CHA\n-")
-        self.cha_label.setAlignment(Qt.AlignCenter)
-        abilities_layout.addWidget(self.cha_label)
-        
-        self.stats_layout.addWidget(self.abilities_group)
-        
-        # Actions & Features Tab Widget
-        self.actions_tab = QTabWidget()
-        
-        # Actions tab
-        self.actions_widget = QWidget()
-        self.actions_layout = QVBoxLayout(self.actions_widget)
-        self.actions_layout.setContentsMargins(5, 5, 5, 5)
-        self.actions_tab.addTab(self.actions_widget, "Actions")
-        
-        # Features/traits tab
-        self.traits_widget = QWidget()
-        self.traits_layout = QVBoxLayout(self.traits_widget)
-        self.traits_layout.setContentsMargins(5, 5, 5, 5)
-        self.actions_tab.addTab(self.traits_widget, "Features")
-        
-        # Spells tab
-        self.spells_widget = QWidget()
-        self.spells_layout = QVBoxLayout(self.spells_widget)
-        self.spells_layout.setContentsMargins(5, 5, 5, 5)
-        self.actions_tab.addTab(self.spells_widget, "Spells")
-        
-        self.stats_layout.addWidget(self.actions_tab)
-        
-        # Set the stats widget as the content of the scroll area
-        self.details_content.setWidget(self.stats_widget)
-        self.details_layout.addWidget(self.details_content)
-        
-        # Add details widget to splitter but hide initially
-        self.main_splitter.addWidget(self.details_widget)
-        self.details_widget.hide()
+        # Set reasonable initial sizes
+        self.main_splitter.setSizes([600, 200])
         
         # Add the splitter to the main layout
-        main_layout.addWidget(self.main_splitter)
+        layout.addWidget(self.main_splitter)
+        
+        self.setLayout(layout)
         
         # Initialize UI components
         self.initiative_table.setMinimumHeight(200)
@@ -2420,7 +2343,7 @@ class CombatTrackerPanel(BasePanel):
             QMessageBox.warning(
                 self, 
                 "Cannot Start Combat", 
-                "You need at least one monster to run combat against player characters.\\n\\n" # Updated message
+                "You need at least one monster to run combat against player characters.\n\n" # Updated message
                 "Add monsters from the Monster Panel."
             )
             return
@@ -2445,6 +2368,34 @@ class CombatTrackerPanel(BasePanel):
         # Disable button while processing
         self.fast_resolve_button.setEnabled(False)
         self.fast_resolve_button.setText("Resolving...")
+
+        # Clear the combat log before starting
+        self.combat_log_text.clear()
+        
+        # Add an initial heading to the combat log
+        self.combat_log_text.append("<h3 style='color:#000088;'>Combat Resolution Started</h3>")
+        self.combat_log_text.append("<p>Resolving combat turn by turn. You'll see updates here as the combat progresses.</p>")
+        
+        # Add the initial combat state to the combat log
+        combatants_html = "<p><strong>Initial Combat State:</strong></p><ul>"
+        for c in combat_state.get("combatants", []):
+            name = c.get("name", "Unknown")
+            hp = c.get("hp", 0)
+            max_hp = c.get("max_hp", hp)
+            ac = c.get("ac", 10)
+            type_str = c.get("type", "unknown")
+            
+            # Format based on type
+            if type_str.lower() == "monster":
+                color = "#8B0000"  # Dark red for monsters
+            else:
+                color = "#000080"  # Navy for characters
+                
+            combatants_html += f"<li><span style='color:{color};'>{name}</span>: HP {hp}/{max_hp}, AC {ac}</li>"
+        
+        combatants_html += "</ul>"
+        self.combat_log_text.append(combatants_html)
+        self.combat_log_text.append("<hr>")
 
         # --- SET FLAG before starting resolution --- 
         self._is_resolving_combat = True
@@ -2551,7 +2502,6 @@ class CombatTrackerPanel(BasePanel):
             # Apply combatant updates to the table
             if combatants:
                 # Make a copy of combatants to avoid any reference issues
-                import copy
                 combatants_copy = copy.deepcopy(combatants)
                 self._update_combatants_in_table(combatants_copy)
             
@@ -2583,34 +2533,23 @@ class CombatTrackerPanel(BasePanel):
                         result=result
                     )
                 
-                # Update the live combat log with high contrast colors
-                if self.combat_log_widget:
-                    # Add the turn info to the combat log
-                    turn_text = f"<div style='margin-bottom:10px;'>"
-                    turn_text += f"<h4 style='color:#000088; margin:0;'>Round {round_num} - {actor}'s Turn:</h4>"
-                    turn_text += f"<p style='color:#000000; margin-top:5px;'>{action}</p>"
-                    if result:
-                        turn_text += f"<p style='color:#000000; margin-top:5px;'><strong>Result:</strong> {result}</p>"
-                    if dice_summary:
-                        dice_html = dice_summary.replace('\n', '<br>')
-                        turn_text += f"<p style='color:#000000; margin-top:5px;'><strong>Dice:</strong><br>{dice_html}</p>"
-                    turn_text += f"<hr style='border:1px solid #cccccc; margin:10px 0;'></div>"
-                    
-                    # Append to the live combat log
-                    self.combat_log_widget.log_text.append(turn_text)
-                    # Make sure the latest entry is visible
-                    scrollbar = self.combat_log_widget.log_text.verticalScrollBar()
-                    scrollbar.setValue(scrollbar.maximum())
+                # Update the combat log with high contrast colors - use the persistent log instead of popup
+                turn_text = f"<div style='margin-bottom:10px;'>"
+                turn_text += f"<h4 style='color:#000088; margin:0;'>Round {round_num} - {actor}'s Turn:</h4>"
+                turn_text += f"<p style='color:#000000; margin-top:5px;'>{action}</p>"
+                if result:
+                    turn_text += f"<p style='color:#000000; margin-top:5px;'><strong>Result:</strong> {result}</p>"
+                if dice_summary:
+                    dice_html = dice_summary.replace('\n', '<br>')
+                    turn_text += f"<p style='color:#000000; margin-top:5px;'><strong>Dice:</strong><br>{dice_html}</p>"
+                turn_text += f"<hr style='border:1px solid #cccccc; margin:10px 0;'></div>"
                 
-                # Emit signal to show turn result from main thread
-                # Send: actor, round_num, action, result, dice_summary
-                self.show_turn_result_signal.emit(
-                    actor, str(round_num), action, result, 
-                    dice_summary if dice_summary else ""
-                )
+                # Add to the persistent combat log
+                self.combat_log_text.append(turn_text)
+                scrollbar = self.combat_log_text.verticalScrollBar()
+                scrollbar.setValue(scrollbar.maximum())
             
             # Process any UI events to ensure the table updates
-            from PySide6.QtWidgets import QApplication
             QApplication.processEvents()
         except Exception as e:
             import traceback
@@ -2619,85 +2558,162 @@ class CombatTrackerPanel(BasePanel):
 
     def _add_initial_combat_state_to_log(self, combat_state):
         """Add initial combat state to the log at the start of combat"""
-        if not self.combat_log_widget:
-            return
-            
-        # Get combatants and build a summary
-        combatants = combat_state.get("combatants", [])
-        if not combatants:
-            return
-            
-        # Create summary HTML with better contrast colors
-        html = "<h3 style='color: #000088;'>Initial Combat State</h3>"
-        html += "<p style='color: #000000;'>Combatants in initiative order:</p>"
-        html += "<ul style='color: #000000;'>"
-        
-        # Sort by initiative
-        sorted_combatants = sorted(combatants, key=lambda c: -c.get("initiative", 0))
-        
-        for c in sorted_combatants:
-            name = c.get("name", "Unknown")
-            hp = c.get("hp", 0)
-            max_hp = c.get("max_hp", hp)
-            ac = c.get("ac", 10)
-            initiative = c.get("initiative", 0)
-            combatant_type = c.get("type", "unknown")
-            
-            # Different display for monsters vs characters with better styling
-            if combatant_type.lower() == "monster":
-                html += f"<li><strong style='color: #880000;'>{name}</strong> (Monster) - Initiative: {initiative}, AC: {ac}, HP: {hp}/{max_hp}</li>"
-            else:
-                html += f"<li><strong style='color: #000088;'>{name}</strong> (PC) - Initiative: {initiative}, AC: {ac}, HP: {hp}/{max_hp}</li>"
+        # Use the safer _get_combat_log method 
+        combat_log = self._get_combat_log()
+        if not combat_log:
+            # Just add to the text edit instead if we can't get a valid combat log
+            print("[CombatTracker] No external combat log available, using local text widget")
+            try:
+                # Create summary HTML with better contrast colors
+                html = "<h3 style='color: #000088;'>Initial Combat State</h3>"
+                html += "<p style='color: #000000;'>Combatants in initiative order:</p>"
+                html += "<ul style='color: #000000;'>"
                 
-        html += "</ul>"
-        html += "<p style='color: #000000;'><strong>Combat begins now!</strong></p>"
-        html += "<hr style='border: 1px solid #000088;'>"
-        
-        # Add to the log
-        self.combat_log_widget.log_text.append(html)
-    
+                # Get combatants and build a summary
+                combatants = combat_state.get("combatants", [])
+                if not combatants:
+                    return
+                    
+                # Sort by initiative
+                sorted_combatants = sorted(combatants, key=lambda c: -c.get("initiative", 0))
+                
+                for c in sorted_combatants:
+                    name = c.get("name", "Unknown")
+                    hp = c.get("hp", 0)
+                    max_hp = c.get("max_hp", hp)
+                    ac = c.get("ac", 10)
+                    initiative = c.get("initiative", 0)
+                    combatant_type = c.get("type", "unknown")
+                    
+                    # Different display for monsters vs characters with better styling
+                    if combatant_type.lower() == "monster":
+                        html += f"<li><strong style='color: #880000;'>{name}</strong> (Monster) - Initiative: {initiative}, AC: {ac}, HP: {hp}/{max_hp}</li>"
+                    else:
+                        html += f"<li><strong style='color: #000088;'>{name}</strong> (PC) - Initiative: {initiative}, AC: {ac}, HP: {hp}/{max_hp}</li>"
+                        
+                html += "</ul>"
+                html += "<p style='color: #000000;'><strong>Combat begins now!</strong></p>"
+                html += "<hr style='border: 1px solid #000088;'>"
+                
+                # Add to local log if available
+                if hasattr(self, 'combat_log_text') and self.combat_log_text:
+                    self.combat_log_text.append(html)
+            except Exception as e:
+                print(f"[CombatTracker] Error adding initial state to local log: {e}")
+            return
+            
+        # Get combatants and build a summary for external log
+        try:
+            combatants = combat_state.get("combatants", [])
+            if not combatants:
+                return
+                
+            # Create summary HTML with better contrast colors
+            html = "<h3 style='color: #000088;'>Initial Combat State</h3>"
+            html += "<p style='color: #000000;'>Combatants in initiative order:</p>"
+            html += "<ul style='color: #000000;'>"
+            
+            # Sort by initiative
+            sorted_combatants = sorted(combatants, key=lambda c: -c.get("initiative", 0))
+            
+            for c in sorted_combatants:
+                name = c.get("name", "Unknown")
+                hp = c.get("hp", 0)
+                max_hp = c.get("max_hp", hp)
+                ac = c.get("ac", 10)
+                initiative = c.get("initiative", 0)
+                combatant_type = c.get("type", "unknown")
+                
+                # Different display for monsters vs characters with better styling
+                if combatant_type.lower() == "monster":
+                    html += f"<li><strong style='color: #880000;'>{name}</strong> (Monster) - Initiative: {initiative}, AC: {ac}, HP: {hp}/{max_hp}</li>"
+                else:
+                    html += f"<li><strong style='color: #000088;'>{name}</strong> (PC) - Initiative: {initiative}, AC: {ac}, HP: {hp}/{max_hp}</li>"
+                    
+            html += "</ul>"
+            html += "<p style='color: #000000;'><strong>Combat begins now!</strong></p>"
+            html += "<hr style='border: 1px solid #000088;'>"
+            
+            # Add to the log if it has log_text attribute
+            if hasattr(combat_log, 'log_text'):
+                combat_log.log_text.append(html)
+        except Exception as e:
+            print(f"[CombatTracker] Error adding initial state to combat log: {e}")
+            
     def _create_live_combat_log(self):
         """Create a live combat log widget that displays during combat resolution"""
-        from PySide6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QDialogButtonBox, QPushButton
-        
-        # Create the dialog
-        self.combat_log_widget = QDialog(self)
-        self.combat_log_widget.setWindowTitle("Combat In Progress")
-        self.combat_log_widget.setWindowFlags(
-            self.combat_log_widget.windowFlags() | Qt.Tool | Qt.WindowStaysOnTopHint
-        )
-        self.combat_log_widget.setMinimumSize(500, 500)
-        
-        # Create layout
-        layout = QVBoxLayout(self.combat_log_widget)
-        
-        # Add text display for combat log with improved contrast
-        self.combat_log_widget.log_text = QTextEdit()
-        self.combat_log_widget.log_text.setReadOnly(True)
-        self.combat_log_widget.log_text.setStyleSheet("""
-            QTextEdit { 
-                background-color: white;
-                color: #000000;
-                font-family: Arial, sans-serif;
-                font-size: 14px;
-                font-weight: 500;
-            }
-        """)
-        layout.addWidget(self.combat_log_widget.log_text)
-        
-        # Add header text
-        header_text = "<h2 style='color: #000088;'>Combat In Progress</h2>"
-        header_text += "<p style='color: #000000;'><strong>Watch as the battle unfolds turn by turn! Combat details will appear here and in popups.</strong></p>"
-        header_text += "<hr style='border: 1px solid #000088;'>"
-        self.combat_log_widget.log_text.setHtml(header_text)
-        
-        # Add a close button that just hides the dialog (combat continues)
-        btn_box = QDialogButtonBox()
-        close_btn = QPushButton("Hide Log")
-        close_btn.clicked.connect(self.combat_log_widget.hide)
-        btn_box.addButton(close_btn, QDialogButtonBox.ActionRole)
-        layout.addWidget(btn_box)
-    
+        try:
+            from PySide6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QDialogButtonBox, QPushButton
+            
+            # Create the dialog
+            self.combat_log_widget = QDialog(self)
+            self.combat_log_widget.setWindowTitle("Combat In Progress")
+            self.combat_log_widget.setWindowFlags(
+                self.combat_log_widget.windowFlags() | Qt.Tool | Qt.WindowStaysOnTopHint
+            )
+            self.combat_log_widget.setMinimumSize(500, 500)
+            
+            # Create layout
+            layout = QVBoxLayout(self.combat_log_widget)
+            
+            # Add text display for combat log with improved contrast
+            self.combat_log_widget.log_text = QTextEdit()
+            self.combat_log_widget.log_text.setReadOnly(True)
+            self.combat_log_widget.log_text.setStyleSheet("""
+                QTextEdit { 
+                    background-color: white;
+                    color: #000000;
+                    font-family: Arial, sans-serif;
+                    font-size: 14px;
+                    font-weight: 500;
+                }
+            """)
+            layout.addWidget(self.combat_log_widget.log_text)
+            
+            # Add header text
+            header_text = "<h2 style='color: #000088;'>Combat In Progress</h2>"
+            header_text += "<p style='color: #000000;'><strong>Watch as the battle unfolds turn by turn! Combat details will appear here and in popups.</strong></p>"
+            header_text += "<hr style='border: 1px solid #000088;'>"
+            self.combat_log_widget.log_text.setHtml(header_text)
+            
+            # Add a close button that just hides the dialog (combat continues)
+            btn_box = QDialogButtonBox()
+            close_btn = QPushButton("Hide Log")
+            close_btn.clicked.connect(self.combat_log_widget.hide)
+            btn_box.addButton(close_btn, QDialogButtonBox.ActionRole)
+            layout.addWidget(btn_box)
+            
+            # Add create_entry method to make it compatible with the combat log interface
+            def create_entry(category=None, actor=None, action=None, target=None, result=None, round=None, turn=None):
+                # Create a simple entry representation
+                entry = {
+                    "category": category,
+                    "actor": actor,
+                    "action": action,
+                    "target": target,
+                    "result": result,
+                    "round": round,
+                    "turn": turn
+                }
+                # Format the entry into HTML
+                html = f"<p><strong>{actor}:</strong> {action}"
+                if target:
+                    html += f" <strong>{target}</strong>"
+                if result:
+                    html += f" - {result}"
+                html += "</p>"
+                # Add it to the log text if possible
+                if hasattr(self.combat_log_widget, 'log_text'):
+                    self.combat_log_widget.log_text.append(html)
+                return entry
+                
+            # Add the method to the widget
+            self.combat_log_widget.create_entry = create_entry
+            
+        except Exception as e:
+            print(f"[CombatTracker] Error creating live combat log: {e}")
+            self.combat_log_widget = None
+
     @Slot(str, str, str, str, str)
     def _show_turn_result_slot(self, actor, round_num, action, result, dice_summary):
         """
@@ -3134,255 +3150,182 @@ class CombatTrackerPanel(BasePanel):
         return len(rows_to_remove), update_summaries
 
     def _get_combat_log(self):
-        """Get the combat log panel instance from the AppState."""
-        # Check if panel_manager exists and has the required method
-        if hasattr(self.app_state, 'panel_manager') and hasattr(self.app_state.panel_manager, 'get_panel_widget'):
-            try:
-                # Attempt to get the combat log panel
-                combat_log_panel = self.app_state.panel_manager.get_panel_widget("combat_log")
-                if combat_log_panel:
-                    # Return the panel if found and valid
-                    return combat_log_panel
-                else:
-                    # Log if the panel name is registered but the widget is None
-                    print("[CombatTracker] Warning: Combat Log panel found but widget is None.")
-            except Exception as e:
-                # Log any error during retrieval
-                print(f"[CombatTracker] Error getting combat log panel: {e}")
-        else:
-            # Log if panel_manager or its method is missing
-            print("[CombatTracker] Warning: AppState.panel_manager or get_panel_widget not found.")
+        """Get reference to the combat log panel for integration or create a local fallback"""
+        # If we already have a valid combat log widget with create_entry method, return it
+        if hasattr(self, 'combat_log_widget') and self.combat_log_widget:
+            if hasattr(self.combat_log_widget, 'create_entry'):
+                return self.combat_log_widget
+            else:
+                print("[CombatTracker] Warning: Cached combat_log_widget doesn't have create_entry method")
+                # Clear the invalid reference - we'll try to create a fallback
+                self.combat_log_widget = None
             
-        # Return None if the panel cannot be retrieved
-        return None
-
-    def _log_combat_action(self, category, actor, action, target=None, result=None, round=None, turn=None):
-        """Log a combat action to the combat log panel if available, using invokeMethod for thread safety."""
-        # First, try to get the combat log panel instance
-        combat_log = self._get_combat_log()
-        
-        # Proceed only if the combat log panel was successfully retrieved
-        if combat_log:
-            # Use QMetaObject.invokeMethod to ensure the call happens in the main GUI thread
-            # This is crucial if this method might be called from a background thread (e.g., combat resolver)
-            QMetaObject.invokeMethod(
-                combat_log, 
-                'add_log_entry',        # The method name to call on the combat_log object
-                Qt.QueuedConnection,    # Ensures the call is queued in the main thread's event loop
-                # --- Arguments passed to add_log_entry ---
-                # Use Q_ARG to specify the type and value of each argument
-                Q_ARG(str, category or ""),                     # Pass category or empty string if None
-                Q_ARG(str, actor or ""),                        # Pass actor or empty string if None
-                Q_ARG(str, action or ""),                       # Pass action or empty string if None
-                Q_ARG(str, target if target is not None else ""),# Pass target or empty string
-                Q_ARG(str, result if result is not None else ""),# Pass result or empty string
-                Q_ARG(int, round if round is not None else -1),  # Pass round or -1 if None
-                Q_ARG(int, turn if turn is not None else -1)    # Pass turn or -1 if None
-            )
-        # If the combat log panel isn't available, we don't attempt to log
-        # else:
-        #     print("[CombatTracker] Combat log panel not available, skipping log entry.") # Optional: uncomment for debugging
-
-    def save_state(self):
-        """Save the current state of the combat tracker panel."""
-        # Initialize the state dictionary with basic combat info
-        state = {
-            "round": self.current_round,
-            "turn": self.current_turn,
-            "elapsed_time": self.combat_time,
-            "combatants": [], # List to hold state of each combatant
-            "death_saves": self.death_saves, # Store death saves data (dict: row -> {successes, failures})
-            "concentrating": list(self.concentrating) # Store concentrating combatants (set of row indices)
-        }
-        
-        # Iterate through each row in the initiative table to save combatant data
-        for row in range(self.initiative_table.rowCount()):
-            # Dictionary to store the state of the current combatant
-            combatant_state = {}
-            
-            # Define the keys corresponding to table columns for easy iteration
-            # Columns: Name, Init, HP, Max HP, AC, Status, Conc, Type
-            keys = ["name", "initiative", "hp", "max_hp", "ac", "status", "concentration", "type"]
-            
-            # Extract data for each relevant column
-            for col, key in enumerate(keys):
-                # Get the QTableWidgetItem from the current cell
-                item = self.initiative_table.item(row, col)
-                
-                # Handle different data types based on column
-                if col == 6:  # Concentration column (index 6)
-                    # Store boolean based on checkbox state
-                    combatant_state[key] = item.checkState() == Qt.Checked if item else False
-                elif col == 0: # Name column (index 0)
-                    # Store text and also UserRole data (combatant type)
-                    combatant_state[key] = item.text() if item else ""
-                    # Save the type stored in UserRole if available, otherwise use the 'type' column later
-                    user_role_type = item.data(Qt.UserRole) if item else None
-                    if user_role_type:
-                         combatant_state["user_role_type"] = user_role_type # Store separately for restore logic
-                else:
-                    # For other columns, store the text content
-                    combatant_state[key] = item.text() if item else ""
-            
-            # Ensure 'type' is saved correctly (prioritize UserRole, then column, then default)
-            combatant_state["type"] = combatant_state.pop("user_role_type", combatant_state.get("type", "manual"))
-
-            # Retrieve and save the detailed combatant data stored in self.combatants dictionary
-            if row in self.combatants:
-                # Store the associated data object/dictionary
-                # Note: Ensure this data is serializable (e.g., dict, list, primitives)
-                # If it's a complex object, you might need a custom serialization method
-                combatant_state["data"] = self.combatants[row] 
-            
-            # Add the combatant's state to the main state list
-            state["combatants"].append(combatant_state)
-            
-        # Return the complete state dictionary
-        return state
-
-    def restore_state(self, state):
-        """Restore the combat tracker state from a saved state dictionary."""
-        # Check if the provided state is valid (not None and is a dictionary)
-        if not state or not isinstance(state, dict):
-            print("[CombatTracker] Restore Error: Invalid or missing state data.")
-            return # Exit if state is invalid
-
-        print("[CombatTracker] Restoring combat tracker state...")
-        # Block signals during restoration to prevent unwanted side effects
-        self.initiative_table.blockSignals(True)
-        
+        # Try to get the combat log panel from panel_manager
         try:
-            # --- Clear Existing State ---
-            self.initiative_table.setRowCount(0) # Clear all rows from the table
-            self.death_saves.clear()            # Clear tracked death saves
-            self.concentrating.clear()          # Clear tracked concentration
-            self.combatants.clear()             # Clear stored combatant data
-            self.monster_id_counter = 0         # Reset monster ID counter (important for new monsters added after restore)
-
-            # --- Restore Basic Combat Info ---
-            self.current_round = state.get("round", 1)
-            self.round_spin.setValue(self.current_round) # Update UI spinner
-            
-            # Restore current turn, ensuring it's within bounds of restored combatants later
-            self.current_turn = state.get("turn", 0) 
-            
-            self.combat_time = state.get("elapsed_time", 0)
-            # Update timer display immediately (will show 00:00:00 if time is 0)
-            hours = self.combat_time // 3600
-            minutes = (self.combat_time % 3600) // 60
-            seconds = self.combat_time % 60
-            self.timer_label.setText(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
-            # Reset timer button state (assume stopped on restore)
-            if self.timer.isActive():
-                self.timer.stop()
-            self.timer_button.setText("Start") 
-            
-            # Restore game time display based on restored round
-            self._update_game_time()
-
-            # --- Restore Tracking Dictionaries ---
-            # Restore death saves - keys (row indices) might need remapping if table structure changes significantly
-            self.death_saves = state.get("death_saves", {}) 
-            # Restore concentration - convert list back to set
-            self.concentrating = set(state.get("concentrating", [])) 
-
-            # --- Restore Combatants ---
-            restored_combatants_list = state.get("combatants", [])
-            for idx, combatant_state in enumerate(restored_combatants_list):
-                # Insert a new row for each combatant
-                row = self.initiative_table.rowCount()
-                self.initiative_table.insertRow(row)
-                
-                # Restore detailed combatant data if it exists
-                if "data" in combatant_state:
-                    self.combatants[row] = combatant_state["data"]
-                    # If it's a monster, try to assign a unique ID
-                    if combatant_state.get("type") == "monster":
-                         # Create a unique ID for this monster instance
-                         monster_id = self.monster_id_counter
-                         self.monster_id_counter += 1
-                         # Store the ID with the name item's UserRole + 2
-                         # We create the name item below
-                         
-                # Determine combatant type (use saved 'type' field)
-                combatant_type = combatant_state.get("type", "manual") # Default to manual if missing
-
-                # --- Create and set items for each column ---
-                # Column 0: Name
-                name_item = QTableWidgetItem(combatant_state.get("name", f"Combatant {row+1}"))
-                name_item.setData(Qt.UserRole, combatant_type) # Store type in UserRole
-                # Assign monster ID if applicable
-                if combatant_type == "monster" and "data" in combatant_state:
-                    name_item.setData(Qt.UserRole + 2, monster_id) # Store the generated monster ID
-                name_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
-                self.initiative_table.setItem(row, 0, name_item)
-                
-                # Column 1: Initiative
-                init_item = QTableWidgetItem(str(combatant_state.get("initiative", "0")))
-                init_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
-                self.initiative_table.setItem(row, 1, init_item)
-                
-                # Column 2: Current HP
-                hp_item = QTableWidgetItem(str(combatant_state.get("hp", "1")))
-                hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
-                self.initiative_table.setItem(row, 2, hp_item)
-                
-                # Column 3: Max HP
-                # Use saved max_hp, fallback to current hp if max_hp is missing/invalid
-                max_hp_val = combatant_state.get("max_hp", combatant_state.get("hp", "1")) 
-                # Ensure max_hp is at least current hp if both are numbers
-                try:
-                    current_hp_int = int(hp_item.text())
-                    max_hp_int = int(str(max_hp_val)) # Convert to string first for safety
-                    if max_hp_int < current_hp_int:
-                         max_hp_val = hp_item.text() # Set max HP to current HP if inconsistent
-                except ValueError:
-                     pass # Ignore conversion errors, use the value as is
-                max_hp_item = QTableWidgetItem(str(max_hp_val))
-                max_hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
-                self.initiative_table.setItem(row, 3, max_hp_item)
-                
-                # Column 4: AC
-                ac_item = QTableWidgetItem(str(combatant_state.get("ac", "10")))
-                ac_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
-                self.initiative_table.setItem(row, 4, ac_item)
-                
-                # Column 5: Status
-                status_item = QTableWidgetItem(combatant_state.get("status", ""))
-                status_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
-                self.initiative_table.setItem(row, 5, status_item)
-                
-                # Column 6: Concentration (Checkbox)
-                conc_item = QTableWidgetItem()
-                conc_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-                # Set check state based on saved boolean value
-                is_concentrating = combatant_state.get("concentration", False)
-                conc_item.setCheckState(Qt.Checked if is_concentrating else Qt.Unchecked)
-                self.initiative_table.setItem(row, 6, conc_item)
-                
-                # Column 7: Type (Read-only display, actual type stored in Name item UserRole)
-                type_item = QTableWidgetItem(combatant_type)
-                type_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled) # Generally not editable directly
-                self.initiative_table.setItem(row, 7, type_item)
-
-            # Adjust current_turn if it's out of bounds after restoring
-            if self.current_turn >= self.initiative_table.rowCount():
-                self.current_turn = 0 if self.initiative_table.rowCount() > 0 else -1
-            
-            # --- Final Steps ---
-            # Re-apply highlighting based on the restored current turn
-            self.previous_turn = -1 # Reset previous turn before updating highlight
-            self._update_highlight()
-            
-            # Optional: Re-sort the table based on restored initiative values
-            # self._sort_initiative() # Might be desired, but could change turn order if initiatives were edited before save
-
-            # Optional: Fix any inconsistencies in types (should be less needed now)
-            # self._fix_missing_types()
-            
-            print(f"[CombatTracker] State restoration complete. {self.initiative_table.rowCount()} combatants restored.")
-
+            panel_manager = getattr(self.app_state, 'panel_manager', None)
+            if panel_manager:
+                combat_log_panel = panel_manager.get_panel("combat_log")
+                if combat_log_panel:
+                    print("[CombatTracker] Found combat_log panel, checking interface...")
+                    
+                    # Check if it has the expected create_entry method
+                    if hasattr(combat_log_panel, 'create_entry'):
+                        print("[CombatTracker] Combat log panel has required create_entry method")
+                        self.combat_log_widget = combat_log_panel
+                        return self.combat_log_widget
+                    else:
+                        print("[CombatTracker] Combat log panel doesn't have required interface, creating adapter...")
+                        # Create an adapter that wraps the panel
+                        try:
+                            self._create_combat_log_adapter(combat_log_panel)
+                            if hasattr(self.combat_log_widget, 'create_entry'):
+                                return self.combat_log_widget
+                        except Exception as e:
+                            print(f"[CombatTracker] Error creating combat log adapter: {e}")
         except Exception as e:
+            print(f"[CombatTracker] Error getting combat log panel: {e}")
+        
+        # Create a local fallback if needed
+        if not hasattr(self, 'combat_log_widget') or not self.combat_log_widget:
+            print("[CombatTracker] Creating local fallback combat log")
+            self._create_fallback_combat_log()
+            
+        # Return whatever we have at this point (might still be None in worst case)
+        return self.combat_log_widget
+    
+    def _create_combat_log_adapter(self, panel):
+        """Create an adapter for the combat log panel to provide the create_entry method"""
+        # Store the panel reference
+        self.combat_log_widget = panel
+        
+        # Add the create_entry method to the panel
+        def create_entry(category=None, actor=None, action=None, target=None, result=None, round=None, turn=None):
+            try:
+                # Create a simple entry representation
+                entry = {
+                    "category": category,
+                    "actor": actor,
+                    "action": action,
+                    "target": target,
+                    "result": result,
+                    "round": round,
+                    "turn": turn
+                }
+                
+                # Format the entry into HTML
+                html = "<p>"
+                if round is not None:
+                    html += f"<span style='color:#555555;'>[R{round}]</span> "
+                html += f"<strong>{actor}:</strong> {action} "
+                if target:
+                    html += f"<strong>{target}</strong> "
+                if result:
+                    html += f"- {result}"
+                html += "</p>"
+                
+                # Add to the log text if the panel has appropriate properties
+                if hasattr(panel, 'log_text'):
+                    panel.log_text.append(html)
+                elif hasattr(panel, 'text'):
+                    panel.text.append(html)
+                elif hasattr(panel, 'append') and callable(panel.append):
+                    panel.append(html)
+                
+                # Always update our local log as a backup
+                if hasattr(self, 'combat_log_text') and self.combat_log_text:
+                    self.combat_log_text.append(html)
+                    
+                return entry
+            except Exception as e:
+                print(f"[CombatTracker] Error in create_entry adapter: {e}")
+                return {"error": str(e)}
+                
+        # Add the method to the panel
+        setattr(self.combat_log_widget, 'create_entry', create_entry)
+        
+    def _create_fallback_combat_log(self):
+        """Create a fallback combat log that stores entries for when external log isn't available"""
+        try:
+            # Create a simple object with the required interface
+            from types import SimpleNamespace
+            log = SimpleNamespace()
+            
+            # Add a list to store entries
+            log.entries = []
+            
+            # Add the create_entry method
+            def create_entry(category=None, actor=None, action=None, target=None, result=None, round=None, turn=None):
+                # Create entry object
+                entry = {
+                    "category": category,
+                    "actor": actor,
+                    "action": action,
+                    "target": target,
+                    "result": result,
+                    "round": round,
+                    "turn": turn,
+                    "timestamp": time.time()
+                }
+                
+                # Store the entry
+                log.entries.append(entry)
+                
+                # Format the entry and add to our local combat log text widget
+                try:
+                    if hasattr(self, 'combat_log_text') and self.combat_log_text:
+                        # Determine text color based on category
+                        color_map = {
+                            "Attack": "#8B0000",   # Dark Red
+                            "Damage": "#A52A2A",   # Brown
+                            "Healing": "#006400",  # Dark Green
+                            "Status Effect": "#4B0082",  # Indigo
+                            "Death Save": "#000080",  # Navy
+                            "Initiative": "#2F4F4F",  # Dark Slate Gray
+                            "Turn": "#000000",  # Black
+                            "Other": "#708090",  # Slate Gray
+                            "Dice": "#696969",  # Dim Gray
+                            "Setup": "#708090",  # Slate Gray
+                            "Concentration Check": "#800080"  # Purple
+                        }
+                        
+                        text_color = color_map.get(category, "#000000")
+                        
+                        # Format the HTML
+                        round_text = f"R{round}" if round is not None else ""
+                        
+                        html = f"<p style='margin-top:5px; margin-bottom:5px;'>"
+                        if round_text:
+                            html += f"<span style='color:#555555;'>[{round_text}]</span> "
+                        html += f"<span style='font-weight:bold; color:{text_color};'>{actor}</span> "
+                        html += f"{action} "
+                        
+                        if target:
+                            html += f"<span style='font-weight:bold;'>{target}</span> "
+                            
+                        if result:
+                            html += f"<span style='color:#555555;'>{result}</span>"
+                            
+                        html += "</p>"
+                        
+                        self.combat_log_text.append(html)
+                        
+                        # Scroll to the bottom to see latest entries
+                        scrollbar = self.combat_log_text.verticalScrollBar()
+                        scrollbar.setValue(scrollbar.maximum())
+                except Exception as e:
+                    print(f"[CombatTracker] Error formatting log entry for display: {e}")
+                
+                return entry
+                
+            # Add the method
+            log.create_entry = create_entry
+            
+            # Store the log
+            self.combat_log_widget = log
+            
+            print("[CombatTracker] Created fallback combat log")
+        except Exception as e:
+            print(f"[CombatTracker] Error creating fallback combat log: {e}")
             # Catch any unexpected errors during restoration
             print(f"[CombatTracker] CRITICAL ERROR during state restoration: {e}")
             import traceback
@@ -4505,10 +4448,17 @@ class CombatTrackerPanel(BasePanel):
              self._update_details_pane() # Update the pane content
 
     def _toggle_details_pane(self):
-        """Toggle the visibility of the details pane"""
+        """Toggle visibility of the details pane"""
         self.show_details_pane = not self.show_details_pane
-        self.toggle_details_btn.setChecked(self.show_details_pane)
-        self.details_widget.setVisible(self.show_details_pane)
+        
+        # Log which action we're taking
+        action = "showing" if self.show_details_pane else "hiding"
+        print(f"[CombatTracker] {action} details pane")
+    
+    def _update_details_pane(self):
+        """Placeholder for details pane update - no longer needed with new UI but referenced in code"""
+        print("[CombatTracker] _update_details_pane called - this is a placeholder in the new UI")
+        # No actual implementation needed with the new UI design
 
     def _fix_missing_types(self):
         """Fix any missing combatant types for existing entries after initialization or state restore."""
@@ -4614,21 +4564,13 @@ class CombatTrackerPanel(BasePanel):
         self._is_resolving_combat = False
         print("[CombatTracker] Setting _is_resolving_combat = False")
         
-        # Close the live log if it's open
-        if hasattr(self, 'combat_log_widget') and self.combat_log_widget:
-            try:
-                self.combat_log_widget.close()
-                self.combat_log_widget = None
-            except Exception as e:
-                print(f"[CombatTracker] Error closing combat log: {e}")
-                
         # Handle error first
         if error:
-            QMessageBox.critical(self, "Combat Resolution Failed", f"Combat resolution failed: {error}")
+            self.combat_log_text.append(f"<p style='color:red;'><b>Error:</b> {error}</p>")
             return
             
         if not result:
-            QMessageBox.warning(self, "No Result", "Combat resolution produced no result.")
+            self.combat_log_text.append("<p style='color:orange;'><b>Warning:</b> Combat resolution produced no result.</p>")
             return
             
         # Extract results and update the UI
@@ -4671,84 +4613,40 @@ class CombatTrackerPanel(BasePanel):
                     else:
                         survivors_details.append(f"{name}: {hp} HP ({status_text}){death_saves_text}")
 
-            # Build user-facing summary
-            summary_text = f"Combat Resolved:\\n\\n{final_narrative}\\n\\n"
-            summary_text += f"Duration: {round_count} rounds, {turn_count} turns\\n\\n"
+            # Add final summary to the combat log
+            self.combat_log_text.append("<hr>")
+            self.combat_log_text.append("<h3 style='color:#000088;'>Combat Concluded</h3>")
+            self.combat_log_text.append(f"<p>{final_narrative}</p>")
+            self.combat_log_text.append(f"<p><b>Duration:</b> {round_count} rounds, {turn_count} turns</p>")
             
-            # Include survivors with details
+            # Add survivors
             if survivors_details:
-                summary_text += "Survivors:\\n"
+                self.combat_log_text.append("<p><b>Survivors:</b></p><ul>")
                 for survivor in survivors_details:
-                    summary_text += f"- {survivor}\\n"
+                    self.combat_log_text.append(f"<li>{survivor}</li>")
+                self.combat_log_text.append("</ul>")
             else:
-                summary_text += "No survivors!\\n"
+                self.combat_log_text.append("<p><b>Survivors:</b> None!</p>")
                 
-            # Add in casualties list
+            # Add casualties
             if casualties:
-                summary_text += "\\nCasualties:\\n"
+                self.combat_log_text.append("<p><b>Casualties:</b></p><ul>")
                 for casualty in casualties:
-                    summary_text += f"- {casualty}\\n"
+                    self.combat_log_text.append(f"<li>{casualty}</li>")
+                self.combat_log_text.append("</ul>")
+                
+            # Scroll to the bottom to see the summary
+            scrollbar = self.combat_log_text.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
             
-            # --- Show summary in a dialog with Save to Session Notes ---
-            def save_to_notes_callback(content):
-                # Try to get the session notes panel using the standard approach
-                notes_widget = None
-                try:
-                    notes_widget = self.app_state.get_panel_widget("session_notes")
-                except Exception as e:
-                    print(f"Error getting session notes panel: {str(e)}")
-                if not notes_widget and hasattr(self.app_state, 'panel_manager') and hasattr(self.app_state.panel_manager, 'get_panel_widget'):
-                    try:
-                        notes_widget = self.app_state.panel_manager.get_panel_widget("session_notes")
-                    except Exception as e:
-                        print(f"Error getting session notes panel through panel_manager: {str(e)}")
-                if not notes_widget:
-                    QMessageBox.warning(self, "Session Notes Not Available", "Session Notes panel is not available. Please open it first.")
-                    return
-                # Save the note
-                title = f"Combat: {final_narrative[:40]}" if final_narrative else "Combat Result"
-                tags = ["combat", "ai", "fast_resolve"]
-                if hasattr(notes_widget, '_create_note_with_content'):
-                    success = notes_widget._create_note_with_content(title=title, content=content, tags=tags)
-                    if success:
-                        QMessageBox.information(self, "Note Created", "The combat result has been added to your session notes.")
-                    else:
-                        QMessageBox.warning(self, "Note Not Created", "The note creation was cancelled or failed.")
-                else:
-                    QMessageBox.warning(self, "Error", "Session notes panel doesn't have the required method.")
-
-            # Create and show the dialog
-            from PySide6.QtWidgets import QDialog, QPushButton, QVBoxLayout, QTextEdit, QLabel, QHBoxLayout
-            
-            # Create the dialog here instead of using CombatResolutionSummaryDialog class
-            dlg = QDialog(self)
-            dlg.setWindowTitle("Combat Resolved")
-            dlg.setMinimumSize(500, 400)
-            
-            layout = QVBoxLayout(dlg)
-            label = QLabel("Combat Summary:")
-            layout.addWidget(label)
-            
-            text_edit = QTextEdit()
-            text_edit.setReadOnly(True)
-            text_edit.setPlainText(summary_text)
-            layout.addWidget(text_edit)
-            
-            button_layout = QHBoxLayout()
-            save_btn = QPushButton("Save to Session Notes")
-            save_btn.clicked.connect(lambda: save_to_notes_callback(text_edit.toPlainText()))
-            button_layout.addWidget(save_btn)
-            
-            close_btn = QPushButton("Close")
-            close_btn.clicked.connect(dlg.accept)
-            button_layout.addWidget(close_btn)
-            
-            layout.addLayout(button_layout)
-            
-            dlg.exec()
         except Exception as e:
             print(f"[CombatTracker] Error processing resolution result: {str(e)}")
-            QMessageBox.critical(self, "Error", f"An error occurred while processing the combat result: {str(e)}")
+            self.combat_log_text.append(f"<p style='color:red;'><b>Error:</b> An error occurred while processing the combat result: {str(e)}</p>")
+
+    def _clear_combat_log(self):
+        """Clear the combat log display"""
+        self.combat_log_text.clear()
+        self.combat_log_text.setHtml("<p><i>Combat log cleared.</i></p>")
 
     def _apply_combat_updates(self, updates):
         """Apply final combatant updates from the resolution result."""
