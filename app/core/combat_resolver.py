@@ -234,6 +234,87 @@ class CombatResolver(QObject):
                         
                         # Apply combatant updates
                         if "updates" in turn_result:
+                            # Track combatant HP changes for debugging
+                            hp_changes = {}
+                            
+                            # Create a copy of the original HP values for verification
+                            original_hp_values = {c["name"]: c.get("hp", 0) for c in combatants if "name" in c}
+                            
+                            # Log original HP values before any changes
+                            print(f"[CombatResolver] ORIGINAL HP VALUES BEFORE UPDATES:")
+                            for name, hp in original_hp_values.items():
+                                print(f"[CombatResolver] {name}: {hp}")
+                            
+                            # STRICTLY validate updates coming from the LLM
+                            valid_updates = []
+                            for update in turn_result["updates"]:
+                                # Skip updates without a name
+                                if "name" not in update:
+                                    print(f"[CombatResolver] WARNING: Skipping update without 'name' field: {update}")
+                                    continue
+                                
+                                # Verify the named combatant exists
+                                target_name = update["name"]
+                                target_exists = any(c.get("name") == target_name for c in combatants)
+                                if not target_exists:
+                                    print(f"[CombatResolver] WARNING: Skipping update for unknown combatant: {target_name}")
+                                    continue
+                                
+                                # Verify HP changes are reasonable if present
+                                if "hp" in update:
+                                    try:
+                                        # Get original HP
+                                        orig_hp = original_hp_values.get(target_name, 0)
+                                        new_hp = update["hp"]
+                                        
+                                        # Convert to integer
+                                        if isinstance(new_hp, str):
+                                            try:
+                                                new_hp = int(new_hp)
+                                            except ValueError:
+                                                print(f"[CombatResolver] WARNING: Invalid HP value {new_hp} for {target_name}, skipping update")
+                                                continue
+                                        elif not isinstance(new_hp, int):
+                                            print(f"[CombatResolver] WARNING: Non-integer HP value {new_hp} for {target_name}, skipping update")
+                                            continue
+                                            
+                                        # Find the combatant
+                                        target = next((c for c in combatants if c.get("name") == target_name), None)
+                                        if not target:
+                                            print(f"[CombatResolver] WARNING: Could not find combatant {target_name}, skipping update")
+                                            continue
+                                        
+                                        # Get max HP
+                                        max_hp = target.get("max_hp", orig_hp * 2 if orig_hp > 0 else 100)
+                                        
+                                        # Calculate the change
+                                        hp_change = new_hp - orig_hp
+                                        
+                                        # Check if the change is reasonable
+                                        if hp_change > 0:  # Healing
+                                            if new_hp > max_hp * 1.5:  # Cap healing at 150% of max HP
+                                                print(f"[CombatResolver] WARNING: Unreasonable HP increase for {target_name}: {orig_hp} -> {new_hp} (max: {max_hp})")
+                                                new_hp = max_hp  # Cap at max HP
+                                                update["hp"] = new_hp
+                                        elif hp_change < 0:  # Damage
+                                            # Check if damage is too extreme
+                                            if abs(hp_change) > max_hp * 0.9 and max_hp > 20:  # Should not lose more than 90% in one hit for larger creatures
+                                                print(f"[CombatResolver] WARNING: Unreasonable HP decrease for {target_name}: {orig_hp} -> {new_hp} (change: {hp_change})")
+                                                # Limit damage to 50% of max
+                                                new_hp = max(0, orig_hp - int(max_hp * 0.5))
+                                                update["hp"] = new_hp
+                                        
+                                        print(f"[CombatResolver] VALIDATED HP change for {target_name}: {orig_hp} -> {new_hp} (change: {hp_change})")
+                                    except Exception as e:
+                                        print(f"[CombatResolver] ERROR validating HP for {target_name}: {e}")
+                                
+                                # Only include valid updates
+                                valid_updates.append(update)
+                            
+                            # Replace with validated updates
+                            turn_result["updates"] = valid_updates
+                            print(f"[CombatResolver] VALIDATED UPDATES: {valid_updates}")
+                            
                             for update in turn_result["updates"]:
                                 target_name = update.get("name")
                                 
@@ -254,6 +335,9 @@ class CombatResolver(QObject):
                                 
                                 for i, c in enumerate(combatants):
                                     if c.get("name") == target_name:
+                                        # Store original values for debugging
+                                        original_hp = c.get("hp", 0)
+                                        
                                         # Update HP if specified
                                         hp_changed = False
                                         if "hp" in update:
@@ -262,25 +346,53 @@ class CombatResolver(QObject):
                                             current_hp = c.get("hp", 0)
                                             new_hp = current_hp # Default to current HP
 
-                                            if isinstance(hp_update, str) and "reduce" in hp_update.lower():
-                                                # Extract damage amount
-                                                import re
-                                                damage_match = re.search(r'\d+', hp_update)
-                                                if damage_match:
-                                                    damage = int(damage_match.group(0))
-                                                    new_hp = max(0, current_hp - damage)
-                                                    print(f"[CombatResolver] Reduced {target_name}'s HP by {damage} to {new_hp}")
+                                            if isinstance(hp_update, str):
+                                                # Check for "reduce by X" format
+                                                if "reduce" in hp_update.lower():
+                                                    import re
+                                                    damage_match = re.search(r'\d+', hp_update)
+                                                    if damage_match:
+                                                        damage = int(damage_match.group(0))
+                                                        new_hp = max(0, current_hp - damage)
+                                                        print(f"[CombatResolver] Reduced {target_name}'s HP by {damage} to {new_hp}")
+                                                # Check for numbers in strings, e.g. "24" or "24 HP"
+                                                else:
+                                                    import re
+                                                    num_match = re.search(r'\d+', hp_update)
+                                                    if num_match:
+                                                        try:
+                                                            new_hp = int(num_match.group(0))
+                                                            print(f"[CombatResolver] Extracted HP value {new_hp} from string '{hp_update}'")
+                                                        except ValueError:
+                                                            print(f"[CombatResolver] Failed to extract HP value from '{hp_update}'")
                                             else:
                                                 try:
-                                                    new_hp = int(update["hp"])
+                                                    new_hp = int(hp_update)
                                                 except (ValueError, TypeError):
-                                                    print(f"[CombatResolver] Invalid HP value: {update['hp']}")
+                                                    print(f"[CombatResolver] Invalid HP value: {hp_update}")
                                                     new_hp = current_hp # Keep current HP if update is invalid
+                                                
+                                            # Verify the HP change is reasonable
+                                            max_hp = c.get("max_hp", current_hp)
+                                            if new_hp > max_hp * 1.5:  # HP should not exceed max_hp by too much (allowing some healing over max)
+                                                print(f"[CombatResolver] WARNING: Unreasonable HP change for {target_name}: {current_hp} -> {new_hp} (max: {max_hp})")
+                                                new_hp = current_hp  # Revert to current HP
+                                            elif new_hp < -10:  # HP should not go too far below 0
+                                                print(f"[CombatResolver] WARNING: Unreasonable negative HP for {target_name}: {new_hp}")
+                                                new_hp = 0  # Cap at 0
 
                                             # Apply the new HP if it changed
                                             if new_hp != current_hp:
                                                 c["hp"] = new_hp
                                                 hp_changed = True
+                                                print(f"[CombatResolver] Set {target_name}'s HP to {new_hp} (was {current_hp})")
+                                                
+                                                # Track HP changes for debugging
+                                                hp_changes[target_name] = {
+                                                    "before": current_hp,
+                                                    "after": new_hp,
+                                                    "change": new_hp - current_hp
+                                                }
 
                                         # Update status if specified
                                         status_updated_by_llm = False
@@ -328,12 +440,22 @@ class CombatResolver(QObject):
                         
                         # Update the UI
                         if update_ui_callback:
+                            # Create a deep copy of the combatants to ensure latest HP values
+                            # are passed to the UI after all updates are applied
+                            import copy
+                            combatants_updated = copy.deepcopy(combatants)
+                            
                             combat_display_state = {
                                 "round": round_num,
                                 "current_turn_index": idx,
-                                "combatants": combatants,
+                                "combatants": combatants_updated,
                                 "latest_action": turn_log_entry
                             }
+                            # Print HP values being sent to UI
+                            print(f"\n[CombatResolver] DEBUG: HP VALUES BEING SENT TO UI:")
+                            for c in combatants_updated:
+                                print(f"[CombatResolver] DEBUG: {c.get('name', 'Unknown')}: HP {c.get('hp', 0)}/{c.get('max_hp', c.get('hp', 0))}")
+                            
                             # Give the UI a chance to update between turns
                             update_ui_callback(combat_display_state)
                             # Small delay to let UI update and for more natural combat flow
@@ -401,6 +523,32 @@ class CombatResolver(QObject):
                         print(f"[CombatResolver] Error updating active combatants: {e}")
                         active_combatants = [i for i in range(len(combatants)) if combatants[i].get("hp", 0) > 0]
 
+                    # Print HP changes summary after each turn
+                    if hp_changes:
+                        print(f"\n[CombatResolver] DEBUG: HP CHANGES THIS TURN:")
+                        for name, change in hp_changes.items():
+                            print(f"[CombatResolver] DEBUG: {name}: {change['before']} → {change['after']} (Δ {change['change']})")
+                        print("")
+
+                    # Verify all HP changes were applied correctly
+                    print(f"\n[CombatResolver] DEBUG: VERIFYING HP CHANGES WERE APPLIED CORRECTLY:")
+                    for c in combatants:
+                        name = c.get("name", "")
+                        if name in original_hp_values:
+                            orig_hp = original_hp_values[name]
+                            new_hp = c.get("hp", 0)
+                            if orig_hp != new_hp:
+                                print(f"[CombatResolver] DEBUG: {name} HP changed from {orig_hp} to {new_hp}")
+                            else:
+                                print(f"[CombatResolver] DEBUG: {name} HP unchanged at {new_hp}")
+                                
+                    # Ensure these changes are reflected in the state dictionary
+                    try:
+                        # Update state["combatants"] to reflect changes made to combatants list
+                        state["combatants"] = combatants
+                    except Exception as e:
+                        print(f"[CombatResolver] Error updating state combatants: {e}")
+
                 # Prepare final summary
                 survivors = [c for c in combatants if c.get("hp", 0) > 0]
                 summary = {
@@ -440,6 +588,11 @@ class CombatResolver(QObject):
         """
         active_combatant = combatants[active_idx]
         print(f"[CombatResolver] Processing turn for {active_combatant.get('name', 'Unknown')} (round {round_num})")
+        
+        # Debug: Log all combatant HP values at start of turn
+        print(f"\n[CombatResolver] DEBUG: CURRENT HP VALUES AT START OF TURN:")
+        for i, c in enumerate(combatants):
+            print(f"[CombatResolver] DEBUG: Combatant {i}: {c.get('name')} - HP: {c.get('hp', 0)}/{c.get('max_hp', c.get('hp', 0))}")
         
         # Skip if combatant is dead or has status "Dead"
         if active_combatant.get("hp", 0) <= 0 and active_combatant.get("status", "").lower() == "dead":
@@ -550,6 +703,24 @@ class CombatResolver(QObject):
             json_str = json_match.group(0)
             resolution = json.loads(json_str)
             
+            # CRITICAL FIX: Completely replace the narrative HP extraction with 
+            # a better approach that avoids contaminating HP values between combatants
+            print(f"[CombatResolver] DEBUG: Original resolution updates: {resolution.get('updates', [])}")
+            
+            # We will NOT use narrative HP extraction anymore - it's too error-prone
+            # Instead, we'll only use the proper "updates" field from the LLM
+            if "updates" in resolution and isinstance(resolution["updates"], list):
+                # Verify each update is properly formatted and has the necessary fields
+                for update in resolution["updates"]:
+                    if "name" not in update:
+                        print(f"[CombatResolver] WARNING: Update missing 'name' field: {update}")
+                        continue
+                        
+                    # Just trust the HP value the LLM gives in the updates section
+                    # Only log the value for debugging
+                    if "hp" in update:
+                        print(f"[CombatResolver] DEBUG: Update has HP {update['hp']} for {update['name']}")
+                        
             # Add the original action and dice rolls to the resolution
             resolution["action"] = action
             resolution["dice"] = dice_results
@@ -576,10 +747,21 @@ class CombatResolver(QObject):
         prompt = f"""
 You are the combat AI for a D&D 5e game, serving as the tactical decision-maker.
 
-# COMBAT STATE
-Round: {round_num}
-Active combatant: {active.get('name', 'Unknown')} (currently taking their turn)
+# CURRENT COMBAT STATE AT START OF TURN
+== Round {round_num} ==
 
+"""
+        # Add a clear summary of all combatants with their CURRENT HP values
+        prompt += "CURRENT HP STATUS OF ALL COMBATANTS:\n"
+        for i, c in enumerate(combatants):
+            name = c.get('name', 'Unknown')
+            hp = c.get('hp', 0)
+            max_hp = c.get('max_hp', hp)
+            status = c.get('status', 'OK')
+            type_str = "(Active)" if i == active_idx else f"({c.get('type', 'unknown')})"
+            prompt += f"- {name} {type_str}: HP {hp}/{max_hp}, Status: {status}\n"
+            
+        prompt += f"""
 # ACTIVE COMBATANT DETAILS
 Name: {active.get('name', 'Unknown')}
 HP: {active.get('hp', 0)}/{active.get('max_hp', active.get('hp', 0))}
@@ -609,11 +791,12 @@ Equipment: {active.get('equipment', 'Standard equipment')}
         prompt += """
 # YOUR TASK
 Decide the most appropriate action for the active combatant this turn. Consider:
-1. Current HP and status
+1. Current HP and status - use EXACTLY the HP values shown above
 2. Tactical position and opponent state
 3. Available abilities, especially limited-use ones
 4. D&D 5e rules for actions, bonus actions, and movement
 5. Make smart, consistent tactical decisions as a competent combatant would
+6. CRITICAL: Use the EXACT HP values listed at the start of this prompt - do NOT assume full health or reset HP values
 
 # RESPONSE FORMAT
 Respond with a JSON object containing these fields:
@@ -653,13 +836,31 @@ Your response MUST be valid JSON that can be parsed, with no extra text before o
         """
         active = combatants[active_idx]
         
+        # Debug: Log that we're creating a resolution prompt with current HP values
+        print(f"\n[CombatResolver] DEBUG: Creating resolution prompt with these HP values:")
+        print(f"[CombatResolver] DEBUG: Active combatant {active.get('name')}: HP {active.get('hp', 0)}/{active.get('max_hp', active.get('hp', 0))}")
+        for i, c in enumerate(combatants):
+            if i != active_idx:
+                print(f"[CombatResolver] DEBUG: Other combatant {c.get('name')}: HP {c.get('hp', 0)}/{c.get('max_hp', c.get('hp', 0))}")
+        
         prompt = f"""
 You are the combat AI for a D&D 5e game, serving as the battle narrator and rules arbiter.
 
-# COMBAT STATE
-Round: {round_num}
-Active combatant: {active.get('name', 'Unknown')} (currently taking their turn)
+# CURRENT COMBAT STATE AT START OF TURN
+== Round {round_num} ==
 
+"""
+        # Add a clear summary of all combatants with their CURRENT HP values
+        prompt += "CURRENT HP STATUS OF ALL COMBATANTS:\n"
+        for i, c in enumerate(combatants):
+            name = c.get('name', 'Unknown')
+            hp = c.get('hp', 0)
+            max_hp = c.get('max_hp', hp)
+            status = c.get('status', 'OK')
+            type_str = "(Active)" if i == active_idx else f"({c.get('type', 'unknown')})"
+            prompt += f"- {name} {type_str}: HP {hp}/{max_hp}, Status: {status}\n"
+            
+        prompt += f"""
 # ACTIVE COMBATANT DETAILS
 Name: {active.get('name', 'Unknown')}
 HP: {active.get('hp', 0)}/{active.get('max_hp', active.get('hp', 0))}
@@ -699,6 +900,7 @@ Resolve the outcome of the action based on the dice results. Follow standard D&D
 4. Apply damage to appropriate targets when attacks hit
 5. Update status effects as needed
 6. Track usage of limited-use abilities
+7. CRITICAL: Use the EXACT current HP values listed at the start of this prompt when calculating remaining HP
 
 # HP AND CONDITION RULES
 - When a monster reaches 0 HP, it dies and is removed from combat
@@ -712,10 +914,17 @@ Respond with a JSON object containing these fields:
 - "narrative": An engaging, descriptive account of what happened including current HP values
 - "updates": An array of combatant updates, each with:
   * "name": The combatant's name
-  * "hp": The new HP value (if changed)
+  * "hp": The new HP value (if changed) - ALWAYS USE INTEGER VALUES ONLY, not text descriptions or relative changes like "reduce by X"
   * "status": New status (if changed)
   * "limited_use": Updates to limited-use abilities (if used)
   * "death_saves": For unconscious characters, include status of death saves
+
+EXTREMELY IMPORTANT:
+1. ONLY include combatants in the "updates" array if they were actually affected by an action (took damage, healed, etc.)
+2. Do NOT include combatants in "updates" just because they were mentioned in the narrative
+3. DO NOT update HP values for combatants that were not directly affected
+4. For example, if a monster attacks a character, ONLY include the character (target) in the updates, NOT the monster
+5. USE EXACTLY THE CURRENT HP VALUES listed above - subtract damage from or add healing to these values
 
 Example response:
 {
@@ -725,20 +934,20 @@ Example response:
       "name": "Fighter",
       "hp": 24,
       "status": "Wounded"
-    },
-    {
-      "name": "Hobgoblin Captain",
-      "limited_use": {
-        "Leadership Ability": "Used (0/1 remaining)"
-      }
     }
   ]
 }
 
-IMPORTANT: Always include CURRENT HP values in your narrative to help players track the battle state.
-Your response MUST be valid JSON that can be parsed, with no extra text before or after.
-For this combat to be interesting, attacks should often hit and do damage. 
-A roll of 15 or higher almost always hits average AC targets (around 14-16).
+DO NOT include "Hobgoblin Captain" in the updates array since it did not take damage or have any status changes.
+
+IMPORTANT: 
+1. Always include CURRENT HP values in your narrative to help players track the battle state.
+2. ALWAYS express HP updates as absolute integer values (e.g., "hp": 24), not as text like "reduce by 5" or relative changes.
+3. Your response MUST be valid JSON that can be parsed, with no extra text before or after.
+4. For this combat to be interesting, attacks should often hit and do damage. 
+5. A roll of 15 or higher almost always hits average AC targets (around 14-16).
+6. CRITICAL: Use the exact HP values provided at the start of this prompt. DO NOT RESET TO FULL HP or make up values.
+7. Calculate damage from the CURRENT HP values shown at the start of this prompt, not from max HP.
 """
         return prompt
 
