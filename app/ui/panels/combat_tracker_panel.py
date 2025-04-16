@@ -2304,146 +2304,192 @@ class CombatTrackerPanel(BasePanel):
     
     def _fast_resolve_combat(self):
         """Use LLM to resolve the current combat encounter (turn-by-turn, rule-correct)."""
-        # Log fast resolve request
-        self._log_combat_action(
-            "Other", 
-            "DM", 
-            "requested fast combat resolution"
-        )
-        
-        # Check if combat resolver is available
-        if not hasattr(self.app_state, 'combat_resolver'):
-            QMessageBox.warning(self, "Error", "Combat Resolver service not available.")
-            return
-
-        # Check if we have at least one player character and one monster
-        has_player = False
-        has_monster = False
-        
-        for row in range(self.initiative_table.rowCount()):
-            type_item = self.initiative_table.item(row, 7)  # Type column
-            if type_item:
-                combatant_type = type_item.text().lower()
-                if combatant_type == "monster":
-                    has_monster = True
-                elif combatant_type in ["character", "pc"]:
-                    has_player = True
-        
-        # Modified check: Only require at least one combatant (monster is preferred, but not strictly required here now)
-        # We let the core resolver handle more specific validation
-        if not has_monster and not has_player:
-             QMessageBox.warning(
-                 self, 
-                 "Cannot Start Combat", 
-                 "You need at least one combatant (monster or character) to run combat."
-             )
-             return
-        # Keep the check for needing at least one monster if players are present
-        elif not has_monster and has_player:
-            QMessageBox.warning(
-                self, 
-                "Cannot Start Combat", 
-                "You need at least one monster to run combat against player characters.\n\n" # Updated message
-                "Add monsters from the Monster Panel."
-            )
-            return
-
-        # Confirm the user wants to proceed
-        confirm = QMessageBox.question(
-            self,
-            "Start Turn-by-Turn Combat",
-            "This will run combat turn-by-turn with the AI controlling all combatants.\n\nYou'll see the combat unfold in real time. Continue?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes
-        )
-        if confirm != QMessageBox.Yes:
-            return
-
-        # Gather current combat state
-        combat_state = self._gather_combat_state()
-        if not combat_state or not combat_state.get("combatants"):
-            QMessageBox.information(self, "Fast Resolve", "No combatants in the tracker to resolve.")
-            return
-        
-        # Disable button while processing
-        self.fast_resolve_button.setEnabled(False)
-        self.fast_resolve_button.setText("Resolving...")
-
-        # Clear the combat log before starting
-        self.combat_log_text.clear()
-        
-        # Add an initial heading to the combat log
-        self.combat_log_text.append("<h3 style='color:#000088;'>Combat Resolution Started</h3>")
-        self.combat_log_text.append("<p>Resolving combat turn by turn. You'll see updates here as the combat progresses.</p>")
-        
-        # Add the initial combat state to the combat log
-        combatants_html = "<p><strong>Initial Combat State:</strong></p><ul>"
-        for c in combat_state.get("combatants", []):
-            name = c.get("name", "Unknown")
-            hp = c.get("hp", 0)
-            max_hp = c.get("max_hp", hp)
-            ac = c.get("ac", 10)
-            type_str = c.get("type", "unknown")
-            
-            # Format based on type
-            if type_str.lower() == "monster":
-                color = "#8B0000"  # Dark red for monsters
-            else:
-                color = "#000080"  # Navy for characters
-                
-            combatants_html += f"<li><span style='color:{color};'>{name}</span>: HP {hp}/{max_hp}, AC {ac}</li>"
-        
-        combatants_html += "</ul>"
-        self.combat_log_text.append(combatants_html)
-        self.combat_log_text.append("<hr>")
-
-        # --- SET FLAG before starting resolution --- 
-        self._is_resolving_combat = True
-        print("[CombatTracker] Setting _is_resolving_combat = True")
-
-        # --- Dice roller function ---
-        def dice_roller(expr):
-            """Parse and roll a dice expression like '1d20+5'. Returns the integer result."""
-            import re, random
-            match = re.match(r"(\d*)d(\d+)([+-]\d+)?", expr.replace(' ', ''))
-            if not match:
-                return 0
-            num, die, mod = match.groups()
-            num = int(num) if num else 1
-            die = int(die)
-            mod = int(mod) if mod else 0
-            total = sum(random.randint(1, die) for _ in range(num)) + mod
-            
-            # Log the roll to the combat log
-            self._log_combat_action(
-                "Dice", 
-                "AI", 
-                f"rolled {expr}", 
-                result=f"Result: {total}"
-            )
-            
-            return total
-
-        # Use the new turn-by-turn resolver
         try:
-            # The resolver now uses a signal for completion, so the callback 
-            # argument (self._handle_resolution_result) is ignored by the resolver.
-            # We pass None to make this clear, but the resolver's signature
-            # still accepts it for now.
-            self.app_state.combat_resolver.resolve_combat_turn_by_turn(
-                combat_state,
-                dice_roller,
-                None,  # Pass None for the direct callback, signal is used instead
-                self._update_ui_wrapper # Use the wrapper for per-turn UI updates
+            # Log fast resolve request
+            self._log_combat_action(
+                "Other", 
+                "DM", 
+                "requested fast combat resolution"
             )
+            
+            # Check if combat resolver is available
+            if not hasattr(self.app_state, 'combat_resolver'):
+                QMessageBox.warning(self, "Error", "Combat Resolver service not available.")
+                return
+
+            # Check if we have at least one player character and one monster
+            has_player = False
+            has_monster = False
+            
+            for row in range(self.initiative_table.rowCount()):
+                type_item = self.initiative_table.item(row, 7)  # Type column
+                if type_item:
+                    combatant_type = type_item.text().lower()
+                    if combatant_type == "monster":
+                        has_monster = True
+                    elif combatant_type in ["character", "pc"]:
+                        has_player = True
+            
+            # Modified check: Only require at least one combatant (monster is preferred, but not strictly required here now)
+            # We let the core resolver handle more specific validation
+            if not has_monster and not has_player:
+                 QMessageBox.warning(
+                     self, 
+                     "Cannot Start Combat", 
+                     "You need at least one combatant (monster or character) to run combat."
+                 )
+                 return
+            # Keep the check for needing at least one monster if players are present
+            elif not has_monster and has_player:
+                QMessageBox.warning(
+                    self, 
+                    "Cannot Start Combat", 
+                    "You need at least one monster to run combat against player characters.\n\n" # Updated message
+                    "Add monsters from the Monster Panel."
+                )
+                return
+
+            # Confirm the user wants to proceed
+            confirm = QMessageBox.question(
+                self,
+                "Start Turn-by-Turn Combat",
+                "This will run combat turn-by-turn with the AI controlling all combatants.\n\nYou'll see the combat unfold in real time. Continue?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes
+            )
+            if confirm != QMessageBox.Yes:
+                return
+
+            # Gather current combat state
+            combat_state = self._gather_combat_state()
+            if not combat_state or not combat_state.get("combatants"):
+                QMessageBox.information(self, "Fast Resolve", "No combatants in the tracker to resolve.")
+                return
+            
+            # Disable button while processing
+            self.fast_resolve_button.setEnabled(False)
+            self.fast_resolve_button.setText("Resolving...")
+
+            # Clear the combat log before starting
+            self.combat_log_text.clear()
+            
+            # Make sure we have a valid combat log
+            # Force creation of a fallback log if needed
+            combat_log = self._get_combat_log()
+            if not combat_log:
+                print("[CombatTracker] No combat log available for fast resolve, creating fallback")
+                # Create fallback forcibly
+                self._create_fallback_combat_log()
+            
+            # Add an initial heading to the combat log
+            self.combat_log_text.append("<h3 style='color:#000088;'>Combat Resolution Started</h3>")
+            self.combat_log_text.append("<p>Resolving combat turn by turn. You'll see updates here as the combat progresses.</p>")
+            
+            # Add the initial combat state to the combat log using our safe method
+            try:
+                # Build the combat state html directly
+                combatants_html = "<p><strong>Initial Combat State:</strong></p><ul>"
+                for c in combat_state.get("combatants", []):
+                    name = c.get("name", "Unknown")
+                    hp = c.get("hp", 0)
+                    max_hp = c.get("max_hp", hp)
+                    ac = c.get("ac", 10)
+                    type_str = c.get("type", "unknown")
+                    
+                    # Format based on type
+                    if type_str.lower() == "monster":
+                        color = "#8B0000"  # Dark red for monsters
+                    else:
+                        color = "#000080"  # Navy for characters
+                        
+                    combatants_html += f"<li><span style='color:{color};'>{name}</span>: HP {hp}/{max_hp}, AC {ac}</li>"
+                
+                combatants_html += "</ul>"
+                self.combat_log_text.append(combatants_html)
+                self.combat_log_text.append("<hr>")
+                
+                # Also log a formal "combat started" entry
+                self._log_combat_action(
+                    "Other",
+                    "DM",
+                    "started combat",
+                    result=f"Beginning combat with {len(combat_state.get('combatants', []))} combatants",
+                    round=1
+                )
+            except Exception as e:
+                print(f"[CombatTracker] Error adding initial combat state: {e}")
+                # Continue anyway - not critical
+
+            # --- SET FLAG before starting resolution --- 
+            self._is_resolving_combat = True
+            print("[CombatTracker] Setting _is_resolving_combat = True")
+
+            # --- Dice roller function ---
+            def dice_roller(expr):
+                """Parse and roll a dice expression like '1d20+5'. Returns the integer result."""
+                try:
+                    import re, random
+                    match = re.match(r"(\d*)d(\d+)([+-]\d+)?", expr.replace(' ', ''))
+                    if not match:
+                        return 0
+                    num, die, mod = match.groups()
+                    num = int(num) if num else 1
+                    die = int(die)
+                    mod = int(mod) if mod else 0
+                    total = sum(random.randint(1, die) for _ in range(num)) + mod
+                    
+                    # Log the roll to the combat log
+                    try:
+                        self._log_combat_action(
+                            "Dice", 
+                            "AI", 
+                            f"rolled {expr}", 
+                            result=f"Result: {total}"
+                        )
+                    except Exception as e:
+                        print(f"[CombatTracker] Error logging dice roll: {e}")
+                    
+                    return total
+                except Exception as e:
+                    print(f"[CombatTracker] Error in dice roller: {e}")
+                    return 10  # Provide a reasonable default
+
+            # Use the new turn-by-turn resolver
+            try:
+                # The resolver now uses a signal for completion, so the callback 
+                # argument (self._handle_resolution_result) is ignored by the resolver.
+                # We pass None to make this clear, but the resolver's signature
+                # still accepts it for now.
+                self.app_state.combat_resolver.resolve_combat_turn_by_turn(
+                    combat_state,
+                    dice_roller,
+                    None,  # Pass None for the direct callback, signal is used instead
+                    self._update_ui_wrapper # Use the wrapper for per-turn UI updates
+                )
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                # Handle immediate errors if the call itself fails
+                self._is_resolving_combat = False
+                self.fast_resolve_button.setEnabled(True)
+                self.fast_resolve_button.setText("Fast Resolve")
+                
+                # Make sure we tell the user about the error
+                self.combat_log_text.append(f"<p style='color:red;'><b>Error starting combat resolution:</b> {str(e)}</p>")
+                QMessageBox.critical(self, "Error", f"Failed to start combat resolution: {str(e)}")
         except Exception as e:
+            # Catch any other errors in the outer function
             import traceback
             traceback.print_exc()
-            # Handle immediate errors if the call itself fails
             self._is_resolving_combat = False
             self.fast_resolve_button.setEnabled(True)
             self.fast_resolve_button.setText("Fast Resolve")
-            QMessageBox.critical(self, "Error", f"Failed to start combat resolution: {str(e)}")
+            
+            # Log error to combat log text
+            if hasattr(self, 'combat_log_text') and self.combat_log_text:
+                self.combat_log_text.append(f"<p style='color:red;'><b>Critical error:</b> {str(e)}</p>")
+                
+            QMessageBox.critical(self, "Critical Error", f"An unexpected error occurred: {str(e)}")
 
     # This method remains, but it's the wrapper for thread-safe UI updates
     def _update_ui_wrapper(self, turn_state):
@@ -3326,6 +3372,281 @@ class CombatTrackerPanel(BasePanel):
             print("[CombatTracker] Created fallback combat log")
         except Exception as e:
             print(f"[CombatTracker] Error creating fallback combat log: {e}")
+            self.combat_log_widget = None
+
+    def _log_combat_action(self, category, actor, action, target=None, result=None, round=None, turn=None):
+        """Log a combat action and update the persistent combat log"""
+        # Safely get the combat log with all our fallback mechanisms
+        try:
+            combat_log = self._get_combat_log()
+            log_entry = None
+            
+            # Try to create an entry using the combat log
+            if combat_log and hasattr(combat_log, 'create_entry'):
+                try:
+                    log_entry = combat_log.create_entry(
+                        category=category,
+                        actor=actor,
+                        action=action,
+                        target=target,
+                        result=result,
+                        round=round if round is not None else self.round_spin.value(),
+                        turn=turn
+                    )
+                except Exception as e:
+                    print(f"[CombatTracker] Error creating combat log entry: {str(e)}")
+            else:
+                # Direct display to our local combat log if external log not available
+                try:
+                    # Only proceed if we have a local log text widget
+                    if hasattr(self, 'combat_log_text') and self.combat_log_text:
+                        # Determine text color based on category
+                        color_map = {
+                            "Attack": "#8B0000",   # Dark Red
+                            "Damage": "#A52A2A",   # Brown
+                            "Healing": "#006400",  # Dark Green
+                            "Status Effect": "#4B0082",  # Indigo
+                            "Death Save": "#000080",  # Navy
+                            "Initiative": "#2F4F4F",  # Dark Slate Gray
+                            "Turn": "#000000",  # Black
+                            "Other": "#708090",  # Slate Gray
+                            "Dice": "#696969",  # Dim Gray
+                            "Setup": "#708090",  # Slate Gray
+                            "Concentration Check": "#800080"  # Purple
+                        }
+                        
+                        text_color = color_map.get(category, "#000000")
+                        
+                        # Format the HTML
+                        round_text = f"R{self.round_spin.value()}" if round is None else f"R{round}"
+                        
+                        html = f"<p style='margin-top:5px; margin-bottom:5px;'>"
+                        html += f"<span style='color:#555555;'>[{round_text}]</span> "
+                        html += f"<span style='font-weight:bold; color:{text_color};'>{actor}</span> "
+                        html += f"{action} "
+                        
+                        if target:
+                            html += f"<span style='font-weight:bold;'>{target}</span> "
+                            
+                        if result:
+                            html += f"<span style='color:#555555;'>{result}</span>"
+                            
+                        html += "</p>"
+                        
+                        self.combat_log_text.append(html)
+                        
+                        # Scroll to the bottom to see latest entries
+                        scrollbar = self.combat_log_text.verticalScrollBar()
+                        scrollbar.setValue(scrollbar.maximum())
+                except Exception as e:
+                    print(f"[CombatTracker] Error updating local combat log display: {str(e)}")
+            
+            return log_entry
+        except Exception as e:
+            # Extra safety to prevent crashes
+            print(f"[CombatTracker] Critical error in _log_combat_action: {str(e)}")
+            return None
+
+    def save_state(self):
+        """Save the current state of the combat tracker panel."""
+        # Initialize the state dictionary with basic combat info
+        state = {
+            "round": self.current_round,
+            "turn": self.current_turn,
+            "elapsed_time": self.combat_time,
+            "combatants": [], # List to hold state of each combatant
+            "death_saves": self.death_saves, # Store death saves data (dict: row -> {successes, failures})
+            "concentrating": list(self.concentrating) # Store concentrating combatants (set of row indices)
+        }
+        
+        # Iterate through each row in the initiative table to save combatant data
+        for row in range(self.initiative_table.rowCount()):
+            # Dictionary to store the state of the current combatant
+            combatant_state = {}
+            
+            # Define the keys corresponding to table columns for easy iteration
+            # Columns: Name, Init, HP, Max HP, AC, Status, Conc, Type
+            keys = ["name", "initiative", "hp", "max_hp", "ac", "status", "concentration", "type"]
+            
+            # Extract data for each relevant column
+            for col, key in enumerate(keys):
+                # Get the QTableWidgetItem from the current cell
+                item = self.initiative_table.item(row, col)
+                
+                # Handle different data types based on column
+                if col == 6:  # Concentration column (index 6)
+                    # Store boolean based on checkbox state
+                    combatant_state[key] = item.checkState() == Qt.Checked if item else False
+                elif col == 0: # Name column (index 0)
+                    # Store text and also UserRole data (combatant type)
+                    combatant_state[key] = item.text() if item else ""
+                    # Save the type stored in UserRole if available, otherwise use the 'type' column later
+                    user_role_type = item.data(Qt.UserRole) if item else None
+                    if user_role_type:
+                         combatant_state["user_role_type"] = user_role_type # Store separately for restore logic
+                else:
+                    # For other columns, store the text content
+                    combatant_state[key] = item.text() if item else ""
+            
+            # Ensure 'type' is saved correctly (prioritize UserRole, then column, then default)
+            combatant_state["type"] = combatant_state.pop("user_role_type", combatant_state.get("type", "manual"))
+
+            # Retrieve and save the detailed combatant data stored in self.combatants dictionary
+            if row in self.combatants:
+                # Store the associated data object/dictionary
+                # Note: Ensure this data is serializable (e.g., dict, list, primitives)
+                # If it's a complex object, you might need a custom serialization method
+                combatant_state["data"] = self.combatants[row] 
+            
+            # Add the combatant's state to the main state list
+            state["combatants"].append(combatant_state)
+            
+        # Return the complete state dictionary
+        return state
+
+    def restore_state(self, state):
+        """Restore the combat tracker state from a saved state dictionary."""
+        # Check if the provided state is valid (not None and is a dictionary)
+        if not state or not isinstance(state, dict):
+            print("[CombatTracker] Restore Error: Invalid or missing state data.")
+            return # Exit if state is invalid
+
+        print("[CombatTracker] Restoring combat tracker state...")
+        # Block signals during restoration to prevent unwanted side effects
+        self.initiative_table.blockSignals(True)
+        
+        try:
+            # --- Clear Existing State ---
+            self.initiative_table.setRowCount(0) # Clear all rows from the table
+            self.death_saves.clear()            # Clear tracked death saves
+            self.concentrating.clear()          # Clear tracked concentration
+            self.combatants.clear()             # Clear stored combatant data
+            self.monster_id_counter = 0         # Reset monster ID counter (important for new monsters added after restore)
+
+            # --- Restore Basic Combat Info ---
+            self.current_round = state.get("round", 1)
+            self.round_spin.setValue(self.current_round) # Update UI spinner
+            
+            # Restore current turn, ensuring it's within bounds of restored combatants later
+            self.current_turn = state.get("turn", 0) 
+            
+            self.combat_time = state.get("elapsed_time", 0)
+            # Update timer display immediately (will show 00:00:00 if time is 0)
+            hours = self.combat_time // 3600
+            minutes = (self.combat_time % 3600) // 60
+            seconds = self.combat_time % 60
+            self.timer_label.setText(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
+            # Reset timer button state (assume stopped on restore)
+            if self.timer.isActive():
+                self.timer.stop()
+            self.timer_button.setText("Start") 
+            
+            # Restore game time display based on restored round
+            self._update_game_time()
+
+            # --- Restore Tracking Dictionaries ---
+            # Restore death saves - keys (row indices) might need remapping if table structure changes significantly
+            self.death_saves = state.get("death_saves", {}) 
+            # Restore concentration - convert list back to set
+            self.concentrating = set(state.get("concentrating", [])) 
+
+            # --- Restore Combatants ---
+            restored_combatants_list = state.get("combatants", [])
+            for idx, combatant_state in enumerate(restored_combatants_list):
+                # Insert a new row for each combatant
+                row = self.initiative_table.rowCount()
+                self.initiative_table.insertRow(row)
+                
+                # Restore detailed combatant data if it exists
+                if "data" in combatant_state:
+                    self.combatants[row] = combatant_state["data"]
+                    # If it's a monster, try to assign a unique ID
+                    if combatant_state.get("type") == "monster":
+                         # Create a unique ID for this monster instance
+                         monster_id = self.monster_id_counter
+                         self.monster_id_counter += 1
+                         # Store the ID with the name item's UserRole + 2
+                         # We create the name item below
+                         
+                # Determine combatant type (use saved 'type' field)
+                combatant_type = combatant_state.get("type", "manual") # Default to manual if missing
+
+                # --- Create and set items for each column ---
+                # Column 0: Name
+                name_item = QTableWidgetItem(combatant_state.get("name", f"Combatant {row+1}"))
+                name_item.setData(Qt.UserRole, combatant_type) # Store type in UserRole
+                # Assign monster ID if applicable
+                if combatant_type == "monster" and "data" in combatant_state:
+                    name_item.setData(Qt.UserRole + 2, monster_id) # Store the generated monster ID
+                name_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                self.initiative_table.setItem(row, 0, name_item)
+                
+                # Column 1: Initiative
+                init_item = QTableWidgetItem(str(combatant_state.get("initiative", "0")))
+                init_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                self.initiative_table.setItem(row, 1, init_item)
+                
+                # Column 2: Current HP
+                hp_item = QTableWidgetItem(str(combatant_state.get("hp", "1")))
+                hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                self.initiative_table.setItem(row, 2, hp_item)
+                
+                # Column 3: Max HP
+                # Use saved max_hp, fallback to current hp if max_hp is missing/invalid
+                max_hp_val = combatant_state.get("max_hp", combatant_state.get("hp", "1")) 
+                # Ensure max_hp is at least current hp if both are numbers
+                try:
+                    current_hp_int = int(hp_item.text())
+                    max_hp_int = int(str(max_hp_val)) # Convert to string first for safety
+                    if max_hp_int < current_hp_int:
+                         max_hp_val = hp_item.text() # Set max HP to current HP if inconsistent
+                except ValueError:
+                     pass # Ignore conversion errors, use the value as is
+                max_hp_item = QTableWidgetItem(str(max_hp_val))
+                max_hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                self.initiative_table.setItem(row, 3, max_hp_item)
+                
+                # Column 4: AC
+                ac_item = QTableWidgetItem(str(combatant_state.get("ac", "10")))
+                ac_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                self.initiative_table.setItem(row, 4, ac_item)
+                
+                # Column 5: Status
+                status_item = QTableWidgetItem(combatant_state.get("status", ""))
+                status_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                self.initiative_table.setItem(row, 5, status_item)
+                
+                # Column 6: Concentration (Checkbox)
+                conc_item = QTableWidgetItem()
+                conc_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+                # Set check state based on saved boolean value
+                is_concentrating = combatant_state.get("concentration", False)
+                conc_item.setCheckState(Qt.Checked if is_concentrating else Qt.Unchecked)
+                self.initiative_table.setItem(row, 6, conc_item)
+                
+                # Column 7: Type (Read-only display, actual type stored in Name item UserRole)
+                type_item = QTableWidgetItem(combatant_type)
+                type_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled) # Generally not editable directly
+                self.initiative_table.setItem(row, 7, type_item)
+
+            # Adjust current_turn if it's out of bounds after restoring
+            if self.current_turn >= self.initiative_table.rowCount():
+                self.current_turn = 0 if self.initiative_table.rowCount() > 0 else -1
+            
+            # --- Final Steps ---
+            # Re-apply highlighting based on the restored current turn
+            self.previous_turn = -1 # Reset previous turn before updating highlight
+            self._update_highlight()
+            
+            # Optional: Re-sort the table based on restored initiative values
+            # self._sort_initiative() # Might be desired, but could change turn order if initiatives were edited before save
+
+            # Optional: Fix any inconsistencies in types (should be less needed now)
+            # self._fix_missing_types()
+            
+            print(f"[CombatTracker] State restoration complete. {self.initiative_table.rowCount()} combatants restored.")
+
+        except Exception as e:
             # Catch any unexpected errors during restoration
             print(f"[CombatTracker] CRITICAL ERROR during state restoration: {e}")
             import traceback
