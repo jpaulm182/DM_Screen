@@ -4605,157 +4605,150 @@ class CombatTrackerPanel(BasePanel):
     # It MUST be defined before it's connected in __init__.
     @Slot(object, object)
     def _process_resolution_ui(self, result, error):
-        """Process the combat resolution result in the main GUI thread and show user-facing output."""
-        print(f"[CombatTracker] _process_resolution_ui slot called. Result: {result is not None}, Error: {error}")
-        # Ensure this runs even if there was an error during resolution setup
-        self._is_resolving_combat = False 
-        print("[CombatTracker] Setting _is_resolving_combat = False")
-        
-        # Re-enable button first, regardless of outcome
+        """Process the combat resolution result from the resolver"""
+        # Reset UI elements first
         self.fast_resolve_button.setEnabled(True)
         self.fast_resolve_button.setText("Fast Resolve")
         
-        # Hide the live combat log if it's visible and exists
-        if hasattr(self, 'combat_log_widget') and self.combat_log_widget and self.combat_log_widget.isVisible():
-            print("[CombatTracker] Hiding live combat log widget.")
-            self.combat_log_widget.hide()
+        # Ensure the _is_resolving_combat flag is reset
+        self._is_resolving_combat = False
+        print("[CombatTracker] Setting _is_resolving_combat = False")
         
-        if error:
-            error_msg = str(error) # Ensure error is a string
-            print(f"[CombatTracker] Processing resolution error: {error_msg}")
-            
-            # Make error messages more user-friendly
-            if "No player characters" in error_msg:
-                error_msg = "No player characters in the combat. Add at least one character."
-            elif "No monsters" in error_msg:
-                error_msg = "No monsters in the combat. Add monsters from the Monster Panel."
-            
-            # Show the error message
-            QMessageBox.critical(self, "Fast Resolve Error", f"Error resolving combat: {error_msg}")
-            return
-        
-        # Check if result is valid
-        if not result or not isinstance(result, dict):
-            print(f"[CombatTracker] Invalid result received: {result}")
-            QMessageBox.critical(self, "Fast Resolve Error", "Received invalid result data from combat resolution.")
-            return
-            
-        # Log the final resolution action
-        final_narrative = result.get("narrative", "Combat concluded.")
-        final_rounds = result.get("rounds", "unknown")
-        self._log_combat_action(
-            "Other", 
-            "AI", 
-            "completed combat resolution", 
-            result=f"{final_narrative} (Total Rounds: {final_rounds})"
-        )
-        
-        print(f"[CombatTracker] Processing successful resolution: {final_narrative}")
-
-        # Apply final combatant updates
-        if "updates" in result:
-             # Apply updates and get summary info
-            num_removed, update_summary = self._apply_combat_updates(result["updates"])
-            print(f"[CombatTracker] Applied updates. Removed: {num_removed}, Summary: {update_summary}")
-
-            # Cleanup dead combatants AFTER applying final state to ensure consistency
-            self._cleanup_dead_combatants()
-            print(f"[CombatTracker] Cleanup after resolution complete.")
-        else:
-             num_removed = 0
-             update_summary = []
-             print("[CombatTracker] No 'updates' found in resolution result.")
-            
-        # Update round counter based on final result
-        if "rounds" in result:
-            self.round_spin.setValue(result["rounds"] + 1) # Show round after combat ended
-        
-        # --- Ensure table is sorted correctly after updates ---
-        # No longer needed here if _is_resolving_combat flag prevents sorting during resolution
-        # self._sort_initiative()
-        
-        # --- Prepare Final Summary Message ---
-        # Get stats about the combat
-        round_count = result.get("rounds", 0)
-        action_log = result.get("log", [])
-        turn_count = len(action_log) if action_log else 0
-        
-        # Get survivor details from the *final* state in the table
-        survivors_details = []
-        casualties = []
-        for row in range(self.initiative_table.rowCount()):
-            name_item = self.initiative_table.item(row, 0)
-            hp_item = self.initiative_table.item(row, 2)
-            status_item = self.initiative_table.item(row, 5)
-            
-            if name_item and hp_item:
-                name = name_item.text()
-                hp = hp_item.text()
-                status_text = status_item.text() if status_item else "OK"
-                
-                # Check death saves if row exists in tracking
-                death_saves_text = ""
-                if row in self.death_saves:
-                    saves = self.death_saves[row]
-                    successes = saves.get("successes", 0)
-                    failures = saves.get("failures", 0)
-                    death_saves_text = f" [DS: {successes}S/{failures}F]"
-
-                # Add to survivors/casualties list
-                if status_text.lower() == "dead":
-                    casualties.append(name)
-                else:
-                    survivors_details.append(f"{name}: {hp} HP ({status_text}){death_saves_text}")
-
-        # Build user-facing summary
-        summary_text = f"Combat Resolved:\\n\\n{final_narrative}\\n\\n"
-        summary_text += f"Duration: {round_count} rounds, {turn_count} turns\\n\\n"
-        
-        # Include survivors with details
-        if survivors_details:
-            summary_text += "Survivors:\\n"
-            for survivor in survivors_details:
-                summary_text += f"- {survivor}\\n"
-        else:
-            summary_text += "No survivors!\\n"
-            
-        # Add in casualties list
-        if casualties:
-            summary_text += "\\nCasualties:\\n"
-            for casualty in casualties:
-                summary_text += f"- {casualty}\\n"
-        
-        # --- Show summary in a dialog with Save to Session Notes ---
-        def save_to_notes_callback(content):
-            # Try to get the session notes panel using the standard approach
-            notes_widget = None
+        # Close the live log if it's open
+        if hasattr(self, 'combat_log_widget') and self.combat_log_widget:
             try:
-                notes_widget = self.app_state.get_panel_widget("session_notes")
+                self.combat_log_widget.close()
+                self.combat_log_widget = None
             except Exception as e:
-                print(f"Error getting session notes panel: {str(e)}")
-            if not notes_widget and hasattr(self.app_state, 'panel_manager') and hasattr(self.app_state.panel_manager, 'get_panel_widget'):
-                try:
-                    notes_widget = self.app_state.panel_manager.get_panel_widget("session_notes")
-                except Exception as e:
-                    print(f"Error getting session notes panel through panel_manager: {str(e)}")
-            if not notes_widget:
-                QMessageBox.warning(self, "Session Notes Not Available", "Session Notes panel is not available. Please open it first.")
-                return
-            # Save the note
-            title = f"Combat: {final_narrative[:40]}" if final_narrative else "Combat Result"
-            tags = ["combat", "ai", "fast_resolve"]
-            if hasattr(notes_widget, '_create_note_with_content'):
-                success = notes_widget._create_note_with_content(title=title, content=content, tags=tags)
-                if success:
-                    QMessageBox.information(self, "Note Created", "The combat result has been added to your session notes.")
-                else:
-                    QMessageBox.warning(self, "Note Not Created", "The note creation was cancelled or failed.")
-            else:
-                QMessageBox.warning(self, "Error", "Session notes panel doesn't have the required method.")
+                print(f"[CombatTracker] Error closing combat log: {e}")
+                
+        # Handle error first
+        if error:
+            QMessageBox.critical(self, "Combat Resolution Failed", f"Combat resolution failed: {error}")
+            return
+            
+        if not result:
+            QMessageBox.warning(self, "No Result", "Combat resolution produced no result.")
+            return
+            
+        # Extract results and update the UI
+        try:
+            final_narrative = result.get("narrative", "No narrative provided.")
+            combatants = result.get("updates", [])
+            log_entries = result.get("log", [])
+            round_count = result.get("rounds", 0)
+            
+            # Apply the updates to the table, getting combatants that were removed
+            removed_count, update_summaries = self._apply_combat_updates(combatants)
+            
+            # Build a detailed summary for the user
+            turn_count = len(log_entries)
+            survivors_details = []
+            casualties = []
+            
+            # Process each combatant in the table
+            for row in range(self.initiative_table.rowCount()):
+                name_item = self.initiative_table.item(row, 0)
+                hp_item = self.initiative_table.item(row, 2)
+                status_item = self.initiative_table.item(row, 5)
+                
+                if name_item and hp_item:
+                    name = name_item.text()
+                    hp = hp_item.text()
+                    status_text = status_item.text() if status_item else ""
+                    
+                    # Add death saves info for unconscious characters
+                    death_saves_text = ""
+                    saves = self.death_saves.get(row, None)
+                    if saves:
+                        successes = saves.get("successes", 0)
+                        failures = saves.get("failures", 0)
+                        death_saves_text = f" [DS: {successes}S/{failures}F]"
 
-        dlg = CombatResolutionSummaryDialog(self, summary_text, save_callback=save_to_notes_callback)
-        dlg.exec()
-        # --- End of dialog logic ---
+                    # Add to survivors/casualties list
+                    if status_text.lower() == "dead":
+                        casualties.append(name)
+                    else:
+                        survivors_details.append(f"{name}: {hp} HP ({status_text}){death_saves_text}")
+
+            # Build user-facing summary
+            summary_text = f"Combat Resolved:\\n\\n{final_narrative}\\n\\n"
+            summary_text += f"Duration: {round_count} rounds, {turn_count} turns\\n\\n"
+            
+            # Include survivors with details
+            if survivors_details:
+                summary_text += "Survivors:\\n"
+                for survivor in survivors_details:
+                    summary_text += f"- {survivor}\\n"
+            else:
+                summary_text += "No survivors!\\n"
+                
+            # Add in casualties list
+            if casualties:
+                summary_text += "\\nCasualties:\\n"
+                for casualty in casualties:
+                    summary_text += f"- {casualty}\\n"
+            
+            # --- Show summary in a dialog with Save to Session Notes ---
+            def save_to_notes_callback(content):
+                # Try to get the session notes panel using the standard approach
+                notes_widget = None
+                try:
+                    notes_widget = self.app_state.get_panel_widget("session_notes")
+                except Exception as e:
+                    print(f"Error getting session notes panel: {str(e)}")
+                if not notes_widget and hasattr(self.app_state, 'panel_manager') and hasattr(self.app_state.panel_manager, 'get_panel_widget'):
+                    try:
+                        notes_widget = self.app_state.panel_manager.get_panel_widget("session_notes")
+                    except Exception as e:
+                        print(f"Error getting session notes panel through panel_manager: {str(e)}")
+                if not notes_widget:
+                    QMessageBox.warning(self, "Session Notes Not Available", "Session Notes panel is not available. Please open it first.")
+                    return
+                # Save the note
+                title = f"Combat: {final_narrative[:40]}" if final_narrative else "Combat Result"
+                tags = ["combat", "ai", "fast_resolve"]
+                if hasattr(notes_widget, '_create_note_with_content'):
+                    success = notes_widget._create_note_with_content(title=title, content=content, tags=tags)
+                    if success:
+                        QMessageBox.information(self, "Note Created", "The combat result has been added to your session notes.")
+                    else:
+                        QMessageBox.warning(self, "Note Not Created", "The note creation was cancelled or failed.")
+                else:
+                    QMessageBox.warning(self, "Error", "Session notes panel doesn't have the required method.")
+
+            # Create and show the dialog
+            from PySide6.QtWidgets import QDialog, QPushButton, QVBoxLayout, QTextEdit, QLabel, QHBoxLayout
+            
+            # Create the dialog here instead of using CombatResolutionSummaryDialog class
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Combat Resolved")
+            dlg.setMinimumSize(500, 400)
+            
+            layout = QVBoxLayout(dlg)
+            label = QLabel("Combat Summary:")
+            layout.addWidget(label)
+            
+            text_edit = QTextEdit()
+            text_edit.setReadOnly(True)
+            text_edit.setPlainText(summary_text)
+            layout.addWidget(text_edit)
+            
+            button_layout = QHBoxLayout()
+            save_btn = QPushButton("Save to Session Notes")
+            save_btn.clicked.connect(lambda: save_to_notes_callback(text_edit.toPlainText()))
+            button_layout.addWidget(save_btn)
+            
+            close_btn = QPushButton("Close")
+            close_btn.clicked.connect(dlg.accept)
+            button_layout.addWidget(close_btn)
+            
+            layout.addLayout(button_layout)
+            
+            dlg.exec()
+        except Exception as e:
+            print(f"[CombatTracker] Error processing resolution result: {str(e)}")
+            QMessageBox.critical(self, "Error", f"An error occurred while processing the combat result: {str(e)}")
 
     def _apply_combat_updates(self, updates):
         """Apply final combatant updates from the resolution result."""
@@ -4928,38 +4921,3 @@ class CombatTrackerPanel(BasePanel):
 
         # Return the initialized variables
         return len(rows_to_remove), update_summaries
-
-    # --- Dialog for Combat Resolution Summary ---
-    class CombatResolutionSummaryDialog(QDialog):
-        """
-        Dialog to display the combat resolution summary and allow saving to session notes.
-        """
-        def __init__(self, parent, summary_text, save_callback=None):
-            super().__init__(parent)
-            self.setWindowTitle("Combat Resolved")
-            self.setMinimumSize(500, 400)
-            self.save_callback = save_callback
-
-            layout = QVBoxLayout(self)
-            label = QLabel("Combat Summary:")
-            layout.addWidget(label)
-
-            self.text_edit = QTextEdit()
-            self.text_edit.setReadOnly(True)
-            self.text_edit.setPlainText(summary_text)
-            layout.addWidget(self.text_edit)
-
-            button_layout = QHBoxLayout()
-            self.save_btn = QPushButton("Save to Session Notes")
-            self.save_btn.clicked.connect(self._on_save)
-            button_layout.addWidget(self.save_btn)
-
-            self.close_btn = QPushButton("Close")
-            self.close_btn.clicked.connect(self.accept)
-            button_layout.addWidget(self.close_btn)
-
-            layout.addLayout(button_layout)
-
-        def _on_save(self):
-            if self.save_callback:
-                self.save_callback(self.text_edit.toPlainText())
