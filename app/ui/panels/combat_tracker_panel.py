@@ -4646,12 +4646,37 @@ class CombatTrackerPanel(BasePanel):
             for casualty in casualties:
                 summary_text += f"- {casualty}\\n"
         
-        # Show summary message
-        QMessageBox.information(
-            self, 
-            "Combat Resolved", 
-            summary_text
-        )
+        # --- Show summary in a dialog with Save to Session Notes ---
+        def save_to_notes_callback(content):
+            # Try to get the session notes panel using the standard approach
+            notes_widget = None
+            try:
+                notes_widget = self.app_state.get_panel_widget("session_notes")
+            except Exception as e:
+                print(f"Error getting session notes panel: {str(e)}")
+            if not notes_widget and hasattr(self.app_state, 'panel_manager') and hasattr(self.app_state.panel_manager, 'get_panel_widget'):
+                try:
+                    notes_widget = self.app_state.panel_manager.get_panel_widget("session_notes")
+                except Exception as e:
+                    print(f"Error getting session notes panel through panel_manager: {str(e)}")
+            if not notes_widget:
+                QMessageBox.warning(self, "Session Notes Not Available", "Session Notes panel is not available. Please open it first.")
+                return
+            # Save the note
+            title = f"Combat: {final_narrative[:40]}" if final_narrative else "Combat Result"
+            tags = ["combat", "ai", "fast_resolve"]
+            if hasattr(notes_widget, '_create_note_with_content'):
+                success = notes_widget._create_note_with_content(title=title, content=content, tags=tags)
+                if success:
+                    QMessageBox.information(self, "Note Created", "The combat result has been added to your session notes.")
+                else:
+                    QMessageBox.warning(self, "Note Not Created", "The note creation was cancelled or failed.")
+            else:
+                QMessageBox.warning(self, "Error", "Session notes panel doesn't have the required method.")
+
+        dlg = CombatResolutionSummaryDialog(self, summary_text, save_callback=save_to_notes_callback)
+        dlg.exec()
+        # --- End of dialog logic ---
 
     def _apply_combat_updates(self, updates):
         """Apply final combatant updates from the resolution result."""
@@ -4805,3 +4830,38 @@ class CombatTrackerPanel(BasePanel):
 
         # Return the initialized variables
         return len(rows_to_remove), update_summaries
+
+    # --- Dialog for Combat Resolution Summary ---
+    class CombatResolutionSummaryDialog(QDialog):
+        """
+        Dialog to display the combat resolution summary and allow saving to session notes.
+        """
+        def __init__(self, parent, summary_text, save_callback=None):
+            super().__init__(parent)
+            self.setWindowTitle("Combat Resolved")
+            self.setMinimumSize(500, 400)
+            self.save_callback = save_callback
+
+            layout = QVBoxLayout(self)
+            label = QLabel("Combat Summary:")
+            layout.addWidget(label)
+
+            self.text_edit = QTextEdit()
+            self.text_edit.setReadOnly(True)
+            self.text_edit.setPlainText(summary_text)
+            layout.addWidget(self.text_edit)
+
+            button_layout = QHBoxLayout()
+            self.save_btn = QPushButton("Save to Session Notes")
+            self.save_btn.clicked.connect(self._on_save)
+            button_layout.addWidget(self.save_btn)
+
+            self.close_btn = QPushButton("Close")
+            self.close_btn.clicked.connect(self.accept)
+            button_layout.addWidget(self.close_btn)
+
+            layout.addLayout(button_layout)
+
+        def _on_save(self):
+            if self.save_callback:
+                self.save_callback(self.text_edit.toPlainText())
