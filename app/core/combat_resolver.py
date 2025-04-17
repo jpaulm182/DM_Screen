@@ -929,9 +929,19 @@ Equipment: {active.get('equipment', 'Standard equipment')}
 
         # Add information about limited-use abilities if available
         if "limited_use" in active:
-            prompt += "\nLimited-use abilities:\n"
-            for ability, state in active.get("limited_use", {}).items():
-                prompt += f"- {ability}: {state}\n"
+            prompt += "\n# LIMITED-USE ABILITIES\n"
+            if isinstance(active.get("limited_use"), dict):
+                for ability, state in active.get("limited_use", {}).items():
+                    prompt += f"- {ability}: {state}\n"
+            else:
+                prompt += "Limited-use abilities information is not in the expected format.\n"
+                
+        # Show spell‑slot information if present (expects a dictionary mapping
+        # slot level -> remaining/total, e.g., {"1": "2/4", "2": "1/3"}).
+        if "spell_slots" in active and isinstance(active["spell_slots"], dict):
+            prompt += "\n# SPELL SLOTS REMAINING (level : remaining/total)\n"
+            for lvl, slot_state in active["spell_slots"].items():
+                prompt += f"- Level {lvl}: {slot_state}\n"
                 
         # Add other combatants
         prompt += "\n# OTHER COMBATANTS\n"
@@ -953,6 +963,7 @@ Decide the most appropriate action for the active combatant this turn. Consider:
 7. Automatic abilities that trigger on death or at the start/end of the turn (e.g. **Death Burst**, **Death Throes**, **Relentless**, etc.) MUST be resolved when their trigger condition is met.  If a combatant with such a trait is reduced to 0 HP during someone else's turn, include a description of the triggered effect and add any damage/status updates in the "updates" array.
 8. Abilities that show a **Recharge X‑Y** mechanic must track availability.  If you use such an ability this turn, add an entry in "updates" to set it to "expended" and include the recharge roll at the start of the creature's following turns.
 9. Limited‑use abilities (per short/long rest, per day, etc.) must decrement their remaining uses.
+10. When casting spells, you must expend an appropriate spell slot if any remain.  If no slots remain for that level you CANNOT cast a spell that requires it.
 
 # RESPONSE FORMAT
 Respond with a JSON object containing these fields:
@@ -1057,14 +1068,18 @@ Status: {active.get('status', 'OK')}
             # Add limited-use abilities if any
             if "limited_use" in active:
                 prompt += "\n# LIMITED-USE ABILITIES\n"
-                
-                # Check if limited_use is a dictionary
                 if isinstance(active.get("limited_use"), dict):
                     for ability, state in active.get("limited_use", {}).items():
                         prompt += f"- {ability}: {state}\n"
                 else:
                     prompt += "Limited-use abilities information is not in the expected format.\n"
-                    
+
+            # Show spell‑slot info if present
+            if "spell_slots" in active and isinstance(active["spell_slots"], dict):
+                prompt += "\n# SPELL SLOTS REMAINING (level : remaining/total)\n"
+                for lvl, slot_state in active["spell_slots"].items():
+                    prompt += f"- Level {lvl}: {slot_state}\n"
+
             # Add instructions for resolution
             prompt += """
 # YOUR TASK
@@ -1088,6 +1103,7 @@ Resolve the outcome of the action based on the dice results. Follow standard D&D
 1. If during this resolution any combatant is reduced to 0 HP **and** they possess an on‑death or death burst style trait, immediately resolve that effect (add damage, saving throws, conditions as appropriate) within the same "updates" list.
 2. For each Recharge ability you use this turn, include a field "recharge_roll" in the corresponding update like {"ability":"Fire Breath","recharge_roll":"d6 roll result"} so the tracker can mark it available again on a 5‑6 (or stated value).
 3. The "updates" array must fully capture changed HP, status conditions, frightened/stunned flags, limited‑use counters, and recharge state so that the UI can stay in sync.
+4. If a spell was cast, include an update to the caster's spell slot tracker in the form {"name":"Wizard","spell_slots":{"6":"0/1"}} (example shows 6‑level slot expended).
 
 # RESPONSE FORMAT
 Respond with a JSON object containing these fields:
