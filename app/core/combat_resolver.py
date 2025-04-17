@@ -950,6 +950,9 @@ Decide the most appropriate action for the active combatant this turn. Consider:
 4. D&D 5e rules for actions, bonus actions, and movement
 5. Make smart, consistent tactical decisions as a competent combatant would
 6. CRITICAL: Use the EXACT HP values listed at the start of this prompt - do NOT assume full health or reset HP values
+7. Automatic abilities that trigger on death or at the start/end of the turn (e.g. **Death Burst**, **Death Throes**, **Relentless**, etc.) MUST be resolved when their trigger condition is met.  If a combatant with such a trait is reduced to 0 HP during someone else's turn, include a description of the triggered effect and add any damage/status updates in the "updates" array.
+8. Abilities that show a **Recharge X‑Y** mechanic must track availability.  If you use such an ability this turn, add an entry in "updates" to set it to "expended" and include the recharge roll at the start of the creature's following turns.
+9. Limited‑use abilities (per short/long rest, per day, etc.) must decrement their remaining uses.
 
 # RESPONSE FORMAT
 Respond with a JSON object containing these fields:
@@ -1080,6 +1083,11 @@ Resolve the outcome of the action based on the dice results. Follow standard D&D
 - Each failed death save brings a character closer to death
 - If a character has 3 failed death saves, they die
 - If a character has 3 successful death saves, they stabilize
+
+# ADDITIONAL RULES FOR THIS PHASE
+1. If during this resolution any combatant is reduced to 0 HP **and** they possess an on‑death or death burst style trait, immediately resolve that effect (add damage, saving throws, conditions as appropriate) within the same "updates" list.
+2. For each Recharge ability you use this turn, include a field "recharge_roll" in the corresponding update like {"ability":"Fire Breath","recharge_roll":"d6 roll result"} so the tracker can mark it available again on a 5‑6 (or stated value).
+3. The "updates" array must fully capture changed HP, status conditions, frightened/stunned flags, limited‑use counters, and recharge state so that the UI can stay in sync.
 
 # RESPONSE FORMAT
 Respond with a JSON object containing these fields:
