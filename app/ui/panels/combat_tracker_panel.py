@@ -3270,28 +3270,34 @@ class CombatTrackerPanel(BasePanel):
                 # Add abilities if available
                 if isinstance(stored_combatant, dict):
                     # Only include keys that are useful for combat resolution
-                    for key in ["abilities", "skills", "equipment", "features", "spells"]:
+                    for key in [
+                        "abilities", "skills", "equipment", "features", "spells",
+                        "special_traits", "traits", "actions", "legendary_actions",
+                        "reactions", "on_death", "on_death_effects", "recharge_abilities",
+                        "ability_recharges", "limited_use"
+                    ]:
                         if key in stored_combatant:
                             combatant[key] = stored_combatant[key]
                     
-                    # Check for limited-use abilities
-                    if "limited_use" in stored_combatant:
-                        combatant["limited_use"] = stored_combatant["limited_use"]
-                    elif combatant_type == "monster":
-                        # Initialize limited-use abilities based on monster type
+                    # If monster and no existing limited_use, create basic recharge placeholders
+                    if combatant_type == "monster" and "limited_use" not in combatant:
                         limited_use = {}
-                        
-                        # Dragons have breath weapons that recharge on 5-6
+
+                        # Dragons breath weapon
                         if "dragon" in name.lower():
                             limited_use["Breath Weapon"] = "Available (Recharges on 5-6)"
-                        
-                        # Add other common limited-use abilities
+
                         if limited_use:
                             combatant["limited_use"] = limited_use
                 
                 # If it's an object, try to extract useful attributes
                 elif hasattr(stored_combatant, "__dict__"):
-                    for attr in ["abilities", "skills", "equipment", "features", "spells"]:
+                    for attr in [
+                        "abilities", "skills", "equipment", "features", "spells",
+                        "special_traits", "traits", "actions", "legendary_actions",
+                        "reactions", "on_death", "on_death_effects", "recharge_abilities",
+                        "ability_recharges", "limited_use"
+                    ]:
                         if hasattr(stored_combatant, attr):
                             combatant[attr] = getattr(stored_combatant, attr)
             
