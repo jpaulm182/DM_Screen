@@ -22,7 +22,8 @@ from PySide6.QtWidgets import (
     QSpinBox, QLineEdit, QPushButton, QHeaderView, QComboBox, QCheckBox,
     QGroupBox, QWidget, QStyledItemDelegate, QStyle, QToolButton,
     QTabWidget, QScrollArea, QFormLayout, QFrame, QSplitter, QApplication,
-    QSizePolicy, QTextEdit, QMenu, QMessageBox, QDialog, QDialogButtonBox
+    QSizePolicy, QTextEdit, QMenu, QMessageBox, QDialog, QDialogButtonBox,
+    QAbstractItemView
 )
 from PySide6.QtCore import Qt, QTimer, Signal, Slot, QSize, QMetaObject, Q_ARG, QObject, QPoint, QRect, QEvent, QThread
 from PySide6.QtGui import QColor, QFont, QTextCharFormat, QBrush, QPixmap, QImage, QTextCursor, QPalette, QAction, QKeySequence
@@ -1085,7 +1086,11 @@ class CombatTrackerPanel(BasePanel):
         self.initiative_table.setHorizontalHeaderLabels(["Name", "Initiative", "HP", "Max HP", "AC", "Status", "Conc.", "Type"])
         self.initiative_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.initiative_table.setSelectionMode(QTableWidget.ExtendedSelection)
-        self.initiative_table.setEditTriggers(QTableWidget.AllEditTriggers)
+        # Allow editing via double‑click or pressing a key, but NOT on single
+        # mouse right‑clicks so the context menu can appear reliably.
+        self.initiative_table.setEditTriggers(
+            QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed
+        )
         
         # Set column widths
         self.initiative_table.setColumnWidth(0, 150)  # Name
@@ -1094,7 +1099,7 @@ class CombatTrackerPanel(BasePanel):
         self.initiative_table.setColumnWidth(3, 80)   # Max HP
         self.initiative_table.setColumnWidth(4, 60)   # AC
         self.initiative_table.setColumnWidth(5, 120)  # Status
-        self.initiative_table.setColumnWidth(6, 60)   # Concentration
+        self.initiative_table.setColumnWidth(6, 60)   # Conc
         self.initiative_table.setColumnWidth(7, 100)  # Type
         
         # Set header behavior
@@ -1953,6 +1958,13 @@ class CombatTrackerPanel(BasePanel):
         if row < 0:
             return
         
+        # --- Ensure row selection before menu pops ---
+        # If the right‑clicked row is not already selected, clear any previous
+        # selection (to avoid unintended multi‑row edits) and select this row.
+        if row not in [idx.row() for idx in self.initiative_table.selectionModel().selectedRows()]:
+            self.initiative_table.clearSelection()
+            self.initiative_table.selectRow(row)
+
         # Create menu
         menu = QMenu(self)
         
@@ -5463,3 +5475,45 @@ class CombatTrackerPanel(BasePanel):
             
             # Maybe the combat resolver is still running - force all needed flag resets too
             self._is_resolving_combat = False
+
+    # ---------------------------------------------------------------
+    # Helper: remove currently selected combatants (invoked by the
+    # context‑menu 'Remove' action).
+    # ---------------------------------------------------------------
+    def _remove_selected(self):
+        """Remove all currently selected rows from the combat tracker.
+
+        We reuse the existing _cleanup_dead_combatants logic to ensure all
+        bookkeeping (death_saves, concentrating sets, current_turn index,
+        etc.) is handled in one place.
+        """
+
+        # Determine which rows are selected.
+        rows = sorted({idx.row() for idx in self.initiative_table.selectedIndexes()})
+        if not rows:
+            return
+
+        # Ask for confirmation to prevent accidental deletion.
+        reply = QMessageBox.question(
+            self,
+            "Remove Combatant(s)",
+            f"Remove {len(rows)} selected combatant(s) from the tracker?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        # Tag each selected combatant as Dead so that the existing cleanup
+        # routine will remove them and handle all related state.
+        for row in rows:
+            if row >= self.initiative_table.rowCount():
+                continue
+            status_item = self.initiative_table.item(row, 5)
+            if status_item is None:
+                status_item = QTableWidgetItem()
+                self.initiative_table.setItem(row, 5, status_item)
+            status_item.setText("Dead")
+
+        # Now invoke the shared cleanup function to physically remove rows.
+        self._cleanup_dead_combatants()
