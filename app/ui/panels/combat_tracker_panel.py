@@ -18,20 +18,21 @@ Features:
 """
 
 from PySide6.QtWidgets import (
-    QTableWidget, QTableWidgetItem, QHeaderView, QPushButton,
-    QLineEdit, QSpinBox, QHBoxLayout, QVBoxLayout, QComboBox,
-    QLabel, QCheckBox, QMenu, QMessageBox, QDialog, QDialogButtonBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, QLabel,
+    QSpinBox, QLineEdit, QPushButton, QHeaderView, QComboBox, QCheckBox,
     QGroupBox, QWidget, QStyledItemDelegate, QStyle, QToolButton,
     QTabWidget, QScrollArea, QFormLayout, QFrame, QSplitter, QApplication,
-    QSizePolicy, QTextEdit
+    QSizePolicy, QTextEdit, QMenu, QMessageBox, QDialog, QDialogButtonBox
 )
-from PySide6.QtCore import Qt, QTimer, Signal, Slot, QSize, QMetaObject, Q_ARG, QObject, QPoint, QRect
-from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QBrush, QPalette
+from PySide6.QtCore import Qt, QTimer, Signal, Slot, QSize, QMetaObject, Q_ARG, QObject, QPoint, QRect, QEvent, QThread
+from PySide6.QtGui import QColor, QFont, QTextCharFormat, QBrush, QPixmap, QImage, QTextCursor, QPalette, QAction, QKeySequence
 import random
 import re
 import json # Added json import
 import copy
 import time
+import threading
+import gc
 
 from app.ui.panels.base_panel import BasePanel
 from app.ui.panels.panel_category import PanelCategory
@@ -920,6 +921,9 @@ class CombatTrackerPanel(BasePanel):
     # New signal for showing turn results
     show_turn_result_signal = Signal(str, str, str, str, str)
     
+    # Add missing combat_log_signal for panel connection
+    combat_log_signal = Signal(str, str, str, str, str)  # category, actor, action, target, result
+    
     @property
     def current_turn(self):
         """Get the current turn index"""
@@ -983,14 +987,26 @@ class CombatTrackerPanel(BasePanel):
         # Connect the turn result signal to the slot
         self.show_turn_result_signal.connect(self._show_turn_result_slot)
         
-        # Connect the combat resolver signal to the appropriate slot for thread-safe handling
+        # Connect to combat resolver if available - FIXED CONNECTION SETUP
         if hasattr(self.app_state, 'combat_resolver') and self.app_state.combat_resolver:
-            # Ensure the resolver is a QObject (it should be after the previous edit)
-            if isinstance(self.app_state.combat_resolver, QObject):
-                self.app_state.combat_resolver.resolution_complete.connect(self._process_resolution_ui)
-                print("[CombatTracker] Connected resolution_complete signal to _process_resolution_ui slot.")
-            else:
-                 print("[CombatTracker] Warning: CombatResolver is not a QObject, cannot connect signal.")
+            try:
+                # Ensure the resolver is a QObject (it should be after the previous edit)
+                if isinstance(self.app_state.combat_resolver, QObject):
+                    # Connect the signal for completion of the entire combat
+                    self.app_state.combat_resolver.resolution_complete.connect(self._process_resolution_ui)
+                    
+                    # Connect the per-turn update signal if it exists
+                    if hasattr(self.app_state.combat_resolver, 'turn_update'):
+                        self.app_state.combat_resolver.turn_update.connect(self._update_ui_wrapper)
+                        print("[CombatTracker] Connected turn_update signal to _update_ui_wrapper")
+                    else:
+                        print("[CombatTracker] Warning: CombatResolver has no turn_update signal, per-turn updates may not work")
+                    
+                    print("[CombatTracker] Connected resolution_complete signal to _process_resolution_ui slot.")
+                else:
+                    print("[CombatTracker] Warning: CombatResolver is not a QObject, cannot connect signals.")
+            except Exception as e:
+                print(f"[CombatTracker] Error connecting to combat resolver: {e}")
 
     def _ensure_table_ready(self):
         """Ensure the table exists and has the correct number of columns"""
@@ -2302,213 +2318,416 @@ class CombatTrackerPanel(BasePanel):
             # And update highlight to the first combatant
             self._sort_initiative()
     
+    # Custom event classes for safe thread communication
+    class _ProgressEvent(QEvent):
+        def __init__(self, message):
+            super().__init__(QEvent.Type(QEvent.User + 100))
+            self.message = message
+    
+    class _ErrorEvent(QEvent):
+        def __init__(self, title, message):
+            super().__init__(QEvent.Type(QEvent.User + 101))
+            self.title = title
+            self.message = message
+    
+    class _ClearLogEvent(QEvent):
+        def __init__(self):
+            super().__init__(QEvent.Type(QEvent.User + 102))
+    
+    class _AddInitialStateEvent(QEvent):
+        def __init__(self, combat_state):
+            super().__init__(QEvent.Type(QEvent.User + 103))
+            self.combat_state = combat_state
+    
+    class _LogDiceEvent(QEvent):
+        def __init__(self, expr, result):
+            super().__init__(QEvent.Type(QEvent.User + 104))
+            self.expr = expr
+            self.result = result
+    
+    class _ProcessResultEvent(QEvent):
+        def __init__(self, result, error):
+            super().__init__(QEvent.Type(QEvent.User + 105))
+            self.result = result
+            self.error = error
+    
+    class _UpdateUIEvent(QEvent):
+        def __init__(self, turn_state):
+            super().__init__(QEvent.Type(QEvent.User + 106))
+            self.turn_state = turn_state
+    
+    class _SetResolvingEvent(QEvent):
+        def __init__(self, is_resolving):
+            super().__init__(QEvent.Type(QEvent.User + 107))
+            self.is_resolving = is_resolving
+    
+    class _ConnectSignalEvent(QEvent):
+        def __init__(self):
+            super().__init__(QEvent.Type(QEvent.User + 108))
+    
+    class _UpdateButtonEvent(QEvent):
+        def __init__(self, text, enabled=True):
+            super().__init__(QEvent.Type(QEvent.User + 109))
+            self.text = text
+            self.enabled = enabled
+    
     def _fast_resolve_combat(self):
         """Use LLM to resolve the current combat encounter (turn-by-turn, rule-correct)."""
-        try:
-            # Log fast resolve request
-            self._log_combat_action(
-                "Other", 
-                "DM", 
-                "requested fast combat resolution"
-            )
-            
-            # Check if combat resolver is available
-            if not hasattr(self.app_state, 'combat_resolver'):
-                QMessageBox.warning(self, "Error", "Combat Resolver service not available.")
-                return
+        import traceback
+        import threading
+        import gc
+        from PySide6.QtWidgets import QApplication, QMessageBox
 
-            # Check if we have at least one player character and one monster
-            has_player = False
-            has_monster = False
-            
-            for row in range(self.initiative_table.rowCount()):
-                type_item = self.initiative_table.item(row, 7)  # Type column
-                if type_item:
-                    combatant_type = type_item.text().lower()
-                    if combatant_type == "monster":
-                        has_monster = True
-                    elif combatant_type in ["character", "pc"]:
-                        has_player = True
-            
-            # Modified check: Only require at least one combatant (monster is preferred, but not strictly required here now)
-            # We let the core resolver handle more specific validation
-            if not has_monster and not has_player:
-                 QMessageBox.warning(
-                     self, 
-                     "Cannot Start Combat", 
-                     "You need at least one combatant (monster or character) to run combat."
-                 )
-                 return
-            # Keep the check for needing at least one monster if players are present
-            elif not has_monster and has_player:
-                QMessageBox.warning(
-                    self, 
-                    "Cannot Start Combat", 
-                    "You need at least one monster to run combat against player characters.\n\n" # Updated message
-                    "Add monsters from the Monster Panel."
-                )
-                return
-
-            # Confirm the user wants to proceed
-            confirm = QMessageBox.question(
-                self,
-                "Start Turn-by-Turn Combat",
-                "This will run combat turn-by-turn with the AI controlling all combatants.\n\nYou'll see the combat unfold in real time. Continue?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.Yes
-            )
-            if confirm != QMessageBox.Yes:
-                return
-
-            # Gather current combat state
-            combat_state = self._gather_combat_state()
-            if not combat_state or not combat_state.get("combatants"):
-                QMessageBox.information(self, "Fast Resolve", "No combatants in the tracker to resolve.")
-                return
-            
-            # Disable button while processing
-            self.fast_resolve_button.setEnabled(False)
-            self.fast_resolve_button.setText("Resolving...")
-
-            # Clear the combat log before starting
-            self.combat_log_text.clear()
-            
-            # Make sure we have a valid combat log
-            # Force creation of a fallback log if needed
-            combat_log = self._get_combat_log()
-            if not combat_log:
-                print("[CombatTracker] No combat log available for fast resolve, creating fallback")
-                # Create fallback forcibly
-                self._create_fallback_combat_log()
-            
-            # Add an initial heading to the combat log
-            self.combat_log_text.append("<h3 style='color:#000088;'>Combat Resolution Started</h3>")
-            self.combat_log_text.append("<p>Resolving combat turn by turn. You'll see updates here as the combat progresses.</p>")
-            
-            # Add the initial combat state to the combat log using our safe method
+        # First, update UI to indicate processing is happening
+        self.fast_resolve_button.setEnabled(False)
+        self.fast_resolve_button.setText("Initializing...")
+        QApplication.processEvents()  # Force immediate UI update
+        
+        # Add a safety timer that will reset the button after 5 minutes regardless
+        # of whether the combat resolver signals completion
+        safety_timer = QTimer(self)
+        safety_timer.setSingleShot(True)
+        safety_timer.timeout.connect(lambda: self._reset_resolve_button("Fast Resolve", True))
+        safety_timer.start(300000)  # 5 minutes in milliseconds
+        
+        # Add a second backup timer with shorter timeout (2 minutes)
+        backup_timer = QTimer(self)
+        backup_timer.setSingleShot(True)
+        backup_timer.timeout.connect(lambda: self._check_and_reset_button())
+        backup_timer.start(120000)  # 2 minutes in milliseconds
+        
+        # Store timers for cancellation
+        self._safety_timer = safety_timer
+        self._backup_timer = backup_timer
+        
+        # Force garbage collection before starting
+        gc.collect()
+        
+        # Define the main processing function to run in a separate thread
+        def setup_and_start_combat():
             try:
-                # Build the combat state html directly
-                combatants_html = "<p><strong>Initial Combat State:</strong></p><ul>"
-                for c in combat_state.get("combatants", []):
-                    name = c.get("name", "Unknown")
-                    hp = c.get("hp", 0)
-                    max_hp = c.get("max_hp", hp)
-                    ac = c.get("ac", 10)
-                    type_str = c.get("type", "unknown")
-                    
-                    # Format based on type
-                    if type_str.lower() == "monster":
-                        color = "#8B0000"  # Dark red for monsters
-                    else:
-                        color = "#000080"  # Navy for characters
-                        
-                    combatants_html += f"<li><span style='color:{color};'>{name}</span>: HP {hp}/{max_hp}, AC {ac}</li>"
+                # Step 1: Validate we have combatants
+                has_monster = has_player = False
+                for row in range(self.initiative_table.rowCount()):
+                    type_item = self.initiative_table.item(row, 7)  # Type is now column 7
+                    if type_item:
+                        combatant_type = type_item.text().lower()
+                        if combatant_type == "monster":
+                            has_monster = True
+                        elif combatant_type in ["character", "pc", "npc"]:
+                            has_player = True
                 
-                combatants_html += "</ul>"
-                self.combat_log_text.append(combatants_html)
-                self.combat_log_text.append("<hr>")
+                # Update progress on UI thread
+                QApplication.instance().postEvent(self, CombatTrackerPanel._ProgressEvent("Validating combatants..."))
                 
-                # Also log a formal "combat started" entry
-                self._log_combat_action(
-                    "Other",
-                    "DM",
-                    "started combat",
-                    result=f"Beginning combat with {len(combat_state.get('combatants', []))} combatants",
-                    round=1
-                )
-            except Exception as e:
-                print(f"[CombatTracker] Error adding initial combat state: {e}")
-                # Continue anyway - not critical
-
-            # --- SET FLAG before starting resolution --- 
-            self._is_resolving_combat = True
-            print("[CombatTracker] Setting _is_resolving_combat = True")
-
-            # --- Dice roller function ---
-            def dice_roller(expr):
-                """Parse and roll a dice expression like '1d20+5'. Returns the integer result."""
-                try:
-                    import re, random
-                    match = re.match(r"(\d*)d(\d+)([+-]\d+)?", expr.replace(' ', ''))
-                    if not match:
-                        return 0
-                    num, die, mod = match.groups()
-                    num = int(num) if num else 1
-                    die = int(die)
-                    mod = int(mod) if mod else 0
-                    total = sum(random.randint(1, die) for _ in range(num)) + mod
+                # Handle validation errors
+                if not has_monster and not has_player:
+                    QApplication.instance().postEvent(self, CombatTrackerPanel._ErrorEvent(
+                        "Cannot Start Combat", 
+                        "You need at least one combatant (monster or character) to run combat."
+                    ))
+                    return
                     
-                    # Log the roll to the combat log
+                elif not has_monster and has_player:
+                    QApplication.instance().postEvent(self, CombatTrackerPanel._ErrorEvent(
+                        "Cannot Start Combat", 
+                        "You need at least one monster to run combat against player characters.\n\n" +
+                        "Add monsters from the Monster Panel."
+                    ))
+                    return
+                
+                # Step 2: Gather combat state
+                QApplication.instance().postEvent(self, CombatTrackerPanel._ProgressEvent("Gathering combat data..."))
+                combat_state = self._gather_combat_state()
+                if not combat_state or not combat_state.get("combatants"):
+                    QApplication.instance().postEvent(self, CombatTrackerPanel._ErrorEvent(
+                        "Fast Resolve", 
+                        "No combatants in the tracker to resolve."
+                    ))
+                    return
+                
+                # Step 3: Clear and prepare the combat log
+                QApplication.instance().postEvent(self, CombatTrackerPanel._ProgressEvent("Preparing combat log..."))
+                QApplication.instance().postEvent(self, CombatTrackerPanel._ClearLogEvent())
+                
+                # Step 4: Add initial combat state to log (this will be done on the UI thread)
+                QApplication.instance().postEvent(self, CombatTrackerPanel._AddInitialStateEvent(combat_state))
+                
+                # Step 5: Setup the dice roller function that will be passed to the resolver
+                def dice_roller(expr):
+                    """Parse and roll a dice expression like '1d20+5'. Returns the integer result."""
                     try:
-                        self._log_combat_action(
-                            "Dice", 
-                            "AI", 
-                            f"rolled {expr}", 
-                            result=f"Result: {total}"
-                        )
+                        import re, random
+                        match = re.match(r"(\d*)d(\d+)([+-]\d+)?", expr.replace(' ', ''))
+                        if not match:
+                            return 0
+                        num, die, mod = match.groups()
+                        num = int(num) if num else 1
+                        die = int(die)
+                        mod = int(mod) if mod else 0
+                        total = sum(random.randint(1, die) for _ in range(num)) + mod
+                        
+                        # Log the roll to the combat log via a custom event
+                        QApplication.instance().postEvent(self, CombatTrackerPanel._LogDiceEvent(expr, total))
+                        return total
                     except Exception as e:
-                        print(f"[CombatTracker] Error logging dice roll: {e}")
+                        print(f"[CombatTracker] Error in dice roller: {e}")
+                        return 10  # Provide a reasonable default
+                
+                # Step 6: Setup completion callback
+                def completion_callback(result, error):
+                    """Callback for resolution completion if signals aren't working"""
+                    print(f"[CombatTracker] Manual completion callback called with result={bool(result)}, error={bool(error)}")
                     
-                    return total
-                except Exception as e:
-                    print(f"[CombatTracker] Error in dice roller: {e}")
-                    return 10  # Provide a reasonable default
+                    # Forward to our UI handler via a custom event - safest approach
+                    QApplication.instance().postEvent(self, CombatTrackerPanel._ProcessResultEvent(result, error))
+                    
+                    # Directly update button state via event
+                    QApplication.instance().postEvent(self, CombatTrackerPanel._UpdateButtonEvent("Fast Resolve", True))
+                    print("[CombatTracker] Posted button update event")
+                    
+                    # Create a very short timer as a last resort
+                    reset_timer = QTimer()
+                    reset_timer.setSingleShot(True)
+                    reset_timer.timeout.connect(lambda: self._check_and_reset_button())
+                    reset_timer.start(1000)  # 1 second delay
+                
+                # Step 7: Setup turn callback
+                def manual_turn_callback(turn_state):
+                    """Callback for per-turn updates if signals aren't working"""
+                    print(f"[CombatTracker] Manual turn update callback received data with "
+                          f"{len(turn_state.get('combatants', []))} combatants")
+                    # Forward to our wrapper method via a custom event
+                    QApplication.instance().postEvent(self, CombatTrackerPanel._UpdateUIEvent(turn_state))
+                
+                # Step 8: Start the actual combat resolution
+                QApplication.instance().postEvent(self, CombatTrackerPanel._SetResolvingEvent(True))
+                
+                # Setup signal connection (done on UI thread)
+                QApplication.instance().postEvent(self, CombatTrackerPanel._ConnectSignalEvent())
+                
+                # Update UI to show we're now resolving
+                QApplication.instance().postEvent(self, CombatTrackerPanel._UpdateButtonEvent("Resolving...", False))
+                
+                # Step 9: Call the resolver with our setup
+                resolver_callable = self.app_state.combat_resolver.resolve_combat_turn_by_turn
+                accepts_turn_callback = 'turn_update_callback' in resolver_callable.__code__.co_varnames
 
-            # Use the new turn-by-turn resolver
-            try:
-                # The resolver now uses a signal for completion, so the callback 
-                # argument (self._handle_resolution_result) is ignored by the resolver.
-                # We pass None to make this clear, but the resolver's signature
-                # still accepts it for now.
-                self.app_state.combat_resolver.resolve_combat_turn_by_turn(
-                    combat_state,
-                    dice_roller,
-                    None,  # Pass None for the direct callback, signal is used instead
-                    self._update_ui_wrapper # Use the wrapper for per-turn UI updates
-                )
+                # Update UI with final preparation status
+                QApplication.instance().postEvent(self, CombatTrackerPanel._ProgressEvent("Starting combat resolution..."))
+                
+                # Call with appropriate arguments based on what the resolver supports
+                if accepts_turn_callback:
+                    print("[CombatTracker] Resolver supports turn_update_callback, using it")
+                    # This resolver takes a turn callback directly
+                    self.app_state.combat_resolver.resolve_combat_turn_by_turn(
+                        combat_state,
+                        dice_roller,
+                        completion_callback,  # Use our manual callback
+                        manual_turn_callback  # Pass the callback for turns
+                    )
+                else:
+                    print("[CombatTracker] Using standard resolver with update_ui_callback, relying on signals")
+                    # Standard resolver - use it with our update_ui_wrapper and rely on signals
+                    self.app_state.combat_resolver.resolve_combat_turn_by_turn(
+                        combat_state,
+                        dice_roller,
+                        completion_callback,  # Pass our manual callback for backup
+                        self._update_ui_wrapper  # This might be treated as update_ui_callback depending on interface
+                    )
+                    
             except Exception as e:
-                import traceback
                 traceback.print_exc()
-                # Handle immediate errors if the call itself fails
-                self._is_resolving_combat = False
-                self.fast_resolve_button.setEnabled(True)
-                self.fast_resolve_button.setText("Fast Resolve")
+                # If any error occurs, send an error event
+                QApplication.instance().postEvent(self, CombatTrackerPanel._ErrorEvent(
+                    "Error", 
+                    f"Failed to start combat resolution: {str(e)}"
+                ))
+        
+        # Start the setup in a background thread
+        setup_thread = threading.Thread(target=setup_and_start_combat)
+        setup_thread.daemon = True  # Allow app to exit even if thread is running
+        setup_thread.start()
+    
+    # Override event handler to process our custom events
+    def event(self, event):
+        """Handle custom events posted to our panel"""
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        
+        if event.type() == QEvent.Type(QEvent.User + 1):
+            # This is our UpdateUIEvent for JSON
+            try:
+                self._update_ui(event.json_data)
+                return True
+            except Exception as e:
+                print(f"[CombatTracker] Error in event handler UI update: {e}")
+                return False
+        elif event.type() == QEvent.Type(QEvent.User + 100):
+            # Progress event
+            self.fast_resolve_button.setText(event.message)
+            QApplication.processEvents()
+            return True
+        elif event.type() == QEvent.Type(QEvent.User + 101):
+            # Error event
+            self._reset_resolve_button("Fast Resolve", True)
+            QMessageBox.critical(self, event.title, event.message)
+            return True
+        elif event.type() == QEvent.Type(QEvent.User + 102):
+            # Clear log event
+            self.combat_log_text.clear()
+            return True
+        elif event.type() == QEvent.Type(QEvent.User + 103):
+            # Add initial state event
+            self._add_initial_combat_state_to_log(event.combat_state)
+            return True
+        elif event.type() == QEvent.Type(QEvent.User + 104):
+            # Log dice event
+            self._log_combat_action(
+                "Dice", 
+                "AI", 
+                f"rolled {event.expr}", 
+                result=f"Result: {event.result}"
+            )
+            return True
+        elif event.type() == QEvent.Type(QEvent.User + 105):
+            # Process result event
+            self._process_resolution_ui(event.result, event.error)
+            return True
+        elif event.type() == QEvent.Type(QEvent.User + 106):
+            # Update UI event
+            self._update_ui_wrapper(event.turn_state)
+            return True
+        elif event.type() == QEvent.Type(QEvent.User + 107):
+            # Set resolving event
+            self._is_resolving_combat = event.is_resolving
+            print(f"[CombatTracker] Setting _is_resolving_combat = {event.is_resolving}")
+            return True
+        elif event.type() == QEvent.Type(QEvent.User + 108):
+            # Connect signal event
+            try:
+                # Disconnect any existing connection first to be safe
+                try:
+                    self.app_state.combat_resolver.resolution_complete.disconnect(self._process_resolution_ui)
+                    print("[CombatTracker] Disconnected existing signal connection")
+                except Exception:
+                    # Connection might not exist yet, which is fine
+                    pass
                 
-                # Make sure we tell the user about the error
-                self.combat_log_text.append(f"<p style='color:red;'><b>Error starting combat resolution:</b> {str(e)}</p>")
-                QMessageBox.critical(self, "Error", f"Failed to start combat resolution: {str(e)}")
-        except Exception as e:
-            # Catch any other errors in the outer function
-            import traceback
-            traceback.print_exc()
-            self._is_resolving_combat = False
-            self.fast_resolve_button.setEnabled(True)
-            self.fast_resolve_button.setText("Fast Resolve")
+                # Connect the signal
+                self.app_state.combat_resolver.resolution_complete.connect(self._process_resolution_ui)
+                print("[CombatTracker] Successfully connected resolution_complete signal")
+            except Exception as conn_error:
+                print(f"[CombatTracker] Failed to connect signal: {conn_error}")
+            return True
+        elif event.type() == QEvent.Type(QEvent.User + 109):
+            # Update button event
+            self._reset_resolve_button(event.text, event.enabled)
+            return True
             
-            # Log error to combat log text
-            if hasattr(self, 'combat_log_text') and self.combat_log_text:
-                self.combat_log_text.append(f"<p style='color:red;'><b>Critical error:</b> {str(e)}</p>")
-                
-            QMessageBox.critical(self, "Critical Error", f"An unexpected error occurred: {str(e)}")
+        return super().event(event)
 
     # This method remains, but it's the wrapper for thread-safe UI updates
     def _update_ui_wrapper(self, turn_state):
-        """Safely invokes the UI update function in the main thread using QMetaObject."""
-        # Serialize the dictionary to a JSON string
+        """Thread-safe wrapper to update UI during combat (used by the resolver)"""
+        # Serialize the turn state to JSON
         try:
-            json_string = json.dumps(turn_state)
-        except TypeError as e:
-            print(f"[CombatTracker] Error serializing turn_state to JSON: {e}")
-            json_string = "{}" # Send empty dict on error
+            import json
+            import traceback
+            from PySide6.QtCore import QMetaObject, Qt, Q_ARG
+            from PySide6.QtWidgets import QApplication
+            from PySide6.QtCore import QEvent
             
-        # Use invokeMethod to ensure _update_ui is called in the main GUI thread
-        # Pass the JSON string as an argument
-        QMetaObject.invokeMethod(
-            self, 
-            '_update_ui', 
-            Qt.QueuedConnection, # Ensures it queues in the main thread's event loop
-            Q_ARG(str, json_string) # Pass JSON string instead of dict/object
-        )
+            # Debug count of combatants
+            combatants = turn_state.get("combatants", [])
+            print(f"[CombatTracker] _update_ui_wrapper called with turn state containing {len(combatants)} combatants")
+            
+            # Ensure the turn state is serializable by sanitizing it
+            def sanitize_object(obj):
+                """Recursively sanitize an object to ensure it's JSON serializable"""
+                if isinstance(obj, dict):
+                    return {str(k): sanitize_object(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [sanitize_object(item) for item in obj]
+                elif isinstance(obj, (int, float, bool, str)) or obj is None:
+                    return obj
+                else:
+                    return str(obj)  # Convert any other types to strings
+            
+            # Apply sanitization
+            sanitized_turn_state = sanitize_object(turn_state)
+            
+            # Serialize to JSON with error handling
+            try:
+                json_string = json.dumps(sanitized_turn_state)
+                print(f"[CombatTracker] Successfully serialized turn state to JSON ({len(json_string)} chars)")
+            except Exception as e:
+                print(f"[CombatTracker] Error serializing turn state: {e}")
+                traceback.print_exc()
+                # Create a minimal valid JSON object as fallback
+                json_string = json.dumps({
+                    "round": turn_state.get("round", 1),
+                    "current_turn_index": turn_state.get("current_turn_index", 0),
+                    "combatants": []
+                })
+            
+            # Pass the JSON string as an argument
+            print("[CombatTracker] Using QMetaObject.invokeMethod for thread-safe UI update")
+            try:
+                result = QMetaObject.invokeMethod(
+                    self, 
+                    '_update_ui', 
+                    Qt.QueuedConnection,  # Ensures it queues in the main thread's event loop
+                    Q_ARG(str, json_string)  # Pass JSON string instead of dict/object
+                )
+                if not result:
+                    print("[CombatTracker] WARNING: QMetaObject.invokeMethod returned False, trying alternative method")
+                    # Try direct call with a slight delay (as fallback)
+                    def delayed_update():
+                        try:
+                            self._update_ui(json_string)
+                        except Exception as e:
+                            print(f"[CombatTracker] Error in delayed update: {e}")
+                    
+                    # Schedule for execution in main thread after a slight delay
+                    QApplication.instance().postDelayed(delayed_update, 100)
+                
+                # Force process events to ensure UI updates (helps with thread sync issues)
+                QApplication.processEvents()
+                
+            except Exception as e:
+                print(f"[CombatTracker] Critical error in invokeMethod: {e}")
+                traceback.print_exc()
+                # As a last resort, try to post a user event to update UI
+                try:
+                    # Create a custom event 
+                    class UpdateUIEvent(QEvent):
+                        def __init__(self, json_data):
+                            super().__init__(QEvent.Type(QEvent.User + 1))
+                            self.json_data = json_data
+                    
+                    # Post the event to our panel
+                    QApplication.postEvent(self, UpdateUIEvent(json_string))
+                    print("[CombatTracker] Posted custom event as last resort for UI update")
+                except Exception as e2:
+                    print(f"[CombatTracker] All UI update methods failed: {e2}")
+                    traceback.print_exc()
+                    
+        except Exception as e:
+            print(f"[CombatTracker] Unhandled error in _update_ui_wrapper: {e}")
+            traceback.print_exc()
+
+    # Also add a custom event handler to handle our backup approach
+    def _event_duplicate_backup(self, event):
+        """Handle custom events posted to our panel"""
+        if event.type() == QEvent.Type(QEvent.User + 1):
+            # This is our UpdateUIEvent
+            try:
+                self._update_ui(event.json_data)
+                return True
+            except Exception as e:
+                print(f"[CombatTracker] Error in event handler UI update: {e}")
+                return False
+        return super().event(event)
 
     # Make the actual UI update function a slot callable by the wrapper
     # The slot now accepts a string (JSON)
@@ -2517,13 +2736,45 @@ class CombatTrackerPanel(BasePanel):
         """Update UI after each turn (runs in main thread via _update_ui_wrapper)."""
         # Deserialize the JSON string back into a dictionary
         try:
+            # First check if the JSON string is valid
+            if not turn_state_json or turn_state_json == '{}':
+                print(f"[CombatTracker] Error: Empty or invalid turn_state_json")
+                return
+            
+            # Clean the JSON string to remove any invalid characters
+            import re
+            turn_state_json = re.sub(r'[\x00-\x1F\x7F]', '', turn_state_json)
+            
+            # Additional safety for broken JSON
+            if not turn_state_json.strip().startswith('{'):
+                print(f"[CombatTracker] Error: Invalid JSON format, does not start with '{{'. First 100 chars: {turn_state_json[:100]}")
+                # Try to extract a JSON object if present
+                json_match = re.search(r'(\{.*\})', turn_state_json)
+                if json_match:
+                    turn_state_json = json_match.group(1)
+                    print(f"[CombatTracker] Extracted potential JSON object: {turn_state_json[:50]}...")
+                else:
+                    # Create a minimal valid state
+                    turn_state_json = '{}'
+            
+            # Attempt to parse JSON
+            import json
+            import traceback
+            from PySide6.QtWidgets import QApplication
             turn_state = json.loads(turn_state_json)
             if not isinstance(turn_state, dict):
-                 print(f"[CombatTracker] Error: Deserialized turn_state is not a dict: {type(turn_state)}")
-                 turn_state = {} # Use empty dict on error
+                print(f"[CombatTracker] Error: Deserialized turn_state is not a dict: {type(turn_state)}")
+                turn_state = {} # Use empty dict on error
         except json.JSONDecodeError as e:
             print(f"[CombatTracker] Error deserializing turn_state JSON: {e}")
-            turn_state = {} # Use empty dict on error
+            print(f"[CombatTracker] JSON string causing error (first 100 chars): {turn_state_json[:100]}")
+            # Fallback to an empty dict
+            turn_state = {} 
+        except Exception as e:
+            print(f"[CombatTracker] Unexpected error in deserializing turn_state: {e}")
+            traceback.print_exc()
+            # Fallback to an empty dict
+            turn_state = {} 
             
         # Existing logic from the original update_ui function
         try:
@@ -2535,8 +2786,6 @@ class CombatTrackerPanel(BasePanel):
             
             # Debug logging
             print(f"\n[CombatTracker] DEBUG: Received updated turn state with {len(combatants)} combatants")
-            for c in combatants:
-                print(f"[CombatTracker] DEBUG: In _update_ui: {c.get('name', 'Unknown')}: HP {c.get('hp', 'N/A')}/{c.get('max_hp', 'N/A')}")
             
             # Update round counter
             self.round_spin.setValue(round_num)
@@ -2548,11 +2797,16 @@ class CombatTrackerPanel(BasePanel):
             # Apply combatant updates to the table
             if combatants:
                 # Make a copy of combatants to avoid any reference issues
+                import copy
                 combatants_copy = copy.deepcopy(combatants)
                 self._update_combatants_in_table(combatants_copy)
+                
+                # Force UI refresh after table update
+                QApplication.processEvents()
             
             # Log the action to combat log
             if latest_action:
+                # Extract action details
                 actor = latest_action.get("actor", "Unknown")
                 action = latest_action.get("action", "")
                 result = latest_action.get("result", "")
@@ -2591,101 +2845,115 @@ class CombatTrackerPanel(BasePanel):
                 turn_text += f"<hr style='border:1px solid #cccccc; margin:10px 0;'></div>"
                 
                 # Add to the persistent combat log
+                current_text = self.combat_log_text.toHtml()
+                if "Combat Concluded" in current_text:
+                    # Previous combat summary exists, clear it and start fresh
+                    self.combat_log_text.clear()
+                    
+                # Append the new turn text
                 self.combat_log_text.append(turn_text)
+                
+                # Ensure cursor is at the end
+                cursor = self.combat_log_text.textCursor()
+                cursor.movePosition(QTextCursor.End)
+                self.combat_log_text.setTextCursor(cursor)
+                
+                # Scroll to the bottom to see latest entries
                 scrollbar = self.combat_log_text.verticalScrollBar()
                 scrollbar.setValue(scrollbar.maximum())
+                
+                # Force UI update after appending to combat log
+                QApplication.processEvents()
+            
+            # Release any references to copied data
+            combatants_copy = None
+            latest_action = None
             
             # Process any UI events to ensure the table updates
             QApplication.processEvents()
+            
+            # Force garbage collection
+            import gc
+            gc.collect()
         except Exception as e:
             import traceback
             traceback.print_exc()
             print(f"[CombatTracker] Error in UI update: {str(e)}")
 
+            # Force UI refresh even on error
+            from PySide6.QtWidgets import QApplication
+            QApplication.processEvents()
+
     def _add_initial_combat_state_to_log(self, combat_state):
         """Add initial combat state to the log at the start of combat"""
-        # Use the safer _get_combat_log method 
-        combat_log = self._get_combat_log()
-        if not combat_log:
-            # Just add to the text edit instead if we can't get a valid combat log
-            print("[CombatTracker] No external combat log available, using local text widget")
-            try:
-                # Create summary HTML with better contrast colors
-                html = "<h3 style='color: #000088;'>Initial Combat State</h3>"
-                html += "<p style='color: #000000;'>Combatants in initiative order:</p>"
-                html += "<ul style='color: #000000;'>"
-                
-                # Get combatants and build a summary
-                combatants = combat_state.get("combatants", [])
-                if not combatants:
-                    return
-                    
-                # Sort by initiative
-                sorted_combatants = sorted(combatants, key=lambda c: -c.get("initiative", 0))
-                
-                for c in sorted_combatants:
-                    name = c.get("name", "Unknown")
-                    hp = c.get("hp", 0)
-                    max_hp = c.get("max_hp", hp)
-                    ac = c.get("ac", 10)
-                    initiative = c.get("initiative", 0)
-                    combatant_type = c.get("type", "unknown")
-                    
-                    # Different display for monsters vs characters with better styling
-                    if combatant_type.lower() == "monster":
-                        html += f"<li><strong style='color: #880000;'>{name}</strong> (Monster) - Initiative: {initiative}, AC: {ac}, HP: {hp}/{max_hp}</li>"
-                    else:
-                        html += f"<li><strong style='color: #000088;'>{name}</strong> (PC) - Initiative: {initiative}, AC: {ac}, HP: {hp}/{max_hp}</li>"
-                        
-                html += "</ul>"
-                html += "<p style='color: #000000;'><strong>Combat begins now!</strong></p>"
-                html += "<hr style='border: 1px solid #000088;'>"
-                
-                # Add to local log if available
-                if hasattr(self, 'combat_log_text') and self.combat_log_text:
-                    self.combat_log_text.append(html)
-            except Exception as e:
-                print(f"[CombatTracker] Error adding initial state to local log: {e}")
+        # Clear any previous combat log content
+        if hasattr(self, 'combat_log_text') and self.combat_log_text:
+            # Check if we already have a "Combat Concluded" message
+            current_text = self.combat_log_text.toHtml()
+            if "Combat Concluded" in current_text:
+                # Previous combat summary exists, clear it
+                self.combat_log_text.clear()
+            
+        # Create summary HTML with better contrast colors
+        html = "<h3 style='color: #000088;'>Initial Combat State</h3>"
+        html += "<p style='color: #000000;'>Combatants in initiative order:</p>"
+        html += "<ul style='color: #000000;'>"
+        
+        # Get combatants and build a summary
+        combatants = combat_state.get("combatants", [])
+        if not combatants:
+            html += "<li>No combatants found</li>"
+            html += "</ul>"
+            html += "<p style='color: #000000;'><strong>Combat cannot begin with no combatants.</strong></p>"
+            
+            # Add to local log
+            self.combat_log_text.append(html)
+            
+            # Force UI update
+            from PySide6.QtWidgets import QApplication
+            QApplication.processEvents()
             return
             
-        # Get combatants and build a summary for external log
+        # Sort by initiative
         try:
-            combatants = combat_state.get("combatants", [])
-            if not combatants:
-                return
-                
-            # Create summary HTML with better contrast colors
-            html = "<h3 style='color: #000088;'>Initial Combat State</h3>"
-            html += "<p style='color: #000000;'>Combatants in initiative order:</p>"
-            html += "<ul style='color: #000000;'>"
-            
-            # Sort by initiative
             sorted_combatants = sorted(combatants, key=lambda c: -c.get("initiative", 0))
-            
-            for c in sorted_combatants:
-                name = c.get("name", "Unknown")
-                hp = c.get("hp", 0)
-                max_hp = c.get("max_hp", hp)
-                ac = c.get("ac", 10)
-                initiative = c.get("initiative", 0)
-                combatant_type = c.get("type", "unknown")
-                
-                # Different display for monsters vs characters with better styling
-                if combatant_type.lower() == "monster":
-                    html += f"<li><strong style='color: #880000;'>{name}</strong> (Monster) - Initiative: {initiative}, AC: {ac}, HP: {hp}/{max_hp}</li>"
-                else:
-                    html += f"<li><strong style='color: #000088;'>{name}</strong> (PC) - Initiative: {initiative}, AC: {ac}, HP: {hp}/{max_hp}</li>"
-                    
-            html += "</ul>"
-            html += "<p style='color: #000000;'><strong>Combat begins now!</strong></p>"
-            html += "<hr style='border: 1px solid #000088;'>"
-            
-            # Add to the log if it has log_text attribute
-            if hasattr(combat_log, 'log_text'):
-                combat_log.log_text.append(html)
         except Exception as e:
-            print(f"[CombatTracker] Error adding initial state to combat log: {e}")
+            print(f"[CombatTracker] Error sorting combatants: {e}")
+            sorted_combatants = combatants
+        
+        for c in sorted_combatants:
+            name = c.get("name", "Unknown")
+            hp = c.get("hp", 0)
+            max_hp = c.get("max_hp", hp)
+            ac = c.get("ac", 10)
+            initiative = c.get("initiative", 0)
+            combatant_type = c.get("type", "unknown")
             
+            # Different display for monsters vs characters with better styling
+            if combatant_type.lower() == "monster":
+                html += f"<li><strong style='color: #880000;'>{name}</strong> (Monster) - Initiative: {initiative}, AC: {ac}, HP: {hp}/{max_hp}</li>"
+            else:
+                html += f"<li><strong style='color: #000088;'>{name}</strong> (PC) - Initiative: {initiative}, AC: {ac}, HP: {hp}/{max_hp}</li>"
+                
+        html += "</ul>"
+        html += "<p style='color: #000000;'><strong>Combat begins now!</strong></p>"
+        html += "<hr style='border: 1px solid #000088;'>"
+        
+        # Add to the log
+        self.combat_log_text.append(html)
+        
+        # Ensure cursor is at the end and scroll to the bottom
+        cursor = self.combat_log_text.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        self.combat_log_text.setTextCursor(cursor)
+        
+        scrollbar = self.combat_log_text.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+        
+        # Force UI update
+        from PySide6.QtWidgets import QApplication
+        QApplication.processEvents()
+
     def _create_live_combat_log(self):
         """Create a live combat log widget that displays during combat resolution"""
         try:
@@ -3025,132 +3293,200 @@ class CombatTrackerPanel(BasePanel):
 
     def _apply_combat_updates(self, updates):
         """Apply final combatant updates from the resolution result."""
+        # Import necessary modules
+        import time
+        import gc
+        from PySide6.QtWidgets import QApplication
+        
         # Initialize rows_to_remove and update_summaries
         rows_to_remove = []
         update_summaries = []
-        
+        start_time = time.time()
+
         print(f"[CombatTracker] Applying {len(updates)} combat updates from LLM")
         
+        # Ensure the update is a list
+        if not isinstance(updates, list):
+            print(f"[CombatTracker] Warning: updates is not a list (type: {type(updates)})")
+            if isinstance(updates, dict):
+                # Convert single dict to list containing one dict
+                updates = [updates]
+            else:
+                # Return empty results for invalid updates
+                return 0, ["No valid updates to apply"]
+        
+        # Skip if empty
+        if not updates:
+            return 0, ["No updates to apply"]
+
         # Block signals during updates to prevent unexpected handlers
         self.initiative_table.blockSignals(True)
         try:
+            # Process updates with a timeout mechanism
+            max_process_time = 5.0  # Max seconds to spend processing updates
+            updates_processed = 0
+            
             for update_index, update in enumerate(updates):
-                name_to_find = update.get("name")
-                if not name_to_find:
-                    continue
-                    
-                print(f"[CombatTracker] Processing update for {name_to_find}: {update}")
-                # Find the row for the combatant
-                found_row = -1
-                for row in range(self.initiative_table.rowCount()):
-                    name_item = self.initiative_table.item(row, 0)
-                    if name_item and name_item.text() == name_to_find:
-                        found_row = row
-                        break
+                # Check processing time limit
+                elapsed = time.time() - start_time
+                if elapsed > max_process_time:
+                    print(f"[CombatTracker] Update processing time limit reached ({elapsed:.1f}s). Processed {updates_processed}/{len(updates)} updates.")
+                    update_summaries.append(f"WARNING: Only processed {updates_processed}/{len(updates)} updates due to time limit.")
+                    break
                 
-                if found_row != -1:
-                    print(f"[CombatTracker] Found {name_to_find} at row {found_row}")
-                    # Apply HP update
-                    if "hp" in update:
-                        hp_item = self.initiative_table.item(found_row, 2)
-                        if hp_item:
-                            old_hp = hp_item.text()
-                            try:
-                                # First try to convert directly to int
-                                if isinstance(update["hp"], int):
-                                    new_hp_value = max(0, update["hp"])
-                                elif isinstance(update["hp"], str) and update["hp"].strip().isdigit():
-                                    new_hp_value = max(0, int(update["hp"].strip()))
-                                else:
-                                    # Handle other formats - extract numbers
-                                    import re
-                                    match = re.search(r'\d+', str(update["hp"]))
-                                    if match:
-                                        new_hp_value = max(0, int(match.group(0)))
+                # Process update in a try block to handle errors individually
+                try:
+                    name_to_find = update.get("name")
+                    if not name_to_find:
+                        continue
+
+                    # Periodically update UI and force GC during long operations
+                    if update_index > 0 and update_index % 5 == 0:
+                        print(f"[CombatTracker] Processed {update_index}/{len(updates)} updates...")
+                        self.initiative_table.blockSignals(False)
+                        QApplication.processEvents()
+                        self.initiative_table.blockSignals(True)
+                        gc.collect()
+
+                    print(f"[CombatTracker] Processing update for {name_to_find}")
+                    # Find the row for the combatant
+                    found_row = -1
+                    for row in range(self.initiative_table.rowCount()):
+                        name_item = self.initiative_table.item(row, 0)
+                        if name_item and name_item.text() == name_to_find:
+                            found_row = row
+                            break
+
+                    if found_row != -1:
+                        print(f"[CombatTracker] Found {name_to_find} at row {found_row}")
+                        # Apply HP update
+                        if "hp" in update:
+                            hp_item = self.initiative_table.item(found_row, 2)
+                            if hp_item:
+                                old_hp = hp_item.text()
+                                try:
+                                    # First try to convert directly to int
+                                    if isinstance(update["hp"], int):
+                                        new_hp_value = max(0, update["hp"])
+                                    elif isinstance(update["hp"], str) and update["hp"].strip().isdigit():
+                                        new_hp_value = max(0, int(update["hp"].strip()))
                                     else:
-                                        # If we can't extract a number, keep old HP
-                                        print(f"[CombatTracker] Warning: Could not extract HP value from '{update['hp']}'")
-                                        if old_hp and old_hp.isdigit():
-                                            new_hp_value = int(old_hp)
+                                        # Handle other formats - extract numbers
+                                        import re
+                                        match = re.search(r'\d+', str(update["hp"]))
+                                        if match:
+                                            new_hp_value = max(0, int(match.group(0)))
                                         else:
-                                            new_hp_value = 0
-                                
-                                new_hp = str(new_hp_value)
-                                hp_item.setText(new_hp)
-                                print(f"[CombatTracker] Set {name_to_find} HP to {new_hp} in row {found_row} (was {old_hp}, update value: {update['hp']})")
-                                update_summaries.append(f"- {name_to_find}: HP changed from {old_hp} to {new_hp}")
-                                
-                                # Handle death/unconscious status if HP reaches 0
-                                if new_hp_value <= 0 and "status" not in update:
-                                    # Add Unconscious status
-                                    status_item = self.initiative_table.item(found_row, 5)  # Status is now column 5
-                                    if status_item:
-                                        current_statuses = []
-                                        if status_item.text():
-                                            current_statuses = [s.strip() for s in status_item.text().split(',')]
+                                            # If we can't extract a number, keep old HP
+                                            print(f"[CombatTracker] Warning: Could not extract HP value from '{update['hp']}'")
+                                            if old_hp and old_hp.isdigit():
+                                                new_hp_value = int(old_hp)
+                                            else:
+                                                new_hp_value = 0
+                                    
+                                    new_hp = str(new_hp_value)
+                                    hp_item.setText(new_hp)
+                                    print(f"[CombatTracker] Set {name_to_find} HP to {new_hp} in row {found_row} (was {old_hp})")
+                                    update_summaries.append(f"- {name_to_find}: HP changed from {old_hp} to {new_hp}")
+                                    
+                                    # Handle death/unconscious status if HP reaches 0
+                                    if new_hp_value <= 0 and "status" not in update:
+                                        # Add Unconscious status
+                                        status_item = self.initiative_table.item(found_row, 5)  # Status is now column 5
+                                        if status_item:
+                                            current_statuses = []
+                                            if status_item.text():
+                                                current_statuses = [s.strip() for s in status_item.text().split(',')]
+                                            
+                                            # Only add if not already present
+                                            if "Unconscious" not in current_statuses:
+                                                current_statuses.append("Unconscious")
+                                                status_item.setText(', '.join(current_statuses))
+                                                update_summaries.append(f"- {name_to_find}: Added 'Unconscious' status due to 0 HP")
+                                except Exception as e:
+                                    print(f"[CombatTracker] Error processing HP update for {name_to_find}: {str(e)}")
+                        # Apply Status update
+                        if "status" in update:
+                            status_item = self.initiative_table.item(found_row, 5)
+                            if status_item:
+                                old_status_text = status_item.text()
+                                old_statuses = [s.strip() for s in old_status_text.split(',')] if old_status_text else []
+
+                                new_status = update["status"]
+
+                                # Handle different status update formats
+                                if isinstance(new_status, list):
+                                    # If status is a list, replace all existing statuses
+                                    new_statuses = new_status
+                                    status_item.setText(', '.join(new_statuses))
+                                    update_summaries.append(f"- {name_to_find}: Status changed from '{old_status_text}' to '{', '.join(new_statuses)}'")
+                                elif new_status == "clear":
+                                    # Special case to clear all statuses
+                                    status_item.setText("")
+                                    update_summaries.append(f"- {name_to_find}: All statuses cleared (was '{old_status_text}')")
+                                elif new_status.startswith("+"):
+                                    # Add a status (e.g., "+Poisoned")
+                                    status_to_add = new_status[1:].strip()
+                                    if status_to_add and status_to_add not in old_statuses:
+                                        old_statuses.append(status_to_add)
+                                        status_item.setText(', '.join(old_statuses))
+                                        update_summaries.append(f"- {name_to_find}: Added '{status_to_add}' status")
+                                elif new_status.startswith("-"):
+                                    # Remove a status (e.g., "-Poisoned")
+                                    status_to_remove = new_status[1:].strip()
+                                    if status_to_remove and status_to_remove in old_statuses:
+                                        old_statuses.remove(status_to_remove)
+                                        status_item.setText(', '.join(old_statuses))
+                                        update_summaries.append(f"- {name_to_find}: Removed '{status_to_remove}' status")
+                                else:
+                                    # Otherwise, directly set the new status (backward compatibility)
+                                    status_item.setText(new_status)
+                                    update_summaries.append(f"- {name_to_find}: Status changed from '{old_status_text}' to '{new_status}'")
+
+                                # If status contains "Dead" or "Fled", mark for removal
+                                current_statuses = status_item.text().split(',')
+                                if any(s.strip().lower() in ["dead", "fled"] for s in current_statuses): # Use lower() for case-insensitivity
+                                    if found_row not in rows_to_remove: # Avoid duplicates
+                                        rows_to_remove.append(found_row)
                                         
-                                        # Only add if not already present
-                                        if "Unconscious" not in current_statuses:
-                                            current_statuses.append("Unconscious")
-                                            status_item.setText(', '.join(current_statuses))
-                                            update_summaries.append(f"- {name_to_find}: Added 'Unconscious' status due to 0 HP")
-                            except Exception as e:
-                                print(f"[CombatTracker] Error processing HP update for {name_to_find}: {str(e)}")
-                    # Apply Status update
-                    if "status" in update:
-                        status_item = self.initiative_table.item(found_row, 5)
-                        if status_item:
-                            old_status_text = status_item.text()
-                            old_statuses = [s.strip() for s in old_status_text.split(',')] if old_status_text else []
-                            
-                            new_status = update["status"]
-                            
-                            # Handle different status update formats
-                            if isinstance(new_status, list):
-                                # If status is a list, replace all existing statuses
-                                new_statuses = new_status
-                                status_item.setText(', '.join(new_statuses))
-                                update_summaries.append(f"- {name_to_find}: Status changed from '{old_status_text}' to '{', '.join(new_statuses)}'")
-                            elif new_status == "clear":
-                                # Special case to clear all statuses
-                                status_item.setText("")
-                                update_summaries.append(f"- {name_to_find}: All statuses cleared (was '{old_status_text}')")
-                            elif new_status.startswith("+"):
-                                # Add a status (e.g., "+Poisoned")
-                                status_to_add = new_status[1:].strip()
-                                if status_to_add and status_to_add not in old_statuses:
-                                    old_statuses.append(status_to_add)
-                                    status_item.setText(', '.join(old_statuses))
-                                    update_summaries.append(f"- {name_to_find}: Added '{status_to_add}' status")
-                            elif new_status.startswith("-"):
-                                # Remove a status (e.g., "-Poisoned")
-                                status_to_remove = new_status[1:].strip()
-                                if status_to_remove and status_to_remove in old_statuses:
-                                    old_statuses.remove(status_to_remove)
-                                    status_item.setText(', '.join(old_statuses))
-                                    update_summaries.append(f"- {name_to_find}: Removed '{status_to_remove}' status")
-                            else:
-                                # Otherwise, directly set the new status (backward compatibility)
-                                status_item.setText(new_status)
-                                update_summaries.append(f"- {name_to_find}: Status changed from '{old_status_text}' to '{new_status}'")
-                            
-                            # If status contains "Dead" or "Fled", mark for removal
-                            current_statuses = status_item.text().split(',')
-                            if any(s.strip().lower() in ["dead", "fled"] for s in current_statuses): # Use lower() for case-insensitivity
-                                if found_row not in rows_to_remove: # Avoid duplicates
-                                    rows_to_remove.append(found_row)
+                    updates_processed += 1
+                except Exception as update_error:
+                    print(f"[CombatTracker] Error processing update for index {update_index}: {update_error}")
+                    import traceback
+                    traceback.print_exc()
+                    update_summaries.append(f"ERROR: Failed to process update for index {update_index}")
+                    continue  # Skip to next update
         finally:
             # Ensure signals are unblocked even if an error occurs
             self.initiative_table.blockSignals(False)
+            
+            # Force UI update after all individual updates
+            QApplication.processEvents()
 
+        # Process removal separately with a new timeout check
+        start_removal_time = time.time()
+        removal_time_limit = 3.0  # Limit time spent on removals
+        
         # Remove combatants marked for removal (in reverse order)
         if rows_to_remove:
             # Block signals again during row removal for safety
             self.initiative_table.blockSignals(True)
             turn_adjusted = False # Track if current turn needs adjusting
             try:
-                for row in sorted(list(set(rows_to_remove)), reverse=True): # Use set() to ensure unique rows
-                    print(f"[CombatTracker] _apply_combat_updates: Removing row {row}")
+                print(f"[CombatTracker] Removing {len(rows_to_remove)} combatants...")
+                for i, row in enumerate(sorted(list(set(rows_to_remove)), reverse=True)): # Use set() to ensure unique rows
+                    # Check timeout for removals
+                    if time.time() - start_removal_time > removal_time_limit:
+                        print(f"[CombatTracker] Removal time limit reached. Processed {i}/{len(rows_to_remove)} removals.")
+                        update_summaries.append(f"WARNING: Only removed {i}/{len(rows_to_remove)} combatants due to time limit.")
+                        break
+                        
+                    # Skip invalid rows
+                    if row >= self.initiative_table.rowCount() or row < 0:
+                        print(f"[CombatTracker] Skipping invalid row {row}")
+                        continue
+                        
+                    print(f"[CombatTracker] Removing row {row}")
                     self.initiative_table.removeRow(row)
                     # Adjust current turn if needed
                     if row < self.current_turn:
@@ -3166,31 +3502,22 @@ class CombatTrackerPanel(BasePanel):
                     self.concentrating.discard(row) # Use discard for sets
                     self.combatants.pop(row, None) # Clean up combatants dict
 
-                # Re-index remaining combatant data *after* all removals
-                print("[CombatTracker] _apply_combat_updates: Re-indexing combatant data...")
-                new_combatants = {}
-                new_concentrating = set()
-                new_death_saves = {}
-                for new_row in range(self.initiative_table.rowCount()):
-                    name_item = self.initiative_table.item(new_row, 0)
-                    if name_item:
-                        # Find the original row index this combatant had before removal
-                        # This requires tracking original indices or identifying by name/ID
-                        # Simpler approach: Assume self.combatants keys might be invalid now
-                        # We might need a more robust way to link table rows to data if keys aren't updated
-                        # For now, we'll skip re-indexing complex data and focus on fixing the NameError
-                        pass # Re-indexing logic might need rework later
-
                 # Update highlight ONLY if turn was adjusted
                 if turn_adjusted:
                      self._update_highlight()
             finally:
                  self.initiative_table.blockSignals(False) # Unblock after removals
 
+        # Calculate elapsed time
+        total_time = time.time() - start_time
+        print(f"[CombatTracker] Combat updates applied in {total_time:.2f} seconds: {updates_processed} updates, {len(rows_to_remove)} removals")
+        
         # Ensure the UI table is refreshed after all updates and removals
         self.initiative_table.viewport().update()
-        from PySide6.QtWidgets import QApplication
         QApplication.processEvents()
+
+        # Force garbage collection
+        gc.collect()
 
         # Return the initialized variables
         return len(rows_to_remove), update_summaries
@@ -3380,6 +3707,18 @@ class CombatTrackerPanel(BasePanel):
         try:
             combat_log = self._get_combat_log()
             log_entry = None
+            
+            # Emit the combat_log_signal for panel connections
+            try:
+                self.combat_log_signal.emit(
+                    category or "",
+                    actor or "",
+                    action or "",
+                    target or "",
+                    result or ""
+                )
+            except Exception as e:
+                print(f"[CombatTracker] Error emitting combat_log_signal: {e}")
             
             # Try to create an entry using the combat log
             if combat_log and hasattr(combat_log, 'create_entry'):
@@ -4542,11 +4881,10 @@ class CombatTrackerPanel(BasePanel):
                     turn_adjusted = True
                     print(f"[CombatTracker] Cleanup: Reset current_turn to {self.current_turn} (was == {row})")
 
-                # Clean up tracking dictionaries immediately for this specific row
-                # Use pop with default None to avoid errors if key missing
+                # Clean up tracking
                 self.death_saves.pop(row, None)
-                self.concentrating.discard(row) # discard handles missing keys safely
-                self.combatants.pop(row, None)
+                self.concentrating.discard(row) # Use discard for sets
+                self.combatants.pop(row, None) # Clean up combatants dict
                 
         finally:
             self.initiative_table.blockSignals(False) # Unblock after removals
@@ -4877,32 +5215,102 @@ class CombatTrackerPanel(BasePanel):
     @Slot(object, object)
     def _process_resolution_ui(self, result, error):
         """Process the combat resolution result from the resolver"""
-        # Reset UI elements first
-        self.fast_resolve_button.setEnabled(True)
-        self.fast_resolve_button.setText("Fast Resolve")
+        # Import needed modules at the start
+        import copy
+        import gc
+        import traceback
+        from PySide6.QtWidgets import QApplication
         
-        # Ensure the _is_resolving_combat flag is reset
-        self._is_resolving_combat = False
-        print("[CombatTracker] Setting _is_resolving_combat = False")
+        print("[CombatTracker] _process_resolution_ui called - processing combat results")
         
-        # Handle error first
-        if error:
-            self.combat_log_text.append(f"<p style='color:red;'><b>Error:</b> {error}</p>")
-            return
-            
-        if not result:
-            self.combat_log_text.append("<p style='color:orange;'><b>Warning:</b> Combat resolution produced no result.</p>")
-            return
-            
-        # Extract results and update the UI
         try:
-            final_narrative = result.get("narrative", "No narrative provided.")
-            combatants = result.get("updates", [])
-            log_entries = result.get("log", [])
-            round_count = result.get("rounds", 0)
+            # Cancel safety timers if they exist
+            if hasattr(self, '_safety_timer') and self._safety_timer:
+                self._safety_timer.stop()
+                print("[CombatTracker] Canceled safety timer")
+                
+            if hasattr(self, '_backup_timer') and self._backup_timer:
+                self._backup_timer.stop()
+                print("[CombatTracker] Canceled backup timer")
+            
+            # Reset UI elements first
+            self._reset_resolve_button("Fast Resolve", True)
+            
+            # Ensure the _is_resolving_combat flag is reset
+            self._is_resolving_combat = False
+            print("[CombatTracker] Setting _is_resolving_combat = False")
+            
+            # Force UI update immediately
+            QApplication.processEvents()
+            
+            # Disconnect signal to prevent memory leaks
+            try:
+                self.app_state.combat_resolver.resolution_complete.disconnect(self._process_resolution_ui)
+                print("[CombatTracker] Successfully disconnected resolution_complete signal")
+            except Exception as disconnect_error:
+                print(f"[CombatTracker] Failed to disconnect signal: {disconnect_error}")
+            
+            # Handle error first
+            if error:
+                self.combat_log_text.append(f"<p style='color:red;'><b>Error:</b> {error}</p>")
+                # Force immediate UI update
+                QApplication.processEvents()
+                # Force garbage collection
+                gc.collect()
+                return
+                
+            if not result:
+                self.combat_log_text.append("<p style='color:orange;'><b>Warning:</b> Combat resolution produced no result.</p>")
+                # Force immediate UI update
+                QApplication.processEvents()
+                # Force garbage collection
+                gc.collect()
+                return
+            
+            # Extract results and update the UI
+            # Save the existing combat log content before we modify it
+            existing_log = ""
+            try:
+                existing_log = self.combat_log_text.toHtml()
+                print("[CombatTracker] Preserved existing combat log")
+            except Exception as log_error:
+                print(f"[CombatTracker] Error preserving existing log: {log_error}")
+            
+            # Make a deep copy of result to prevent reference issues
+            local_result = copy.deepcopy(result)
+            
+            # Clear the original reference to help GC
+            result = None
+            
+            # Force garbage collection
+            gc.collect()
+            
+            # Now work with local copy
+            final_narrative = local_result.get("narrative", "No narrative provided.")
+            combatants = local_result.get("updates", [])
+            log_entries = local_result.get("log", [])
+            round_count = local_result.get("rounds", 0)
+            
+            print(f"[CombatTracker] Processing combat results: {len(combatants)} combatants, {len(log_entries)} log entries, {round_count} rounds")
+            
+            # Make another deep copy of combatants to ensure no reference issues during updates
+            combatants_copy = copy.deepcopy(combatants)
+            
+            # Clear original reference
+            combatants = None
+            
+            # Update the UI first with an interim message
+            self.combat_log_text.append("<hr>")
+            self.combat_log_text.append("<h3 style='color:#000088;'>Processing Combat Results...</h3>")
+            
+            # Force UI update before applying updates
+            QApplication.processEvents()
             
             # Apply the updates to the table, getting combatants that were removed
-            removed_count, update_summaries = self._apply_combat_updates(combatants)
+            removed_count, update_summaries = self._apply_combat_updates(combatants_copy)
+            
+            # Force UI update after applying updates
+            QApplication.processEvents()
             
             # Build a detailed summary for the user
             turn_count = len(log_entries)
@@ -4929,214 +5337,129 @@ class CombatTrackerPanel(BasePanel):
                         death_saves_text = f" [DS: {successes}S/{failures}F]"
 
                     # Add to survivors/casualties list
-                    if status_text.lower() == "dead":
+                    if status_text and "dead" in status_text.lower():
                         casualties.append(name)
                     else:
                         survivors_details.append(f"{name}: {hp} HP ({status_text}){death_saves_text}")
 
-            # Add final summary to the combat log
-            self.combat_log_text.append("<hr>")
-            self.combat_log_text.append("<h3 style='color:#000088;'>Combat Concluded</h3>")
-            self.combat_log_text.append(f"<p>{final_narrative}</p>")
-            self.combat_log_text.append(f"<p><b>Duration:</b> {round_count} rounds, {turn_count} turns</p>")
+            # Prepare final combat log with the original content preserved
+            final_log = existing_log
+            
+            # Check if we should append to existing log or start fresh
+            if "Combat Concluded" in final_log:
+                # Previous combat summary exists, clear the log and start fresh
+                final_log = ""
+            
+            # Build summary content
+            summary_content = "<hr>\n"
+            summary_content += "<h3 style='color:#000088;'>Combat Concluded</h3>\n"
+            summary_content += f"<p>{final_narrative}</p>\n"
+            summary_content += f"<p><b>Duration:</b> {round_count} rounds, {turn_count} turns</p>\n"
+            
+            # Add turn-by-turn log if available
+            if log_entries:
+                summary_content += "<p><b>Combat Log:</b></p>\n<div style='max-height: 200px; overflow-y: auto; border: 1px solid #ccc; padding: 5px; margin: 5px 0;'>\n"
+                for entry in log_entries:
+                    round_num = entry.get("round", "?")
+                    actor = entry.get("actor", "Unknown")
+                    action = entry.get("action", "")
+                    result_text = entry.get("result", "")
+                    
+                    summary_content += f"<p><b>Round {round_num}:</b> {actor} {action}"
+                    if result_text:
+                        summary_content += f" - {result_text}"
+                    summary_content += "</p>\n"
+                summary_content += "</div>\n"
             
             # Add survivors
             if survivors_details:
-                self.combat_log_text.append("<p><b>Survivors:</b></p><ul>")
+                summary_content += "<p><b>Survivors:</b></p>\n<ul>\n"
                 for survivor in survivors_details:
-                    self.combat_log_text.append(f"<li>{survivor}</li>")
-                self.combat_log_text.append("</ul>")
+                    summary_content += f"<li>{survivor}</li>\n"
+                summary_content += "</ul>\n"
             else:
-                self.combat_log_text.append("<p><b>Survivors:</b> None!</p>")
+                summary_content += "<p><b>Survivors:</b> None!</p>\n"
                 
             # Add casualties
             if casualties:
-                self.combat_log_text.append("<p><b>Casualties:</b></p><ul>")
+                summary_content += "<p><b>Casualties:</b></p>\n<ul>\n"
                 for casualty in casualties:
-                    self.combat_log_text.append(f"<li>{casualty}</li>")
-                self.combat_log_text.append("</ul>")
-                
+                    summary_content += f"<li>{casualty}</li>\n"
+                summary_content += "</ul>\n"
+            
+            # Now update the combat log with our final content
+            if final_log:
+                # Append to existing log
+                self.combat_log_text.setHtml(final_log)
+                self.combat_log_text.append(summary_content)
+            else:
+                # Start fresh with summary only
+                self.combat_log_text.setHtml(summary_content)
+            
+            # Explicitly set cursor to end and scroll to bottom
+            cursor = self.combat_log_text.textCursor()
+            cursor.movePosition(QTextCursor.End)
+            self.combat_log_text.setTextCursor(cursor)
+            
             # Scroll to the bottom to see the summary
             scrollbar = self.combat_log_text.verticalScrollBar()
             scrollbar.setValue(scrollbar.maximum())
             
+            # Final UI update
+            QApplication.processEvents()
+            
+            # Clean up the rest of the references
+            local_result = None
+            log_entries = None
+            combatants_copy = None
+            survivors_details = None
+            casualties = None
+            
+            # Final garbage collection
+            gc.collect()
+            
+            print("[CombatTracker] Combat results processing completed successfully")
+            
         except Exception as e:
-            print(f"[CombatTracker] Error processing resolution result: {str(e)}")
+            traceback.print_exc()
+            print(f"[CombatTracker] Error in _process_resolution_ui: {e}")
+            
+            # Always reset button state no matter what
+            self._reset_resolve_button("Fast Resolve", True)
+            self._is_resolving_combat = False
+            
+            # Log the error
             self.combat_log_text.append(f"<p style='color:red;'><b>Error:</b> An error occurred while processing the combat result: {str(e)}</p>")
+            
+            # Force garbage collection
+            gc.collect()
 
     def _clear_combat_log(self):
         """Clear the combat log display"""
         self.combat_log_text.clear()
         self.combat_log_text.setHtml("<p><i>Combat log cleared.</i></p>")
 
-    def _apply_combat_updates(self, updates):
-        """Apply final combatant updates from the resolution result."""
-        # Initialize rows_to_remove and update_summaries
-        rows_to_remove = []
-        update_summaries = []
-
-        print(f"[CombatTracker] Applying {len(updates)} combat updates from LLM")
-
-        # Block signals during updates to prevent unexpected handlers
-        self.initiative_table.blockSignals(True)
-        try:
-            for update_index, update in enumerate(updates):
-                name_to_find = update.get("name")
-                if not name_to_find:
-                    continue
-
-                print(f"[CombatTracker] Processing update for {name_to_find}: {update}")
-                # Find the row for the combatant
-                found_row = -1
-                for row in range(self.initiative_table.rowCount()):
-                    name_item = self.initiative_table.item(row, 0)
-                    if name_item and name_item.text() == name_to_find:
-                        found_row = row
-                        break
-
-                if found_row != -1:
-                    print(f"[CombatTracker] Found {name_to_find} at row {found_row}")
-                    # Apply HP update
-                    if "hp" in update:
-                        hp_item = self.initiative_table.item(found_row, 2)
-                        if hp_item:
-                            old_hp = hp_item.text()
-                            try:
-                                # First try to convert directly to int
-                                if isinstance(update["hp"], int):
-                                    new_hp_value = max(0, update["hp"])
-                                elif isinstance(update["hp"], str) and update["hp"].strip().isdigit():
-                                    new_hp_value = max(0, int(update["hp"].strip()))
-                                else:
-                                    # Handle other formats - extract numbers
-                                    import re
-                                    match = re.search(r'\d+', str(update["hp"]))
-                                    if match:
-                                        new_hp_value = max(0, int(match.group(0)))
-                                    else:
-                                        # If we can't extract a number, keep old HP
-                                        print(f"[CombatTracker] Warning: Could not extract HP value from '{update['hp']}'")
-                                        if old_hp and old_hp.isdigit():
-                                            new_hp_value = int(old_hp)
-                                        else:
-                                            new_hp_value = 0
-                                
-                                new_hp = str(new_hp_value)
-                                hp_item.setText(new_hp)
-                                print(f"[CombatTracker] Set {name_to_find} HP to {new_hp} in row {found_row} (was {old_hp}, update value: {update['hp']})")
-                                update_summaries.append(f"- {name_to_find}: HP changed from {old_hp} to {new_hp}")
-                                
-                                # Handle death/unconscious status if HP reaches 0
-                                if new_hp_value <= 0 and "status" not in update:
-                                    # Add Unconscious status
-                                    status_item = self.initiative_table.item(found_row, 5)  # Status is now column 5
-                                    if status_item:
-                                        current_statuses = []
-                                        if status_item.text():
-                                            current_statuses = [s.strip() for s in status_item.text().split(',')]
-                                        
-                                        # Only add if not already present
-                                        if "Unconscious" not in current_statuses:
-                                            current_statuses.append("Unconscious")
-                                            status_item.setText(', '.join(current_statuses))
-                                            update_summaries.append(f"- {name_to_find}: Added 'Unconscious' status due to 0 HP")
-                            except Exception as e:
-                                print(f"[CombatTracker] Error processing HP update for {name_to_find}: {str(e)}")
-                    # Apply Status update
-                    if "status" in update:
-                        status_item = self.initiative_table.item(found_row, 5)
-                        if status_item:
-                            old_status_text = status_item.text()
-                            old_statuses = [s.strip() for s in old_status_text.split(',')] if old_status_text else []
-
-                            new_status = update["status"]
-
-                            # Handle different status update formats
-                            if isinstance(new_status, list):
-                                # If status is a list, replace all existing statuses
-                                new_statuses = new_status
-                                status_item.setText(', '.join(new_statuses))
-                                update_summaries.append(f"- {name_to_find}: Status changed from '{old_status_text}' to '{', '.join(new_statuses)}'")
-                            elif new_status == "clear":
-                                # Special case to clear all statuses
-                                status_item.setText("")
-                                update_summaries.append(f"- {name_to_find}: All statuses cleared (was '{old_status_text}')")
-                            elif new_status.startswith("+"):
-                                # Add a status (e.g., "+Poisoned")
-                                status_to_add = new_status[1:].strip()
-                                if status_to_add and status_to_add not in old_statuses:
-                                    old_statuses.append(status_to_add)
-                                    status_item.setText(', '.join(old_statuses))
-                                    update_summaries.append(f"- {name_to_find}: Added '{status_to_add}' status")
-                            elif new_status.startswith("-"):
-                                # Remove a status (e.g., "-Poisoned")
-                                status_to_remove = new_status[1:].strip()
-                                if status_to_remove and status_to_remove in old_statuses:
-                                    old_statuses.remove(status_to_remove)
-                                    status_item.setText(', '.join(old_statuses))
-                                    update_summaries.append(f"- {name_to_find}: Removed '{status_to_remove}' status")
-                            else:
-                                # Otherwise, directly set the new status (backward compatibility)
-                                status_item.setText(new_status)
-                                update_summaries.append(f"- {name_to_find}: Status changed from '{old_status_text}' to '{new_status}'")
-
-                            # If status contains "Dead" or "Fled", mark for removal
-                            current_statuses = status_item.text().split(',')
-                            if any(s.strip().lower() in ["dead", "fled"] for s in current_statuses): # Use lower() for case-insensitivity
-                                if found_row not in rows_to_remove: # Avoid duplicates
-                                    rows_to_remove.append(found_row)
-        finally:
-            # Ensure signals are unblocked even if an error occurs
-            self.initiative_table.blockSignals(False)
-
-        # Remove combatants marked for removal (in reverse order)
-        if rows_to_remove:
-            # Block signals again during row removal for safety
-            self.initiative_table.blockSignals(True)
-            turn_adjusted = False # Track if current turn needs adjusting
-            try:
-                for row in sorted(list(set(rows_to_remove)), reverse=True): # Use set() to ensure unique rows
-                    print(f"[CombatTracker] _apply_combat_updates: Removing row {row}")
-                    self.initiative_table.removeRow(row)
-                    # Adjust current turn if needed
-                    if row < self.current_turn:
-                        self.current_turn -= 1
-                        turn_adjusted = True
-                    elif row == self.current_turn:
-                        # If removing the current turn, reset it (e.g., to -1 or 0 if combatants remain)
-                        self.current_turn = 0 if self.initiative_table.rowCount() > 0 else -1
-                        turn_adjusted = True
-
-                    # Clean up tracking
-                    self.death_saves.pop(row, None)
-                    self.concentrating.discard(row) # Use discard for sets
-                    self.combatants.pop(row, None) # Clean up combatants dict
-
-                # Re-index remaining combatant data *after* all removals
-                print("[CombatTracker] _apply_combat_updates: Re-indexing combatant data...")
-                new_combatants = {}
-                new_concentrating = set()
-                new_death_saves = {}
-                for new_row in range(self.initiative_table.rowCount()):
-                    name_item = self.initiative_table.item(new_row, 0)
-                    if name_item:
-                        # Find the original row index this combatant had before removal
-                        # This requires tracking original indices or identifying by name/ID
-                        # Simpler approach: Assume self.combatants keys might be invalid now
-                        # We might need a more robust way to link table rows to data if keys aren't updated
-                        # For now, we'll skip re-indexing complex data and focus on fixing the NameError
-                        pass # Re-indexing logic might need rework later
-
-                # Update highlight ONLY if turn was adjusted
-                if turn_adjusted:
-                     self._update_highlight()
-            finally:
-                 self.initiative_table.blockSignals(False) # Unblock after removals
-
-        # Ensure the UI table is refreshed after all updates and removals
-        self.initiative_table.viewport().update()
+    def _reset_resolve_button(self, text="Fast Resolve", enabled=True):
+        """Guaranteed method to reset the button state using the main UI thread"""
+        # Direct update on the UI thread
+        self.fast_resolve_button.setEnabled(enabled)
+        self.fast_resolve_button.setText(text)
+        
+        # Force immediate UI update
         from PySide6.QtWidgets import QApplication
         QApplication.processEvents()
+        
+        print(f"[CombatTracker] Reset Fast Resolve button to '{text}' (enabled: {enabled})")
 
-        # Return the initialized variables
-        return len(rows_to_remove), update_summaries
+    def _check_and_reset_button(self):
+        """Check if the button should be reset and reset it if necessary"""
+        # Check if the button text is still in "Initializing..." state after our timer
+        if self.fast_resolve_button.text() == "Initializing..." or self.fast_resolve_button.text().startswith("Resolving"):
+            print("[CombatTracker] Backup timer detected hanging button, forcing reset")
+            self._reset_resolve_button("Fast Resolve", True)
+            
+            # Also log this to the combat log for user awareness
+            self.combat_log_text.append("<p style='color:orange;'><b>Notice:</b> Combat resolution timed out or is taking too long. The Fast Resolve button has been reset.</p>")
+            
+            # Maybe the combat resolver is still running - force all needed flag resets too
+            self._is_resolving_combat = False

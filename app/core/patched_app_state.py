@@ -15,6 +15,7 @@ def apply_patches():
     """Apply patches to the AppState class"""
     from app.core.app_state import AppState
     from app.core.combat_initializer import init_stabilized_resolver
+    from app.core.llm_service_patch import apply_llm_service_patches
     
     # Save original __init__ method
     original_init = AppState.__init__
@@ -24,9 +25,18 @@ def apply_patches():
         # Call original __init__ first to set up basic state
         original_init(self)
         
-        logger.info("Applying combat resolver stability patches")
+        logger.info("Applying stability patches")
+        
+        # Apply LLM service patches first (they need to be applied before any use)
+        logger.info("Applying LLM service patches")
+        try:
+            apply_llm_service_patches(self)
+            logger.info("LLM service patches applied successfully")
+        except Exception as e:
+            logger.error(f"Failed to apply LLM service patches: {e}", exc_info=True)
         
         # Replace the combat resolver with our stabilized version
+        logger.info("Applying combat resolver patches")
         try:
             # Create a new stabilized resolver
             new_resolver = init_stabilized_resolver(self.llm_service)

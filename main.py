@@ -21,9 +21,15 @@ os.environ["PYTHONMALLOC"] = "debug"  # Enable debug malloc
 # Configure thread limits
 threading.stack_size(16 * 1024 * 1024)  # 16MB stack size
 
+# Configure recursion depth limit to avoid maximum recursion depth errors
+sys.setrecursionlimit(3000)  # Increase from default 1000
+
 # Add the app directory to the Python path
 app_dir = Path(__file__).parent
 sys.path.append(str(app_dir))
+
+# Configure memory usage
+gc.set_threshold(100, 5, 2)  # More aggressive garbage collection
 
 from PySide6.QtWidgets import QApplication
 from app.core.app_state import AppState
