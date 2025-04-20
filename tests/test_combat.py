@@ -31,7 +31,7 @@ logging.basicConfig(
 logger = logging.getLogger("test_combat")
 
 # Add the app directory to the Python path
-app_dir = Path(__file__).parent
+app_dir = Path(__file__).parent.parent
 sys.path.append(str(app_dir))
 
 # Force garbage collection
@@ -200,28 +200,16 @@ def main():
         # Force garbage collection before combat
         gc.collect()
         
-        # Get a reference to the resolver
-        resolver = app_state.combat_resolver
-        
-        # Set up callback for results
-        resolver.resolution_complete.connect(process_result)
-        
-        # Run the combat resolution
+        # Run combat resolution
         logger.info("Starting combat resolution")
-        resolver.resolve_combat_turn_by_turn(
-            combat_state=combat_state,
-            dice_roller=dice_roller,
-            callback=None,  # Using signal instead
-            update_ui_callback=ui_callback
+        result = app_state.combat_resolver.resolve_combat(
+            combat_state,
+            ui_callback=ui_callback,
+            dice_roller=dice_roller
         )
         
-        # Wait for combat to complete (simple approach)
-        logger.info("Waiting for combat to complete...")
-        for _ in range(60):  # Wait up to 60 seconds
-            time.sleep(1)
-            gc.collect()  # Force garbage collection every second
-        
-        logger.info("Test completed")
+        # Process the result
+        process_result(result, None)
         
     except Exception as e:
         logger.error(f"Error in test: {e}")

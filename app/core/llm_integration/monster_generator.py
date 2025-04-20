@@ -21,6 +21,12 @@ GENERATION_PROMPT_TEMPLATE = """
 Generate a Dungeons & Dragons 5th Edition monster stat block based on the following concept:
 Concept: "{user_prompt}"
 
+IMPORTANT: When creating the description and abilities:
+1. Use vivid, descriptive language that paints a clear picture
+2. Focus on physical characteristics, behaviors, and abilities
+3. AVOID words like: terrifying, scary, fearsome, evil, demonic, satanic, bloody, gore, violent, dead, savage, ferocious, predator, attack, kill, destroy, dangerous, threatening
+4. Instead, use words like: majestic, powerful, impressive, skilled, agile, swift, strong, intelligent, cunning, magical, mystical, ancient, wise, noble, legendary
+
 Output the stat block as a JSON object. The JSON structure should match the following format,
 omitting fields that are not applicable or cannot be reasonably determined.
 Use standard 5e terminology and conventions. Calculate ability modifiers implicitly.

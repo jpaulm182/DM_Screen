@@ -22,71 +22,85 @@ from app.ui.panels.base_panel import BasePanel
 CONDITIONS = {
     "Blinded": """
 • A blinded creature can't see and automatically fails any ability check that requires sight.
-• Attack rolls against the creature have advantage, and the creature's attack rolls have disadvantage.""",
+• Attack rolls against the creature have advantage, and the creature's attack rolls have disadvantage.
+• Saving Throw: Usually ends at the end of the creature's next turn or requires a successful Constitution saving throw (DC varies by effect).""",
 
     "Charmed": """
 • A charmed creature can't attack the charmer or target them with harmful abilities or magical effects.
-• The charmer has advantage on any ability check to interact socially with the creature.""",
+• The charmer has advantage on any ability check to interact socially with the creature.
+• Saving Throw: Usually ends at the end of the creature's next turn or requires a successful Wisdom saving throw (DC varies by effect).""",
 
     "Deafened": """
-• A deafened creature can't hear and automatically fails any ability check that requires hearing.""",
+• A deafened creature can't hear and automatically fails any ability check that requires hearing.
+• Saving Throw: Usually ends at the end of the creature's next turn or requires a successful Constitution saving throw (DC varies by effect).""",
 
     "Frightened": """
 • A frightened creature has disadvantage on ability checks and attack rolls while the source of its fear is within line of sight.
-• The creature can't willingly move closer to the source of its fear.""",
+• The creature can't willingly move closer to the source of its fear.
+• Saving Throw: Usually ends at the end of the creature's next turn or requires a successful Wisdom saving throw (DC varies by effect).""",
 
     "Grappled": """
 • A grappled creature's speed becomes 0, and it can't benefit from any bonus to its speed.
 • The condition ends if the grappler is incapacitated.
-• The condition also ends if an effect removes the grappled creature from the reach of the grappler.""",
+• The condition also ends if an effect removes the grappled creature from the reach of the grappler.
+• Saving Throw: Can attempt to escape using an action to make a Strength (Athletics) or Dexterity (Acrobatics) check contested by the grappler's Strength (Athletics) check.""",
 
     "Incapacitated": """
-• An incapacitated creature can't take actions or reactions.""",
+• An incapacitated creature can't take actions or reactions.
+• Saving Throw: Usually ends at the end of the creature's next turn or requires a successful Constitution saving throw (DC varies by effect).""",
 
     "Invisible": """
 • An invisible creature is impossible to see without special means.
 • The creature's location can be detected by any noise it makes or tracks it leaves.
 • Attack rolls against the creature have disadvantage.
-• The creature's attack rolls have advantage.""",
+• The creature's attack rolls have advantage.
+• Saving Throw: Usually ends at the end of the creature's next turn or requires a successful Constitution saving throw (DC varies by effect).""",
 
     "Paralyzed": """
 • A paralyzed creature is incapacitated and can't move or speak.
 • The creature automatically fails Strength and Dexterity saving throws.
 • Attack rolls against the creature have advantage.
-• Any attack that hits the creature is a critical hit if the attacker is within 5 feet.""",
+• Any attack that hits the creature is a critical hit if the attacker is within 5 feet.
+• Saving Throw: Usually ends at the end of the creature's next turn or requires a successful Constitution saving throw (DC varies by effect).""",
 
     "Petrified": """
 • A petrified creature is transformed into solid inanimate matter and is incapacitated.
 • Its weight increases by a factor of ten, and it ceases aging.
 • The creature is immune to poison and disease.
-• Attack rolls against the creature have advantage.""",
+• Attack rolls against the creature have advantage.
+• Saving Throw: Usually requires a successful Constitution saving throw (DC varies by effect) or the use of a greater restoration spell or similar magic.""",
 
     "Poisoned": """
-• A poisoned creature has disadvantage on attack rolls and ability checks.""",
+• A poisoned creature has disadvantage on attack rolls and ability checks.
+• Saving Throw: Usually ends at the end of the creature's next turn or requires a successful Constitution saving throw (DC varies by effect).""",
 
     "Prone": """
 • A prone creature's only movement option is to crawl.
 • The creature has disadvantage on attack rolls.
 • Attack rolls against the creature have advantage if the attacker is within 5 feet.
-• Otherwise, attack rolls against the creature have disadvantage.""",
+• Otherwise, attack rolls against the creature have disadvantage.
+• Saving Throw: Can stand up using half movement speed (no saving throw required).""",
 
     "Restrained": """
 • A restrained creature's speed becomes 0, and it can't benefit from any bonus to its speed.
 • Attack rolls against the creature have advantage.
 • The creature's attack rolls have disadvantage.
-• The creature has disadvantage on Dexterity saving throws.""",
+• The creature has disadvantage on Dexterity saving throws.
+• Saving Throw: Usually requires a successful Strength (Athletics) or Dexterity (Acrobatics) check (DC varies by effect).""",
 
     "Stunned": """
 • A stunned creature is incapacitated, can't move, and can speak only falteringly.
 • The creature automatically fails Strength and Dexterity saving throws.
-• Attack rolls against the creature have advantage.""",
+• Attack rolls against the creature have advantage.
+• Saving Throw: Usually ends at the end of the creature's next turn or requires a successful Constitution saving throw (DC varies by effect).""",
 
     "Unconscious": """
 • An unconscious creature is incapacitated, can't move or speak, and is unaware of its surroundings.
 • The creature drops whatever it's holding and falls prone.
 • The creature automatically fails Strength and Dexterity saving throws.
 • Attack rolls against the creature have advantage.
-• Any attack that hits the creature is a critical hit if the attacker is within 5 feet."""
+• Any attack that hits the creature is a critical hit if the attacker is within 5 feet.
+• Saving Throw: Usually requires a successful Constitution saving throw (DC varies by effect) or the use of a healing spell or similar magic."""
 }
 
 class ConditionsPanel(BasePanel):

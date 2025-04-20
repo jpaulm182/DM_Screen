@@ -9,9 +9,14 @@ to verify that panel selection works through both menu and toolbar.
 
 import sys
 import time
+from pathlib import Path
 from PySide6.QtWidgets import QApplication, QToolBar
 from PySide6.QtCore import QTimer
 from PySide6.QtCore import Qt
+
+# Add the app directory to the Python path
+app_dir = Path(__file__).parent.parent
+sys.path.append(str(app_dir))
 
 def main():
     """Run the test script"""

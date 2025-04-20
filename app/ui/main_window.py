@@ -14,7 +14,6 @@ from PySide6.QtGui import QIcon, QAction, QKeySequence
 from datetime import datetime
 
 from app.ui.panel_manager import PanelManager
-from app.ui.panels.welcome_panel import WelcomePanel
 from app.ui.theme_manager import apply_theme, set_font_size
 from app.ui.panels.panel_category import PanelCategory
 from app.ui.layout_name_dialog import LayoutNameDialog
@@ -38,8 +37,6 @@ class MainWindow(QMainWindow):
         
         # Initialize panel-related UI elements mapping before creating panels
         self.panel_actions = {}  # Actions for each panel
-        self.welcome_panel = None  # Keep track of welcome panel
-        self.stored_visible_panels = []  # Store visible panels when welcome panel is shown
         
         # Create the panel manager
         self.panel_manager = PanelManager(self, app_state)
@@ -60,7 +57,7 @@ class MainWindow(QMainWindow):
         # Connect signals AFTER panels are likely instantiated by PanelManager
         self._connect_panel_signals()
         
-        # Load the default layout or show welcome screen
+        # Load the default layout
         self._load_initial_layout()
         
         # Start UI update timer for panel states
@@ -121,12 +118,7 @@ class MainWindow(QMainWindow):
         # View menu
         view_menu = menu_bar.addMenu("&View")
         
-        # Welcome panel
-        welcome_action = QAction("Welcome Panel", self)
-        welcome_action.setShortcut(QKeySequence("Ctrl+H"))
-        welcome_action.triggered.connect(self._toggle_welcome_panel)
-        view_menu.addAction(welcome_action)
-        
+        # Remove welcome panel menu item
         view_menu.addSeparator()
         
         # Theme submenu
@@ -647,47 +639,16 @@ class MainWindow(QMainWindow):
         self.setStatusBar(status_bar)
         status_bar.showMessage("Ready")
     
-    def _show_welcome_panel(self):
-        """Show the welcome panel when no layout is loaded or when requested"""
-        # Store the currently visible panels to restore later
-        self.stored_visible_panels = []
-        for panel_id, dock in self.panel_manager.panels.items():
-            if dock and dock.isVisible():
-                self.stored_visible_panels.append(panel_id)
-                dock.hide()
-        
-        # Create and show the welcome panel
-        welcome = WelcomePanel(self.panel_manager)
-        welcome.panel_selected.connect(self._hide_welcome_panel)
-        self.setCentralWidget(welcome)
-        self.welcome_panel = welcome  # Store reference to access later
-    
-    def _hide_welcome_panel(self):
-        """Hide the welcome panel and restore previous panels"""
-        self.setCentralWidget(None)
-        self.welcome_panel = None
-        
-        # Restore previously visible panels
-        if hasattr(self, 'stored_visible_panels') and self.stored_visible_panels:
-            for panel_id in self.stored_visible_panels:
-                panel = self.panel_manager.get_panel(panel_id)
-                if panel:
-                    panel.show()
-            
-            # Restore panel organization
-            self.panel_manager.smart_organize_panels()
-            self.stored_visible_panels = []
-    
     def _load_initial_layout(self):
-        """Load the initial layout or show welcome screen if no layout is available"""
+        """Load the initial layout"""
         success, data, ui_state = self.app_state.load_layout()
         
         if success:
             # Apply the layout
             self._apply_layout(data, ui_state)
         else:
-            # Show welcome screen if no layout available
-            self._show_welcome_panel()
+            # Show default panels if no layout available
+            self.panel_manager._setup_initial_layout()
     
     def _apply_layout(self, layout_data, ui_state):
         """Apply a loaded layout to the application
@@ -1042,44 +1003,35 @@ class MainWindow(QMainWindow):
                 
                 dock.setGeometry(dock_geometry)
 
-    def _toggle_welcome_panel(self):
-        """Toggle the welcome panel visibility"""
-        # If welcome panel is visible, hide it
-        if self.centralWidget() and isinstance(self.centralWidget(), WelcomePanel):
-            self._hide_welcome_panel()
-        else:
-            # Otherwise show it
-            self._show_welcome_panel()
-            
-            # Force layout update to ensure welcome panel fills the available space
-            if self.welcome_panel:
-                self.welcome_panel.adjustSize()
-                QTimer.singleShot(100, lambda: self._resize_welcome_panel())
-    
-    def _resize_welcome_panel(self):
-        """Resize the welcome panel to fill the central widget area"""
-        if self.welcome_panel:
-            self.welcome_panel.setGeometry(self.centralWidget().rect())
-            self.centralWidget().update()
-    
-    def resizeEvent(self, event):
-        """Handle window resize events"""
-        if event:
-            super().resizeEvent(event)
+    def _show_welcome_panel(self):
+        """Show the welcome panel when no layout is loaded or when requested"""
+        # Store the currently visible panels to restore later
+        self.stored_visible_panels = []
+        for panel_id, dock in self.panel_manager.panels.items():
+            if dock and dock.isVisible():
+                self.stored_visible_panels.append(panel_id)
+                dock.hide()
         
-        # If welcome panel is visible, resize it to fill the space
-        if self.centralWidget() and isinstance(self.centralWidget(), WelcomePanel):
-            self._resize_welcome_panel()
-
-    def keyPressEvent(self, event):
-        """Handle key press events"""
-        # F1 toggles welcome panel
-        if event.key() == Qt.Key_F1:
-            self._toggle_welcome_panel()
-            event.accept()
-        else:
-            super().keyPressEvent(event)
-
+        # Create and show the welcome panel
+        welcome = WelcomePanel(self.panel_manager)
+        welcome.panel_selected.connect(self._hide_welcome_panel)
+        self.setCentralWidget(welcome)
+    
+    def _hide_welcome_panel(self):
+        """Hide the welcome panel and restore previous panels"""
+        self.setCentralWidget(None)
+        
+        # Restore previously visible panels
+        if hasattr(self, 'stored_visible_panels') and self.stored_visible_panels:
+            for panel_id in self.stored_visible_panels:
+                panel = self.panel_manager.get_panel(panel_id)
+                if panel:
+                    panel.show()
+            
+            # Restore panel organization
+            self.panel_manager.smart_organize_panels()
+            self.stored_visible_panels = []
+    
     def _connect_panel_signals(self):
         """Connect signals between different panels."""
         print("Attempting to connect panel signals...") # Debug
