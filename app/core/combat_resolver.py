@@ -965,6 +965,22 @@ Decide the most appropriate action for the active combatant this turn. Consider:
 9. Limited‑use abilities (per short/long rest, per day, etc.) must decrement their remaining uses.
 10. When casting spells, you must expend an appropriate spell slot if any remain.  If no slots remain for that level you CANNOT cast a spell that requires it.
 11. If an action forces saving throws (e.g., Fireball, Breath Weapon, Turn Undead), YOU must include a dice request for EACH target's saving throw with the DC in the purpose, e.g., {"expression":"1d20+2","purpose":"Goblin Dex save vs DC 13"}.
+12. ADVANTAGE AND DISADVANTAGE: Check combatant status for conditions that affect attack rolls. Apply advantage or disadvantage as follows:
+   - If a combatant has advantage, request TWO separate d20 rolls in dice_requests and note "with advantage" in the purpose
+   - If a combatant has disadvantage, request TWO separate d20 rolls in dice_requests and note "with disadvantage" in the purpose
+   - Common conditions that grant ADVANTAGE: invisible attacker, prone target (for melee attacks), stunned/paralyzed target, target can't see attacker
+   - Common conditions that impose DISADVANTAGE: prone attacker (for ranged attacks), attacker can't see target, attacker is restrained/poisoned/frightened
+
+# CONDITIONS AND ADVANTAGE/DISADVANTAGE REFERENCE
+- Blinded: Cannot see, has disadvantage on attacks, grants advantage to attackers
+- Frightened: Has disadvantage on attacks while source of fear is in sight
+- Invisible: Has advantage on attacks, attacks against it have disadvantage
+- Paralyzed: Grants advantage on attacks, auto-crits if attacker within 5 feet
+- Poisoned: Has disadvantage on attacks and ability checks
+- Prone: Has disadvantage on attacks, grants advantage on attacks against it within 5 feet, grants disadvantage on ranged attacks against it
+- Restrained: Has disadvantage on attacks, grants advantage to attackers
+- Stunned: Grants advantage on attacks
+- Unconscious: Grants advantage on attacks, auto-crits if attacker within 5 feet
 
 # RESPONSE FORMAT
 Respond with a JSON object containing these fields:
@@ -973,7 +989,7 @@ Respond with a JSON object containing these fields:
   * "expression": The dice expression (e.g., "1d20+5")
   * "purpose": What this roll is for (e.g., "Attack roll against Goblin")
 
-Example response:
+Example response for a regular attack:
 {
   "action": "The Hobgoblin Captain makes a multiattack with its longsword and shield against the Fighter, focusing on dealing damage while maintaining defensive positioning.",
   "dice_requests": [
@@ -981,6 +997,16 @@ Example response:
     {"expression": "1d8+3", "purpose": "Longsword damage if hit"},
     {"expression": "1d20+5", "purpose": "Shield bash attack roll"},
     {"expression": "1d4+3", "purpose": "Shield bash damage if hit"}
+  ]
+}
+
+Example response for an attack with advantage:
+{
+  "action": "The Goblin attacks the blinded Fighter, taking advantage of the fighter's inability to see the attack coming.",
+  "dice_requests": [
+    {"expression": "1d20+4", "purpose": "Shortsword attack roll with advantage (roll 1)"},
+    {"expression": "1d20+4", "purpose": "Shortsword attack roll with advantage (roll 2)"},
+    {"expression": "1d6+2", "purpose": "Shortsword damage if hit"}
   ]
 }
 
@@ -1092,6 +1118,7 @@ Resolve the outcome of the action based on the dice results. Follow standard D&D
 5. Update status effects as needed
 6. Track usage of limited-use abilities
 7. CRITICAL: Use the EXACT current HP values listed at the start of this prompt when calculating remaining HP
+8. ADVANTAGE AND DISADVANTAGE: For rolls marked with advantage, use the HIGHER of the two d20 rolls. For rolls with disadvantage, use the LOWER of the two d20 rolls.
 
 # HP AND CONDITION RULES
 - When a monster reaches 0 HP, it dies and is removed from combat
@@ -1106,6 +1133,17 @@ Resolve the outcome of the action based on the dice results. Follow standard D&D
 3. The "updates" array must fully capture changed HP, status conditions, frightened/stunned flags, limited‑use counters, and recharge state so that the UI can stay in sync.
 4. If a spell was cast, include an update to the caster's spell slot tracker in the form {"name":"Wizard","spell_slots":{"6":"0/1"}} (example shows 6‑level slot expended).
 5. Whenever saving throws are required, ensure the corresponding dice results are listed in the "dice" array you receive and apply half/zero damage as appropriate based on the DC and roll.
+
+# CONDITIONS AND ADVANTAGE/DISADVANTAGE REFERENCE
+- Blinded: Cannot see, has disadvantage on attacks, grants advantage to attackers
+- Frightened: Has disadvantage on attacks while source of fear is in sight
+- Invisible: Has advantage on attacks, attacks against it have disadvantage
+- Paralyzed: Grants advantage on attacks, auto-crits if attacker within 5 feet
+- Poisoned: Has disadvantage on attacks and ability checks
+- Prone: Has disadvantage on attacks, grants advantage on attacks against it within 5 feet, grants disadvantage on ranged attacks against it
+- Restrained: Has disadvantage on attacks, grants advantage to attackers
+- Stunned: Grants advantage on attacks
+- Unconscious: Grants advantage on attacks, auto-crits if attacker within 5 feet
 
 # RESPONSE FORMAT
 Respond with a JSON object containing these fields:
@@ -1371,21 +1409,13 @@ Return ONLY the JSON object with no other text.
                         match = re.search(r'\d+', hp_string)
                         if match:
                             extracted_hp = int(match.group(0))
-                            new_hp_value = max(0, extracted_hp)
-                            print(f"[CombatResolver] After subtraction parsing failed, extracted HP value {new_hp_value} from string '{hp_string}' for {target_name}")
-                # Try to extract any number from the string as last resort
-                else:
-                    import re
-                    match = re.search(r'\d+', hp_string)
-                    if match:
-                        extracted_hp = int(match.group(0))
-                        # Check if it's much smaller than current HP, it might be damage
-                        if extracted_hp < current_hp / 2 and "damage" in hp_string.lower():
-                            new_hp_value = max(0, current_hp - extracted_hp)
-                            print(f"[CombatResolver] Inferred damage: reduced {target_name}'s HP by {extracted_hp} to {new_hp_value}")
-                        else:
-                            new_hp_value = max(0, extracted_hp)
-                            print(f"[CombatResolver] Extracted HP value {new_hp_value} from string '{hp_string}' for {target_name}")
+                            # Check if it's much smaller than current HP, it might be damage
+                            if extracted_hp < current_hp / 2 and "damage" in hp_string.lower():
+                                new_hp_value = max(0, current_hp - extracted_hp)
+                                print(f"[CombatResolver] Inferred damage: reduced {target_name}'s HP by {extracted_hp} to {new_hp_value}")
+                            else:
+                                new_hp_value = max(0, extracted_hp)
+                                print(f"[CombatResolver] Extracted HP value {new_hp_value} from string '{hp_string}' for {target_name}")
                     else:
                         print(f"[CombatResolver] Warning: Could not extract HP value from '{hp_string}' for {target_name}")
             else:
