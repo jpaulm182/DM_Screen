@@ -964,6 +964,7 @@ Decide the most appropriate action for the active combatant this turn. Consider:
 8. Abilities that show a **Recharge X‑Y** mechanic must track availability.  If you use such an ability this turn, add an entry in "updates" to set it to "expended" and include the recharge roll at the start of the creature's following turns.
 9. Limited‑use abilities (per short/long rest, per day, etc.) must decrement their remaining uses.
 10. When casting spells, you must expend an appropriate spell slot if any remain.  If no slots remain for that level you CANNOT cast a spell that requires it.
+11. If an action forces saving throws (e.g., Fireball, Breath Weapon, Turn Undead), YOU must include a dice request for EACH target's saving throw with the DC in the purpose, e.g., {"expression":"1d20+2","purpose":"Goblin Dex save vs DC 13"}.
 
 # RESPONSE FORMAT
 Respond with a JSON object containing these fields:
@@ -1104,6 +1105,7 @@ Resolve the outcome of the action based on the dice results. Follow standard D&D
 2. For each Recharge ability you use this turn, include a field "recharge_roll" in the corresponding update like {"ability":"Fire Breath","recharge_roll":"d6 roll result"} so the tracker can mark it available again on a 5‑6 (or stated value).
 3. The "updates" array must fully capture changed HP, status conditions, frightened/stunned flags, limited‑use counters, and recharge state so that the UI can stay in sync.
 4. If a spell was cast, include an update to the caster's spell slot tracker in the form {"name":"Wizard","spell_slots":{"6":"0/1"}} (example shows 6‑level slot expended).
+5. Whenever saving throws are required, ensure the corresponding dice results are listed in the "dice" array you receive and apply half/zero damage as appropriate based on the DC and roll.
 
 # RESPONSE FORMAT
 Respond with a JSON object containing these fields:
