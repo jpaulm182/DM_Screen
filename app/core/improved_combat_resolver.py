@@ -7,6 +7,7 @@ to create a more realistic and rule-compliant combat experience in D&D 5e.
 
 from app.core.combat_resolver import CombatResolver
 from app.core.improved_initiative import ImprovedInitiative
+from app.combat.action_economy import ActionEconomyManager, ActionType
 from app.core.initiative_integration import (
     initialize_combat_with_improved_initiative,
     update_combat_state_for_next_round,
@@ -88,6 +89,9 @@ class ImprovedCombatResolver(QObject):
         # Main combat loop
         while round_num <= max_rounds:
             print(f"[ImprovedCombatResolver] Starting round {round_num}")
+            
+            # Reset reactions for all combatants at the start of a new round
+            combatants = ActionEconomyManager.reset_reactions(combatants)
             
             # Get active combatants for this round
             active_combatants = state.get("active_combatants", [])
@@ -198,6 +202,7 @@ class ImprovedCombatResolver(QObject):
         
         # Update the UI
         if update_ui_callback:
+            # Create a display state that includes the latest action
             combat_display_state = {
                 "round": round_num,
                 "current_turn_index": combatant_idx,
@@ -205,6 +210,7 @@ class ImprovedCombatResolver(QObject):
                 "latest_action": turn_log_entry
             }
             update_ui_callback(combat_display_state)
+            import time
             time.sleep(0.5)
     
     def _process_turn_with_improved_initiative(self, state, combatant_idx, round_num, dice_roller, log, update_ui_callback=None):
@@ -222,6 +228,9 @@ class ImprovedCombatResolver(QObject):
         import time
         combatants = state.get("combatants", [])
         combatant = combatants[combatant_idx]
+        
+        # Initialize action economy for this combatant's turn
+        combatant = ActionEconomyManager.initialize_action_economy(combatant)
         
         # Check for conditions that affect this turn
         has_condition_effects = False
@@ -262,6 +271,10 @@ class ImprovedCombatResolver(QObject):
                 # Track condition effects for LLM prompt
                 condition_effects.append(condition_name)
         
+        # Reset legendary actions for legendary creatures at the start of their turn
+        if combatant.get("legendary_actions", 0) > 0:
+            combatant = ActionEconomyManager.initialize_action_economy(combatant)
+        
         # Use the original turn processor but with additional context
         # Create a temporary state to pass to the original processor
         temp_state = {
@@ -282,6 +295,9 @@ class ImprovedCombatResolver(QObject):
                 "updates": []
             }
         
+        # Process action economy for the turn
+        turn_result = self._process_action_economy_for_turn(combatant, turn_result, state)
+        
         # Add turn to log
         turn_log_entry = {
             "round": round_num,
@@ -289,7 +305,8 @@ class ImprovedCombatResolver(QObject):
             "actor": combatant.get("name", "Unknown"),
             "action": turn_result.get("action", ""),
             "dice": turn_result.get("dice", []),
-            "result": turn_result.get("narrative", "")
+            "result": turn_result.get("narrative", ""),
+            "action_economy": combatant.get("action_economy", {})  # Include action economy info in log
         }
         log.append(turn_log_entry)
         
@@ -309,6 +326,196 @@ class ImprovedCombatResolver(QObject):
             }
             update_ui_callback(combat_display_state)
             time.sleep(0.5)
+    
+    def _process_action_economy_for_turn(self, combatant, turn_result, state):
+        """
+        Process action economy for a combatant's turn.
+        
+        Args:
+            combatant: The active combatant
+            turn_result: The result of processing the turn
+            state: Current combat state
+            
+        Returns:
+            Updated turn result with action economy information
+        """
+        # Extract the decision from the turn result
+        action_description = turn_result.get("action", "")
+        
+        # Create a simplified decision object based on the action description
+        decision = {"action_type": "action"}  # Default to standard action
+        
+        # Check for specific action types in the description
+        lower_action = action_description.lower()
+        
+        # Bonus action detection
+        if "bonus action" in lower_action:
+            decision["action_type"] = "bonus_action"
+        
+        # Movement detection - try to extract distance
+        movement_detected = False
+        movement_dist = 0
+        
+        if "moves" in lower_action or "movement" in lower_action:
+            import re
+            # Look for patterns like "moves 30 feet" or "moves 15'"
+            movement_match = re.search(r'moves (\d+)\s*(?:feet|ft|\')?', lower_action)
+            if movement_match:
+                movement_dist = int(movement_match.group(1))
+                decision["action_type"] = "movement"
+                decision["movement_cost"] = movement_dist
+                movement_detected = True
+        
+        # Save previous position for opportunity attack checks
+        previous_position = None
+        if movement_detected and "position" in combatant:
+            import copy
+            previous_position = copy.deepcopy(combatant.get("position", {}))
+        
+        # Apply the action economy for this decision
+        combatant, success, reason = ActionEconomyManager.process_action_decision(
+            combatant, decision
+        )
+        
+        # Update the turn result with action economy information
+        if not success:
+            # Append action economy failure reason to narrative
+            turn_result["narrative"] = f"{turn_result.get('narrative', '')}\nHowever, {reason}."
+        
+        # Check for opportunity attacks if movement was successful
+        opportunity_attacks = []
+        if movement_detected and success and previous_position:
+            # Apply position updates from the turn result first
+            if "updates" in turn_result:
+                for update in turn_result["updates"]:
+                    if update.get("name") == combatant.get("name") and "position" in update:
+                        # Position has been updated, check for opportunity attacks
+                        opportunity_attacks = self._process_opportunity_attacks(
+                            combatant, 
+                            state.get("combatants", []), 
+                            previous_position
+                        )
+                        break
+            
+            # If opportunity attacks occurred, append them to the turn result
+            if opportunity_attacks:
+                # Add opportunity attack narratives to the turn result
+                opportunity_text = "\n".join([attack.get("narrative", "") for attack in opportunity_attacks])
+                turn_result["narrative"] = f"{turn_result.get('narrative', '')}\n\n{opportunity_text}"
+                
+                # Add opportunity attacks to the turn result for processing
+                if "opportunity_attacks" not in turn_result:
+                    turn_result["opportunity_attacks"] = []
+                turn_result["opportunity_attacks"].extend(opportunity_attacks)
+        
+        # Add action economy info to the result
+        turn_result["action_economy"] = {
+            "action_type": decision["action_type"],
+            "success": success,
+            "reason": reason if not success else "",
+            "available_actions": ActionEconomyManager.check_available_actions(combatant),
+            "opportunity_attacks": len(opportunity_attacks) if opportunity_attacks else 0
+        }
+        
+        return turn_result
+        
+    def _process_opportunity_attacks(self, moving_combatant, combatants, previous_position):
+        """
+        Process opportunity attacks triggered by movement.
+        
+        Args:
+            moving_combatant: The combatant that moved
+            combatants: All combatants in the encounter
+            previous_position: The combatant's position before movement
+            
+        Returns:
+            List of processed opportunity attack results
+        """
+        import random
+        
+        # Check if any opportunity attacks are triggered
+        opportunity_attacks = ActionEconomyManager.check_opportunity_attacks(
+            moving_combatant, combatants, previous_position
+        )
+        
+        processed_attacks = []
+        
+        # Process each opportunity attack
+        for attack in opportunity_attacks:
+            # Find the attacker and target combatants
+            attacker = None
+            target = moving_combatant  # The moving combatant is always the target
+            
+            for c in combatants:
+                if c.get("name") == attack["attacker"]:
+                    attacker = c
+                    break
+                    
+            if not attacker:
+                continue
+                
+            # Simplified attack roll simulation
+            # In a real implementation, this would use the proper attack calculations
+            attack_bonus = attacker.get("attack_bonus", 0)
+            target_ac = target.get("ac", 10)
+            
+            # Roll d20 + attack bonus
+            attack_roll = random.randint(1, 20)
+            total_attack = attack_roll + attack_bonus
+            
+            critical = attack_roll == 20
+            hit = critical or total_attack >= target_ac
+            
+            if hit:
+                # Calculate damage (simplified)
+                damage_dice = attacker.get("damage_dice", "1d6")
+                damage_bonus = attacker.get("damage_bonus", 0)
+                
+                # Parse damage dice (e.g., "2d6+3" becomes 2 rolls of d6 + 3)
+                import re
+                dice_match = re.match(r'(\d+)?d(\d+)(?:\+(\d+))?', damage_dice)
+                if dice_match:
+                    num_dice = int(dice_match.group(1) or 1)
+                    die_size = int(dice_match.group(2))
+                    bonus = int(dice_match.group(3) or 0)
+                    
+                    # Roll damage
+                    damage = sum(random.randint(1, die_size) for _ in range(num_dice)) + bonus + damage_bonus
+                    
+                    # Double damage on critical hit
+                    if critical:
+                        damage = damage * 2
+                        
+                    # Apply damage to target
+                    target["hp"] = max(0, target["hp"] - damage)
+                    
+                    # Update the attack result
+                    attack["hit"] = True
+                    attack["critical"] = critical
+                    attack["damage"] = damage
+                    attack["attack_roll"] = total_attack
+                    attack["target_ac"] = target_ac
+                    attack["narrative"] = f"{attacker['name']} makes an opportunity attack against {target['name']} as they move away! {attacker['name']} hits with a {total_attack} vs AC {target_ac}" + (f" (CRITICAL HIT!)" if critical else "") + f", dealing {damage} damage."
+                else:
+                    # Default damage if dice format is invalid
+                    damage = random.randint(1, 6) + damage_bonus
+                    target["hp"] = max(0, target["hp"] - damage)
+                    
+                    attack["hit"] = True
+                    attack["damage"] = damage
+                    attack["attack_roll"] = total_attack
+                    attack["target_ac"] = target_ac
+                    attack["narrative"] = f"{attacker['name']} makes an opportunity attack against {target['name']} as they move away! {attacker['name']} hits with a {total_attack} vs AC {target_ac}, dealing {damage} damage."
+            else:
+                # Attack missed
+                attack["hit"] = False
+                attack["attack_roll"] = total_attack
+                attack["target_ac"] = target_ac
+                attack["narrative"] = f"{attacker['name']} makes an opportunity attack against {target['name']} as they move away, but misses with a {total_attack} vs AC {target_ac}."
+                
+            processed_attacks.append(attack)
+            
+        return processed_attacks
     
     def _apply_combatant_updates(self, state, updates):
         """
