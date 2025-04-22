@@ -1104,6 +1104,57 @@ class CombatResolver(QObject):
         num_auras = len(active_auras)
         print(f"[CombatResolver] Found {num_auras} active auras affecting {active_name}")
         
+        # Extract abilities and actions the combatant can use
+        abilities_str = "No special abilities."
+        actions_str = "Basic attack only."
+        traits_str = "No special traits."
+        
+        # Format abilities if present
+        if "abilities" in active:
+            abilities = active.get("abilities", {})
+            if abilities:
+                abilities_str = ""
+                for name, ability in abilities.items():
+                    desc = ability.get("description", "No description")
+                    usage = ability.get("usage", "At will")
+                    abilities_str += f"- {name}: {desc} ({usage})\n"
+        
+        # Format actions if present
+        if "actions" in active:
+            actions = active.get("actions", {})
+            if actions:
+                actions_str = ""
+                for name, action in actions.items():
+                    desc = action.get("description", "No description")
+                    attack_bonus = action.get("attack_bonus", "")
+                    damage = action.get("damage", "")
+                    if attack_bonus and damage:
+                        actions_str += f"- {name}: {desc} (Attack: +{attack_bonus}, Damage: {damage})\n"
+                    else:
+                        actions_str += f"- {name}: {desc}\n"
+        
+        # Format traits if present
+        if "traits" in active:
+            traits = active.get("traits", {})
+            if traits:
+                traits_str = ""
+                for name, trait in traits.items():
+                    desc = trait.get("description", "No description")
+                    traits_str += f"- {name}: {desc}\n"
+        
+        # Basic attacks if no actions are defined
+        if actions_str == "Basic attack only.":
+            attack_bonus = active.get("attack_bonus", 0)
+            damage_dice = active.get("damage_dice", "1d6")
+            damage_bonus = active.get("damage_bonus", 0)
+            weapon = active.get("weapon", "weapon")
+            
+            if attack_bonus or damage_dice:
+                actions_str = f"- Basic Attack: Attack with {weapon} (Attack: +{attack_bonus}, Damage: {damage_dice}"
+                if damage_bonus > 0:
+                    actions_str += f"+{damage_bonus}"
+                actions_str += ")\n"
+        
         prompt = f"""
 You are the tactical combat AI for a D&D 5e game. You decide actions for {active_name}.
 
@@ -1124,6 +1175,18 @@ Status: {active.get('status', 'OK')}
 - MOVEMENT up to {active.get('speed', 30)} feet
 - A REACTION (if triggered)
 
+# SPECIFIC ABILITIES, ACTIONS AND TRAITS
+IMPORTANT: {active_name} can ONLY use the following specific abilities, actions, and traits. DO NOT invent new abilities or modify these in any way.
+
+## Actions:
+{actions_str}
+
+## Special Abilities:
+{abilities_str}
+
+## Traits:
+{traits_str}
+
 # NEARBY COMBATANTS
 {nearby_str}
 
@@ -1143,11 +1206,13 @@ Status: {active.get('status', 'OK')}
 Decide the most appropriate action for {active_name} this turn. Consider:
 1. Tactical position
 2. HP status of all combatants
-3. Available abilities and resources
+3. STRICTLY USE ONLY the listed abilities and actions - DO NOT INVENT NEW ONES
 4. Known enemy capabilities
 5. Team strategy (focus fire, crowd control, etc.)
 
 IMPORTANT: {active_name} has FULL ACTIONS available this turn, including standard action, bonus action, and full movement. DO NOT claim the combatant has no actions or movement remaining.
+
+CRITICAL: You MUST choose ONLY from the actions, abilities, and traits explicitly listed above. DO NOT create new abilities or modify the existing ones. Use them exactly as described.
 
 Your response should be a JSON object containing:
 {{
@@ -1270,6 +1335,71 @@ Status: {active.get('status', 'OK')}
 
 """
 
+            # Add the active combatant's abilities, actions, and traits
+            abilities_str = "No special abilities."
+            actions_str = "Basic attack only."
+            traits_str = "No special traits."
+            
+            # Format abilities if present
+            if "abilities" in active:
+                abilities = active.get("abilities", {})
+                if abilities:
+                    abilities_str = ""
+                    for name, ability in abilities.items():
+                        desc = ability.get("description", "No description")
+                        usage = ability.get("usage", "At will")
+                        abilities_str += f"- {name}: {desc} ({usage})\n"
+            
+            # Format actions if present
+            if "actions" in active:
+                actions = active.get("actions", {})
+                if actions:
+                    actions_str = ""
+                    for name, action in actions.items():
+                        desc = action.get("description", "No description")
+                        attack_bonus = action.get("attack_bonus", "")
+                        damage = action.get("damage", "")
+                        if attack_bonus and damage:
+                            actions_str += f"- {name}: {desc} (Attack: +{attack_bonus}, Damage: {damage})\n"
+                        else:
+                            actions_str += f"- {name}: {desc}\n"
+            
+            # Basic attacks if no actions are defined
+            if actions_str == "Basic attack only.":
+                attack_bonus = active.get("attack_bonus", 0)
+                damage_dice = active.get("damage_dice", "1d6")
+                damage_bonus = active.get("damage_bonus", 0)
+                weapon = active.get("weapon", "weapon")
+                
+                if attack_bonus or damage_dice:
+                    actions_str = f"- Basic Attack: Attack with {weapon} (Attack: +{attack_bonus}, Damage: {damage_dice}"
+                    if damage_bonus > 0:
+                        actions_str += f"+{damage_bonus}"
+                    actions_str += ")\n"
+            
+            # Format traits if present
+            if "traits" in active:
+                traits = active.get("traits", {})
+                if traits:
+                    traits_str = ""
+                    for name, trait in traits.items():
+                        desc = trait.get("description", "No description")
+                        traits_str += f"- {name}: {desc}\n"
+            
+            prompt += f"""# ABILITIES, ACTIONS AND TRAITS
+IMPORTANT: {active.get('name', 'Unknown')} can ONLY use the following specific abilities, actions, and traits.
+
+## Actions:
+{actions_str}
+
+## Special Abilities:
+{abilities_str}
+
+## Traits:
+{traits_str}
+
+"""
+
             # Add aura information to the prompt
             active_auras = self._get_active_auras(active, combatants)
             if active_auras:
@@ -1293,9 +1423,10 @@ Status: {active.get('status', 'OK')}
 1. Create a vivid, exciting narrative of what happens based on the action and dice results
 2. If the action was an attack, determine if it hits based on the attack roll vs. target's AC
 3. If successful, apply any damage or effects based on the dice results
-4. Consider any special abilities, conditions, or ongoing effects
+4. ONLY use abilities and actions listed in the ABILITIES, ACTIONS AND TRAITS section - do NOT invent new ones
 5. CRUCIAL: Track final HP values accurately!
 6. CRITICALLY IMPORTANT: ONLY use the combatant names exactly as listed above. Do NOT invent new names or refer to generic classes like "Fighter" or "Rogue". Only reference the actual names shown in the COMBATANTS section.
+7. DO NOT have combatants use abilities they do not possess. Stay strictly within their defined abilities.
 
 Your response MUST be in JSON format with these fields:
 1. "narrative": A vivid description of what happened
@@ -1322,6 +1453,7 @@ IMPORTANT:
 6. CRITICAL: Use the exact HP values provided at the start of this prompt. DO NOT RESET TO FULL HP or make up values.
 7. Calculate damage from the CURRENT HP values shown at the start of this prompt, not from max HP.
 8. EXTREMELY IMPORTANT: Only update combatants that actually exist in this combat. Use EXACT names as shown above, do not make up new combatants like "Goblin", "Fighter", etc.
+9. NEVER invent new abilities or actions that are not explicitly listed in the ABILITIES, ACTIONS AND TRAITS section.
 """
             return prompt
         except Exception as e:
