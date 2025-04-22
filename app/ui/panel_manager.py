@@ -12,7 +12,6 @@ from PySide6.QtGui import QPalette, QColor
 # Import all panel types
 from app.ui.panels.combat_tracker_panel import CombatTrackerPanel
 from app.ui.panels.dice_roller_panel import DiceRollerPanel
-from app.ui.panels.welcome_panel import WelcomePanel
 from app.ui.panels.conditions_panel import ConditionsPanel
 from app.ui.panels.rules_reference_panel import RulesReferencePanel
 from app.ui.panels.monster_panel import MonsterPanel
@@ -788,12 +787,6 @@ class PanelManager(QObject):
 
     def _setup_initial_layout(self):
         """Set up the initial panel layout"""
-        # Show welcome panel first if this is a first launch
-        if self.app_state.get_setting("first_launch", True):
-            self.toggle_panel("welcome")
-            self.app_state.update_setting("first_launch", False)
-            return
-
         # Get list of panels to show on startup
         visible_panels = self.app_state.get_setting("visible_panels", ["combat_tracker", "dice_roller", "combat_log", "conditions"])
         

@@ -5,11 +5,13 @@ echo "DM Screen Combat Test Runner"
 echo "---------------------------"
 echo ""
 
-# Make test scripts executable
-chmod +x test_combat.py test_with_leak_detection.py
+# Set up environment variables for testing
+export PYTHONPATH="$(pwd):$PYTHONPATH"
+export PYTHONMALLOC=debug
+export PYTHONFAULTHANDLER=1
 
-# Create logs directory
-mkdir -p logs
+# Make test files executable
+chmod +x tests/test_combat.py tests/test_with_leak_detection.py
 
 # Current timestamp
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -51,7 +53,7 @@ ask_for_choice() {
 run_basic_test() {
   separator "Running basic test"
   echo "Running test_combat.py normally..."
-  python test_combat.py
+  python tests/test_combat.py
   echo "Test completed. See test_combat.log for details."
   
   # Go back to menu
@@ -64,7 +66,7 @@ run_basic_test() {
 run_leak_detection() {
   separator "Running with memory leak detection"
   echo "Running test_with_leak_detection.py..."
-  python test_with_leak_detection.py
+  python tests/test_with_leak_detection.py
   echo "Test completed. See test_with_leak_detection.log and memory_leak_report.txt for details."
   
   # Go back to menu
@@ -99,7 +101,7 @@ run_valgrind() {
            --leak-check=full \
            --track-origins=yes \
            --log-file="$VALGRIND_LOG" \
-           python test_combat.py
+           python tests/test_combat.py
   
   echo "Valgrind analysis complete. Check log file for details."
   
@@ -135,7 +137,7 @@ run_gdb() {
       -ex "bt full" \
       -ex "thread apply all bt full" \
       -ex "quit" \
-      --args python test_combat.py > "$GDB_LOG" 2>&1
+      --args python tests/test_combat.py > "$GDB_LOG" 2>&1
   
   echo "GDB run complete. Check log file for details."
   
@@ -151,12 +153,12 @@ run_all_tests() {
   
   # Basic test
   echo "1. Running basic test..."
-  python test_combat.py
+  python tests/test_combat.py
   echo "Basic test completed."
   
   # Memory leak detection
   echo "2. Running memory leak detection test..."
-  python test_with_leak_detection.py
+  python tests/test_with_leak_detection.py
   echo "Memory leak detection test completed."
   
   # Valgrind
@@ -167,7 +169,7 @@ run_all_tests() {
              --leak-check=full \
              --track-origins=yes \
              --log-file="$VALGRIND_LOG" \
-             python test_combat.py
+             python tests/test_combat.py
     echo "Valgrind test completed."
   else
     echo "Valgrind not found. Skipping valgrind test."
@@ -183,7 +185,7 @@ run_all_tests() {
         -ex "bt full" \
         -ex "thread apply all bt full" \
         -ex "quit" \
-        --args python test_combat.py > "$GDB_LOG" 2>&1
+        --args python tests/test_combat.py > "$GDB_LOG" 2>&1
     echo "GDB test completed."
   else
     echo "GDB not found. Skipping GDB test."

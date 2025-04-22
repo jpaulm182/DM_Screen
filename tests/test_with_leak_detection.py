@@ -29,7 +29,7 @@ logging.basicConfig(
 logger = logging.getLogger("test_with_leak_detection")
 
 # Add the app directory to the Python path
-app_dir = Path(__file__).parent
+app_dir = Path(__file__).parent.parent
 sys.path.append(str(app_dir))
 
 # Import memory leak detector
@@ -45,7 +45,7 @@ gc.collect()
 
 # Import test combat module
 try:
-    import test_combat
+    from . import test_combat
     logger.info("Test combat module imported successfully")
 except ImportError as e:
     logger.error(f"Error importing test combat module: {e}")

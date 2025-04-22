@@ -33,7 +33,7 @@ end
 # Unset irrelevant variables.
 deactivate nondestructive
 
-set -gx VIRTUAL_ENV /home/jpaulm_loki/Github/DM_Screen_V0/.venv
+set -gx VIRTUAL_ENV /home/jpaulm/DM_Screen_New/DM_Screen/.venv
 
 set -gx _OLD_VIRTUAL_PATH $PATH
 set -gx PATH "$VIRTUAL_ENV/"bin $PATH

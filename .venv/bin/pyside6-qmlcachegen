@@ -1,4 +1,4 @@
-#!/home/jpaulm_loki/Github/DM_Screen_V0/.venv/bin/python
+#!/home/jpaulm/DM_Screen_New/DM_Screen/.venv/bin/python
 # -*- coding: utf-8 -*-
 import re
 import sys

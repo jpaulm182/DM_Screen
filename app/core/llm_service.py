@@ -444,10 +444,17 @@ class LLMService(QObject):
                 f"The art should look like it belongs on an official D&D Monster Manual page."
             )
             
-            # Remove potentially problematic words
-            problematic_words = ["terrifying", "scary", "fearsome", "evil", "demonic", "satanic", "bloody", "gore", "violent"]
+            # Remove potentially problematic words and phrases
+            problematic_words = [
+                "terrifying", "scary", "fearsome", "evil", "demonic", "satanic", 
+                "bloody", "gore", "violent", "dead", "savage", "ferocious", 
+                "predator", "attack", "kill", "destroy", "dangerous", "threatening"
+            ]
             for word in problematic_words:
                 enhanced_prompt = enhanced_prompt.replace(word, "")
+            
+            # Clean up any double spaces that might have been created
+            enhanced_prompt = " ".join(enhanced_prompt.split())
             
             # Generate image
             try:
