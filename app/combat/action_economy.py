@@ -53,6 +53,12 @@ class ActionEconomyManager:
             "legendary_actions_used": 0
         }
         
+        # Handle legendary actions that might be a list instead of an integer
+        if isinstance(combatant["action_economy"]["legendary_actions"], list):
+            combatant["action_economy"]["legendary_actions"] = len(combatant["action_economy"]["legendary_actions"])
+        elif not isinstance(combatant["action_economy"]["legendary_actions"], int):
+            combatant["action_economy"]["legendary_actions"] = 0
+        
         return combatant
     
     @staticmethod
@@ -108,6 +114,16 @@ class ActionEconomyManager:
             legendary_actions = combatant["action_economy"].get("legendary_actions", 0) or 0
             legendary_actions_used = combatant["action_economy"].get("legendary_actions_used", 0) or 0
             
+            # Handle legendary actions that might be a list
+            if isinstance(legendary_actions, list):
+                legendary_actions = len(legendary_actions)
+            elif not isinstance(legendary_actions, int):
+                legendary_actions = 0
+                
+            # Ensure legendary_actions_used is an integer
+            if not isinstance(legendary_actions_used, int):
+                legendary_actions_used = 0
+            
             if legendary_actions - legendary_actions_used >= resource_cost:
                 combatant["action_economy"]["legendary_actions_used"] = legendary_actions_used + resource_cost
                 success = True
@@ -144,7 +160,15 @@ class ActionEconomyManager:
             Updated list of combatants
         """
         for i, combatant in enumerate(combatants):
-            if combatant.get("legendary_actions", 0) > 0 and "action_economy" in combatant:
+            legendary_actions = combatant.get("legendary_actions", 0)
+            
+            # Handle case when legendary_actions is a list
+            if isinstance(legendary_actions, list):
+                has_legendary = len(legendary_actions) > 0
+            else:
+                has_legendary = legendary_actions > 0
+                
+            if has_legendary and "action_economy" in combatant:
                 combatant["action_economy"]["legendary_actions_used"] = 0
                 combatants[i] = combatant
         
@@ -173,6 +197,18 @@ class ActionEconomyManager:
         # Get legendary actions safely with default values to prevent None subtraction
         legendary_actions = action_economy.get("legendary_actions", 0) or 0
         legendary_actions_used = action_economy.get("legendary_actions_used", 0) or 0
+        
+        # Handle case when legendary_actions is a list (containing actions) instead of an integer
+        if isinstance(legendary_actions, list):
+            # If it's a list, count the number of actions available
+            legendary_actions = len(legendary_actions)
+        elif not isinstance(legendary_actions, int):
+            # If it's neither a list nor an int, default to 0
+            legendary_actions = 0
+            
+        # Ensure legendary_actions_used is an integer
+        if not isinstance(legendary_actions_used, int):
+            legendary_actions_used = 0
         
         return {
             "action": action_economy.get("action", False) and can_take_actions,
