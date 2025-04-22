@@ -21,7 +21,20 @@ class ActionType(Enum):
 
 
 class ActionEconomyManager:
-    """Manages the action economy for combatants"""
+    """
+    Manages the action economy for combatants in D&D 5e combat.
+    
+    This class handles tracking and management of:
+    - Standard actions (action, bonus action, reaction)
+    - Movement
+    - Free actions (object interactions)
+    - Legendary actions
+    
+    Note on legendary actions: In standard D&D 5e rules, legendary actions reset at the 
+    start of the legendary creature's turn. In our implementation, they reset at the
+    start of each round for all creatures by default, though we also provide methods to
+    reset them individually if needed.
+    """
     
     @staticmethod
     def initialize_action_economy(combatant: Dict[str, Any]) -> Dict[str, Any]:
@@ -36,6 +49,10 @@ class ActionEconomyManager:
         """
         # Get base speed from combatant stats
         base_speed = combatant.get("speed", 30)
+        
+        # Ensure combatant has a name logged for debugging
+        combatant_name = combatant.get("name", "Unknown")
+        print(f"[ActionEconomyManager] Resetting action economy for {combatant_name} with base speed {base_speed}")
         
         # Initialize action economy dict if not present
         if "action_economy" not in combatant:
@@ -173,6 +190,31 @@ class ActionEconomyManager:
                 combatants[i] = combatant
         
         return combatants
+    
+    @staticmethod
+    def reset_legendary_actions_for_combatant(combatant: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Reset legendary actions for a single legendary creature (e.g., at the start of their turn)
+        
+        Args:
+            combatant: The combatant to reset legendary actions for
+            
+        Returns:
+            Updated combatant
+        """
+        legendary_actions = combatant.get("legendary_actions", 0)
+        
+        # Handle case when legendary_actions is a list
+        if isinstance(legendary_actions, list):
+            has_legendary = len(legendary_actions) > 0
+        else:
+            has_legendary = legendary_actions > 0
+            
+        if has_legendary and "action_economy" in combatant:
+            print(f"[ActionEconomyManager] Resetting legendary actions for {combatant.get('name', 'Unknown')}")
+            combatant["action_economy"]["legendary_actions_used"] = 0
+        
+        return combatant
     
     @staticmethod
     def check_available_actions(combatant: Dict[str, Any]) -> Dict[str, Any]:

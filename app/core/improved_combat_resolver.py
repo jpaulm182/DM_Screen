@@ -93,6 +93,10 @@ class ImprovedCombatResolver(QObject):
             # Reset reactions for all combatants at the start of a new round
             combatants = ActionEconomyManager.reset_reactions(combatants)
             
+            # Reset legendary actions for all legendary creatures at the start of a new round
+            combatants = ActionEconomyManager.reset_legendary_actions(combatants)
+            print(f"[ImprovedCombatResolver] Reset legendary actions for all legendary creatures at the start of round {round_num}")
+            
             # Get active combatants for this round
             active_combatants = state.get("active_combatants", [])
             
@@ -270,10 +274,6 @@ class ImprovedCombatResolver(QObject):
                 
                 # Track condition effects for LLM prompt
                 condition_effects.append(condition_name)
-        
-        # Reset legendary actions for legendary creatures at the start of their turn
-        if combatant.get("legendary_actions", 0) > 0:
-            combatant = ActionEconomyManager.initialize_action_economy(combatant)
         
         # Use the original turn processor but with additional context
         # Create a temporary state to pass to the original processor

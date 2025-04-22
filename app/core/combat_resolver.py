@@ -567,14 +567,43 @@ class CombatResolver(QObject):
             # Import ActionEconomyManager if needed
             from app.combat.action_economy import ActionEconomyManager
             
-            # Initialize action economy if not already present
-            if "action_economy" not in active_combatant:
-                active_combatant = ActionEconomyManager.initialize_action_economy(active_combatant)
+            # Initialize or reset action economy at the start of the turn
+            active_combatant = ActionEconomyManager.initialize_action_economy(active_combatant)
             
             # Debug: Log all combatant HP values at start of turn
             print(f"\n[CombatResolver] DEBUG: CURRENT HP VALUES AT START OF TURN:")
             for i, c in enumerate(combatants):
                 print(f"[CombatResolver] DEBUG: Combatant {i}: {c.get('name')} - HP: {c.get('hp', 0)}/{c.get('max_hp', c.get('hp', 0))}")
+            
+            # Process aura effects at the start of turn
+            aura_updates = self._process_auras(active_combatant, combatants)
+            if aura_updates:
+                print(f"[CombatResolver] Processed {len(aura_updates)} aura effects affecting {active_combatant.get('name', 'Unknown')}")
+                for update in aura_updates:
+                    print(f"[CombatResolver] Aura effect: {update.get('source')} -> {update.get('target')}: {update.get('effect')}")
+                    
+                    # Update the combatant in the list after processing aura effects
+                    combatants[active_idx] = active_combatant
+            else:
+                print(f"[CombatResolver] No aura effects processed for {active_combatant.get('name', 'Unknown')}")
+                
+                # Debug the auras
+                active_auras = self._get_active_auras(active_combatant, combatants)
+                if active_auras:
+                    print(f"[CombatResolver] Found {len(active_auras)} auras that should affect {active_combatant.get('name', 'Unknown')}:")
+                    for aura in active_auras:
+                        print(f"[CombatResolver] - {aura.get('source')}'s {aura.get('name')} (range: {aura.get('range')}ft, distance: {aura.get('distance')}ft)")
+                else:
+                    print(f"[CombatResolver] No active auras found for {active_combatant.get('name', 'Unknown')}")
+                    
+                # Debug aura data on all combatants
+                for idx, c in enumerate(combatants):
+                    if "auras" in c and c.get("auras"):
+                        print(f"[CombatResolver] Combatant {idx} ({c.get('name')}) has {len(c.get('auras'))} defined auras:")
+                        for aura_name, aura in c.get("auras", {}).items():
+                            aura_range = aura.get("range", 0)
+                            affects = aura.get("affects", "unknown")
+                            print(f"[CombatResolver] -- {aura_name} (range: {aura_range}ft, affects: {affects})")
             
             # Skip if combatant is dead or has status "Dead"
             if active_combatant.get("hp", 0) <= 0 and active_combatant.get("status", "").lower() == "dead":
@@ -585,6 +614,22 @@ class CombatResolver(QObject):
                     "narrative": f"{active_combatant.get('name', 'Unknown')} is unconscious/dead and skips their turn.",
                     "dice": [],
                     "updates": []
+                }
+                
+            # If aura effects reduced HP to 0, handle that before processing the turn
+            if active_combatant.get("hp", 0) <= 0 and active_combatant.get("status", "").lower() != "dead":
+                active_combatant["status"] = "Unconscious"
+                print(f"[CombatResolver] {active_combatant.get('name', 'Unknown')} was knocked unconscious by aura effects")
+                return {
+                    "action": f"{active_combatant.get('name', 'Unknown')} falls unconscious due to aura damage.",
+                    "narrative": f"{active_combatant.get('name', 'Unknown')} falls unconscious due to aura damage.",
+                    "dice": [],
+                    "updates": [{
+                        "name": active_combatant.get('name', 'Unknown'),
+                        "hp": 0,
+                        "status": "Unconscious"
+                    }],
+                    "aura_updates": aura_updates
                 }
             
             # 1. Create a prompt for the LLM to decide the action
@@ -740,8 +785,9 @@ class CombatResolver(QObject):
 
             # 5. Send dice results to LLM for resolution
             try:
+                # Include aura updates in the resolution context
                 resolution_prompt = self._create_resolution_prompt(
-                    combatants, active_idx, round_num, action, dice_results)
+                    combatants, active_idx, round_num, action, dice_results, aura_updates)
                     
                 print(f"[CombatResolver] Requesting resolution from LLM for {active_combatant.get('name', 'Unknown')}")
                 resolution_response = self.llm_service.generate_completion(
@@ -764,7 +810,7 @@ class CombatResolver(QObject):
                 
             # 6. Parse the resolution 
             try:
-                # Similar approach as with decision parsing
+                # Parse the LLM's resolution 
                 resolution_text = resolution_response
                 
                 # Strip code block markers if they exist
@@ -782,36 +828,174 @@ class CombatResolver(QObject):
                     }
                 else:
                     json_str = json_match.group(0)
+                    
                     try:
                         resolution = json.loads(json_str)
                     except json.JSONDecodeError as e:
                         print(f"[CombatResolver] JSON decode error in resolution: {e}")
-                        # Try to clean up the JSON string
+                        # Try to clean up the JSON string further
                         cleaned_json = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas
                         cleaned_json = re.sub(r',\s*]', ']', cleaned_json)  # Remove trailing commas in arrays
+                        
                         try:
                             resolution = json.loads(cleaned_json)
                         except json.JSONDecodeError:
-                            print(f"[CombatResolver] Failed to parse resolution JSON even after cleanup")
-                            # Create a minimal valid resolution
+                            print(f"[CombatResolver] Failed to parse JSON resolution even after cleanup")
                             resolution = {
-                                "narrative": resolution_text if resolution_text else "The action is completed with unknown results.",
+                                "narrative": "The action resolves with technical difficulties.",
                                 "updates": []
                             }
                 
-                # Ensure required fields exist
-                if "narrative" not in resolution:
-                    resolution["narrative"] = action
-                if "updates" not in resolution:
-                    resolution["updates"] = []
+                # Apply updates from the resolution
+                for update in resolution.get("updates", []):
+                    # Safety checks
+                    if not isinstance(update, dict) or "name" not in update:
+                        print(f"[CombatResolver] Invalid update format: {update}")
+                        continue
+                    
+                    # Find the target combatant
+                    target_name = update.get("name", "")
+                    target_idx = None
+                    
+                    for i, c in enumerate(combatants):
+                        if c.get("name", "") == target_name:
+                            target_idx = i
+                            break
+                    
+                    if target_idx is None:
+                        print(f"[CombatResolver] Could not find target combatant: {target_name}")
+                        
+                        # Try to find a similar combatant name (fuzzy matching)
+                        best_match = None
+                        best_score = 0
+                        
+                        # Try to find the closest name match
+                        for i, c in enumerate(combatants):
+                            c_name = c.get("name", "")
+                            
+                            # Check if either name contains the other
+                            if target_name in c_name or c_name in target_name:
+                                similarity = min(len(target_name), len(c_name)) / max(len(target_name), len(c_name))
+                                if similarity > best_score:
+                                    best_score = similarity
+                                    best_match = i
+                            
+                            # Check if they share common words
+                            target_words = set(target_name.lower().split())
+                            name_words = set(c_name.lower().split())
+                            common_words = target_words.intersection(name_words)
+                            
+                            if common_words and len(common_words) / min(len(target_words), len(name_words)) > best_score:
+                                best_score = len(common_words) / min(len(target_words), len(name_words))
+                                best_match = i
+                        
+                        # If we found a good enough match, use it
+                        if best_match is not None and best_score > 0.3:
+                            target_idx = best_match
+                            old_name = target_name
+                            new_name = combatants[target_idx].get("name", "")
+                            print(f"[CombatResolver] Using similar combatant {new_name} instead of {old_name}")
+                            
+                            # Also update the narrative to use the correct name
+                            if "narrative" in resolution:
+                                resolution["narrative"] = resolution["narrative"].replace(old_name, new_name)
+                        else:
+                            # If the target is the active combatant's type or an enemy, apply to a random enemy
+                            active_type = active_combatant.get("type", "unknown")
+                            target_is_enemy = True  # Default assumption if target doesn't exist
+                            
+                            # Check if target name matches common enemy classes
+                            enemy_classes = ["goblin", "orc", "warrior", "monster", "enemy", "creature", 
+                                            "demon", "dragon", "undead", "zombie", "skeleton", "fighter"]
+                            
+                            if any(ec in target_name.lower() for ec in enemy_classes):
+                                # Look for a valid enemy of the active combatant
+                                for i, c in enumerate(combatants):
+                                    if c.get("type", "") != active_type:
+                                        target_idx = i
+                                        old_name = target_name
+                                        new_name = combatants[target_idx].get("name", "")
+                                        print(f"[CombatResolver] Using enemy {new_name} instead of non-existent {old_name}")
+                                        
+                                        # Update the narrative to use the correct name
+                                        if "narrative" in resolution:
+                                            resolution["narrative"] = resolution["narrative"].replace(old_name, new_name)
+                                        break
+                            else:
+                                # If common ally classes, apply to an ally
+                                ally_classes = ["ally", "friend", "companion", "paladin", "cleric", "wizard", "ally"]
+                                if any(ac in target_name.lower() for ac in ally_classes):
+                                    # Look for a valid ally of the active combatant
+                                    for i, c in enumerate(combatants):
+                                        if c.get("type", "") == active_type and i != active_idx:
+                                            target_idx = i
+                                            old_name = target_name
+                                            new_name = combatants[target_idx].get("name", "")
+                                            print(f"[CombatResolver] Using ally {new_name} instead of non-existent {old_name}")
+                                            
+                                            # Update the narrative to use the correct name
+                                            if "narrative" in resolution:
+                                                resolution["narrative"] = resolution["narrative"].replace(old_name, new_name)
+                                            break
+                            
+                        # If still no valid target, use the active combatant as a last resort
+                        if target_idx is None:
+                            # Apply the update to the active combatant as a fallback
+                            target_idx = active_idx
+                            old_name = target_name
+                            new_name = combatants[target_idx].get("name", "")
+                            print(f"[CombatResolver] Falling back to active combatant {new_name} instead of {old_name}")
+                            
+                            # Update the narrative to use the correct name
+                            if "narrative" in resolution:
+                                resolution["narrative"] = resolution["narrative"].replace(old_name, new_name)
+                    
+                    # Update HP if present, ensuring it's an integer
+                    if "hp" in update:
+                        hp_update = update["hp"]
+                        current_hp = combatants[target_idx].get("hp", 0)
+                        
+                        # Process the HP update to ensure it's valid
+                        new_hp = self._process_hp_update(combatants[target_idx].get("name", ""), hp_update, current_hp)
+                        combatants[target_idx]["hp"] = new_hp
+                    
+                    # Update status if present
+                    if "status" in update:
+                        combatants[target_idx]["status"] = update["status"]
+                    
+                    # Update other fields if present
+                    for field in ["limited_use", "spell_slots", "conditions", "death_saves"]:
+                        if field in update:
+                            combatants[target_idx][field] = update[field]
                 
-                # Safety check for updates to be a list
-                if not isinstance(resolution.get("updates"), list):
-                    print(f"[CombatResolver] 'updates' is not a list, fixing")
-                    resolution["updates"] = []
+                # Format the result
+                result = {
+                    "action": action,
+                    "narrative": resolution.get("narrative", "The action is resolved."),
+                    "updates": resolution.get("updates", []),
+                    "dice": dice_results
+                }
                 
-                # Add dice results to the resolution for display
-                resolution["dice"] = dice_results
+                # If there were aura updates, add them to the result
+                if aura_updates and len(aura_updates) > 0:
+                    # Add aura information to the result
+                    result["aura_updates"] = aura_updates
+                    
+                    # Ensure the narrative mentions aura effects if they aren't already mentioned
+                    aura_narrative = ""
+                    for update in aura_updates:
+                        source = update.get("source", "Unknown")
+                        target = update.get("target", "Unknown")
+                        effect = update.get("effect", "Unknown effect")
+                        aura_name = update.get("aura", "unnamed aura")
+                        
+                        # Create a brief description if not already in narrative
+                        if source not in result["narrative"] or aura_name not in result["narrative"]:
+                            aura_narrative += f"{source}'s {aura_name} affects {target}, causing {effect}. "
+                    
+                    # Only prepend aura narrative if it's not already mentioned
+                    if aura_narrative and "aura" not in result["narrative"].lower():
+                        result["narrative"] = f"{aura_narrative}\n\n{result['narrative']}"
                 
                 # 7. Update action economy based on the decision
                 if "action_type" in decision:
@@ -850,28 +1034,21 @@ class CombatResolver(QObject):
                     if "legendary_action_cost" in decision:
                         result_action_economy["legendary_action_cost"] = decision["legendary_action_cost"]
                 
-                # Create the final result including action economy info
-                result = {
-                    "action": action,
-                    "narrative": resolution["narrative"],  # The LLM's narrative response
-                    "dice": dice_results,
-                    "updates": resolution.get("updates", [])  # Include any HP/status updates from resolution
-                }
-                
-                # Add action economy info if available
-                if "action_type" in decision:
+                    # Add action economy info to the result
                     result["action_economy"] = result_action_economy
                 
                 return result
-                
             except Exception as e:
                 print(f"[CombatResolver] Error processing turn resolution: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                
                 # Return a minimal valid result
                 return {
                     "action": action,
-                    "narrative": f"The {active_combatant.get('name', 'combatant')} acted, but the details are unclear.",
-                    "dice": dice_results,
-                    "updates": []
+                    "narrative": f"The {active_combatant.get('name', 'combatant')} takes an action, but a technical issue occurs.",
+                    "updates": [],
+                    "dice": dice_results
                 }
                 
         except Exception as e:
@@ -911,302 +1088,230 @@ class CombatResolver(QObject):
         # Get available actions
         available_actions = ActionEconomyManager.check_available_actions(active)
 
+        # Format active combatant's name and position
+        active_name = active.get('name', 'Unknown')
+        
+        # Format nearby combatants
+        nearby = self._get_nearby_combatants(active, combatants)
+        nearby_str = self._format_nearby_combatants(nearby)
+        
+        # Get and format conditions affecting the active combatant
+        condition_str = self._format_conditions(active)
+        
+        # Get active auras affecting the combatant
+        active_auras = self._get_active_auras(active, combatants)
+        active_auras_str = self._format_active_auras(active_auras)
+        num_auras = len(active_auras)
+        print(f"[CombatResolver] Found {num_auras} active auras affecting {active_name}")
+        
         prompt = f"""
-You are the combat AI for a D&D 5e game, serving as the tactical decision-maker.
+You are the tactical combat AI for a D&D 5e game. You decide actions for {active_name}.
 
-# CURRENT COMBAT STATE AT START OF TURN
-== Round {round_num} ==
+# COMBAT SITUATION
+Round: {round_num}
+Active Combatant: {active_name}
 
-"""
-        # Add a clear summary of all combatants with their CURRENT HP values
-        prompt += "CURRENT HP STATUS OF ALL COMBATANTS:\n"
-        for i, c in enumerate(combatants):
-            name = c.get('name', 'Unknown')
-            hp = c.get('hp', 0)
-            max_hp = c.get('max_hp', hp)
-            status = c.get('status', 'OK')
-            type_str = "(Active)" if i == active_idx else f"({c.get('type', 'unknown')})"
-            prompt += f"- {name} {type_str}: HP {hp}/{max_hp}, Status: {status}\n"
-            
-        prompt += f"""
-# ACTIVE COMBATANT DETAILS
-Name: {active.get('name', 'Unknown')}
+# {active_name.upper()} DETAILS
 HP: {active.get('hp', 0)}/{active.get('max_hp', active.get('hp', 0))}
 AC: {active.get('ac', 10)}
 Type: {active.get('type', 'Unknown')}
 Status: {active.get('status', 'OK')}
 
-Abilities: {active.get('abilities', 'Standard abilities')}
-Skills: {active.get('skills', 'Standard skills')}
-Equipment: {active.get('equipment', 'Standard equipment')}
+# AVAILABLE ACTIONS
+{active_name} has ALL of the following available this turn:
+- A standard ACTION
+- A BONUS ACTION
+- MOVEMENT up to {active.get('speed', 30)} feet
+- A REACTION (if triggered)
 
-# ACTION ECONOMY
-Available actions: {'Yes' if available_actions.get('action', False) else 'No'}
-Available bonus actions: {'Yes' if available_actions.get('bonus_action', False) else 'No'}
-Available reactions: {'Yes' if available_actions.get('reaction', False) else 'No'}
-Remaining movement: {available_actions.get('movement', 0)} feet
+# NEARBY COMBATANTS
+{nearby_str}
+
+# CURRENT CONDITIONS
+{condition_str}
 """
-        if available_actions.get('legendary_actions', 0) > 0:
-            prompt += f"Legendary actions available: {available_actions.get('legendary_actions', 0)}\n"
+        
+        # Add aura information if present
+        if active_auras:
+            prompt += f"""
+# ACTIVE AURAS AFFECTING {active_name}
+{active_auras_str}
+"""
 
-        # Add information about limited-use abilities if available
-        if "limited_use" in active:
-            prompt += "\n# LIMITED-USE ABILITIES\n"
-            if isinstance(active.get("limited_use"), dict):
-                for ability, state in active.get("limited_use", {}).items():
-                    prompt += f"- {ability}: {state}\n"
-            else:
-                prompt += "Limited-use abilities information is not in the expected format.\n"
-                
-        # Show spell‑slot information if present (expects a dictionary mapping
-        # slot level -> remaining/total, e.g., {"1": "2/4", "2": "1/3"}).
-        if "spell_slots" in active and isinstance(active["spell_slots"], dict):
-            prompt += "\n# SPELL SLOTS REMAINING (level : remaining/total)\n"
-            for lvl, slot_state in active["spell_slots"].items():
-                prompt += f"- Level {lvl}: {slot_state}\n"
-                
-        # Add other combatants
-        prompt += "\n# OTHER COMBATANTS\n"
-        for i, c in enumerate(combatants):
-            if i == active_idx:
-                continue
-            prompt += f"- {c.get('name', 'Unknown')} (HP: {c.get('hp', 0)}/{c.get('max_hp', c.get('hp', 0))}, AC: {c.get('ac', 10)}, Status: {c.get('status', 'OK')})\n"
-            
-        # Add instructions for the LLM
-        prompt += """
+        prompt += f"""
 # YOUR TASK
-Decide the most appropriate action for the active combatant this turn. Consider:
-1. Current HP and status - use EXACTLY the HP values shown above
-2. Tactical position and opponent state
-3. Available abilities, especially limited-use ones
-4. D&D 5e rules for actions, bonus actions, and movement
-5. Make smart, consistent tactical decisions as a competent combatant would
-6. CRITICAL: Use the EXACT HP values listed at the start of this prompt - do NOT assume full health or reset HP values
-7. Automatic abilities that trigger on death or at the start/end of the turn (e.g. **Death Burst**, **Death Throes**, **Relentless**, etc.) MUST be resolved when their trigger condition is met.  If a combatant with such a trait is reduced to 0 HP during someone else's turn, include a description of the triggered effect and add any damage/status updates in the "updates" array.
-8. Abilities that show a **Recharge X‑Y** mechanic must track availability.  If you use such an ability this turn, add an entry in "updates" to set it to "expended" and include the recharge roll at the start of the creature's following turns.
-9. Limited‑use abilities (per short/long rest, per day, etc.) must decrement their remaining uses.
-10. When casting spells, you must expend an appropriate spell slot if any remain.  If no slots remain for that level you CANNOT cast a spell that requires it.
-11. If an action forces saving throws (e.g., Fireball, Breath Weapon, Turn Undead), YOU must include a dice request for EACH target's saving throw with the DC in the purpose, e.g., {"expression":"1d20+2","purpose":"Goblin Dex save vs DC 13"}.
-12. ADVANTAGE AND DISADVANTAGE: Check combatant status for conditions that affect attack rolls. Apply advantage or disadvantage as follows:
-   - If a combatant has advantage, request TWO separate d20 rolls in dice_requests and note "with advantage" in the purpose
-   - If a combatant has disadvantage, request TWO separate d20 rolls in dice_requests and note "with disadvantage" in the purpose
-   - Common conditions that grant ADVANTAGE: invisible attacker, prone target (for melee attacks), stunned/paralyzed target, target can't see attacker
-   - Common conditions that impose DISADVANTAGE: prone attacker (for ranged attacks), attacker can't see target, attacker is restrained/poisoned/frightened
-13. ACTION ECONOMY: Each turn a character can use:
-   - One action (attack, cast a spell, use an item, etc.)
-   - One bonus action (if available from abilities or spells)
-   - Free movement up to their speed
-   - One reaction per round (not on their turn, triggered by specific circumstances)
-   - One free object interaction (draw a weapon, open a door, etc.)
+Decide the most appropriate action for {active_name} this turn. Consider:
+1. Tactical position
+2. HP status of all combatants
+3. Available abilities and resources
+4. Known enemy capabilities
+5. Team strategy (focus fire, crowd control, etc.)
 
-# CONDITIONS AND ADVANTAGE/DISADVANTAGE REFERENCE
-- Blinded: Cannot see, has disadvantage on attacks, grants advantage to attackers
-- Frightened: Has disadvantage on attacks while source of fear is in sight
-- Invisible: Has advantage on attacks, attacks against it have disadvantage
-- Paralyzed: Grants advantage on attacks, auto-crits if attacker within 5 feet
-- Poisoned: Has disadvantage on attacks and ability checks
-- Prone: Has disadvantage on attacks, grants advantage on attacks against it within 5 feet, grants disadvantage on ranged attacks against it
-- Restrained: Has disadvantage on attacks, grants advantage to attackers
-- Stunned: Grants advantage on attacks
-- Unconscious: Grants advantage on attacks, auto-crits if attacker within 5 feet
+IMPORTANT: {active_name} has FULL ACTIONS available this turn, including standard action, bonus action, and full movement. DO NOT claim the combatant has no actions or movement remaining.
 
-# RESPONSE FORMAT
-Respond with a JSON object containing these fields:
-- "action": A detailed description of what the combatant does, including targets and tactics
-- "dice_requests": An array of dice expressions needed to resolve the action, each with:
-  * "expression": The dice expression (e.g., "1d20+5")
-  * "purpose": What this roll is for (e.g., "Attack roll against Goblin")
-- "action_type": (Optional) The type of action being used ("action", "bonus_action", "reaction", "movement", etc.)
-- "movement_cost": (Optional) If movement is used, how many feet are being moved
-
-Example response for a regular attack:
-{
-  "action": "The Hobgoblin Captain makes a multiattack with its longsword and shield against the Fighter, focusing on dealing damage while maintaining defensive positioning.",
+Your response should be a JSON object containing:
+{{
+  "action": "A detailed description of what the active combatant does, including any choices that affect the game mechanics",
   "dice_requests": [
-    {"expression": "1d20+5", "purpose": "Longsword attack roll"},
-    {"expression": "1d8+3", "purpose": "Longsword damage if hit"},
-    {"expression": "1d20+5", "purpose": "Shield bash attack roll"},
-    {"expression": "1d4+3", "purpose": "Shield bash damage if hit"}
+    {{"expression": "1d20+5", "purpose": "Attack roll"}},
+    {{"expression": "2d6+3", "purpose": "Damage roll"}}
   ],
-  "action_type": "action"
-}
+  "action_type": "action/bonus_action/movement/etc.",
+  "target": "The target of the action, if applicable"
+}}
 
-Example response for an attack with movement:
-{
-  "action": "The Goblin moves 30 feet to get into range and attacks the Fighter with its shortsword.",
-  "dice_requests": [
-    {"expression": "1d20+4", "purpose": "Shortsword attack roll"},
-    {"expression": "1d6+2", "purpose": "Shortsword damage if hit"}
-  ],
-  "action_type": "action",
-  "movement_cost": 30
-}
+ACTION: Describe the action and any choices clearly. Be specific about ranges, area effects, etc.
+DICE_REQUESTS: List any dice rolls needed to resolve the action with precise expressions and modifiers.
+ACTION_TYPE: 'action', 'bonus_action', 'movement', 'reaction', 'legendary_action', or 'none'
+TARGET: The target of the action, if applicable. Use exact combatant names, not generic descriptions.
 
-Your response MUST be valid JSON that can be parsed, with no extra text before or after.
+RESPONSE FORMAT EXAMPLES:
+For attacks:
+{{"action": "The Orc Captain attacks the nearest enemy with its greataxe.", "dice_requests": [{{"expression": "1d20+5", "purpose": "Attack roll"}}, {{"expression": "1d12+3", "purpose": "Damage roll"}}], "action_type": "action", "target": "Fighter"}}
+
+For spells:
+{{"action": "The Wizard casts Fireball centered on the group of goblins.", "dice_requests": [{{"expression": "8d6", "purpose": "Fire damage (DEX save DC 15 for half)"}}], "action_type": "action", "target": "Enemy group"}}
+
+For movement:
+{{"action": "The Rogue moves 30 feet to get behind the ogre for a flanking position.", "dice_requests": [], "action_type": "movement", "movement_cost": 30}}
+
+For taking no action:
+{{"action": "The Goblin is frightened and stunned, unable to act this turn.", "dice_requests": [], "action_type": "none"}}
 """
         return prompt
 
-    def _create_resolution_prompt(self, combatants, active_idx, round_num, action, dice_results):
+    def _create_resolution_prompt(self, combatants, active_idx, round_num, action, dice_results, aura_updates=None):
         """
-        Create a prompt for the LLM to resolve the action based on dice results.
+        Create a detailed prompt for the LLM to resolve combat.
         
         Args:
             combatants: List of all combatants
             active_idx: Index of active combatant
             round_num: Current round number
-            action: Action description from decision phase
-            dice_results: Results of all dice rolls
+            action: Action description
+            dice_results: List of dice roll results
+            aura_updates: List of aura effects applied at the start of the turn
             
         Returns:
-            Prompt string
+            Formatted prompt for the LLM
         """
         try:
-            # Defensive check for valid active_idx
-            if active_idx < 0 or active_idx >= len(combatants):
-                print(f"[CombatResolver] Warning: active_idx {active_idx} out of range in _create_resolution_prompt")
-                active_idx = 0  # Use the first combatant as fallback
+            # Check for valid indices
+            if not combatants or active_idx >= len(combatants):
+                print(f"[CombatResolver] Invalid combatants or index: {active_idx}, {len(combatants) if combatants else 0}")
+                return ""
                 
             active = combatants[active_idx]
             
-            # Debug: Log that we're creating a resolution prompt with current HP values
-            print(f"\n[CombatResolver] DEBUG: Creating resolution prompt with these HP values:")
-            print(f"[CombatResolver] DEBUG: Active combatant {active.get('name')}: HP {active.get('hp', 0)}/{active.get('max_hp', active.get('hp', 0))}")
+            # Debug: Log all combatant HP values for debugging
+            print(f"\n[CombatResolver] DEBUG: CURRENT HP VALUES IN PROMPT CREATION:")
             for i, c in enumerate(combatants):
-                if i != active_idx:
-                    print(f"[CombatResolver] DEBUG: Other combatant {c.get('name')}: HP {c.get('hp', 0)}/{c.get('max_hp', c.get('hp', 0))}")
+                print(f"[CombatResolver] DEBUG: Combatant {i}: {c.get('name')} - HP: {c.get('hp', 0)}/{c.get('max_hp', c.get('hp', 0))}")
             
-            prompt = f"""
-You are the combat AI for a D&D 5e game, serving as the battle narrator and rules arbiter.
-
-# CURRENT COMBAT STATE AT START OF TURN
-== Round {round_num} ==
-
-"""
-            # Add a clear summary of all combatants with their CURRENT HP values
-            prompt += "CURRENT HP STATUS OF ALL COMBATANTS:\n"
-            for i, c in enumerate(combatants):
-                name = c.get('name', 'Unknown')
-                hp = c.get('hp', 0)
-                max_hp = c.get('max_hp', hp)
-                status = c.get('status', 'OK')
-                type_str = "(Active)" if i == active_idx else f"({c.get('type', 'unknown')})"
-                prompt += f"- {name} {type_str}: HP {hp}/{max_hp}, Status: {status}\n"
+            # Format active combatant information
+            active_name = active.get('name', 'Unknown')
+            
+            # Format dice results for the prompt
+            dice_str = ""
+            for dice in dice_results:
+                expr = dice.get("expression", "")
+                result = dice.get("result", "")
+                purpose = dice.get("purpose", "")
                 
+                dice_str += f"{purpose}: {expr} = {result}\n"
+            
+            # Format aura updates if provided
+            aura_effects_str = ""
+            if aura_updates and len(aura_updates) > 0:
+                aura_effects_str = "# AURA EFFECTS APPLIED\n"
+                for update in aura_updates:
+                    source = update.get("source", "Unknown")
+                    target = update.get("target", "Unknown")
+                    effect = update.get("effect", "Unknown effect")
+                    aura_name = update.get("aura", "unnamed aura")
+                    
+                    # Add HP information if available for damage auras
+                    if "hp_before" in update and "hp_after" in update:
+                        hp_before = update.get("hp_before", 0)
+                        hp_after = update.get("hp_after", 0)
+                        aura_effects_str += f"{source}'s {aura_name} affected {target}, causing {effect}. HP: {hp_before} → {hp_after}\n"
+                    else:
+                        aura_effects_str += f"{source}'s {aura_name} affected {target}, causing {effect}.\n"
+                aura_effects_str += "\n"
+            
+            # Create a detailed prompt
+            prompt = f"""
+You are the combat AI for a D&D 5e game. Resolve the current action and create a JSON response with a narrative description and updates to any combatants.
+
+# COMBAT STATE 
+Round: {round_num}
+
+# COMBATANTS
+"""
+            
+            # Add each combatant with proper indentation
+            for combatant in combatants:
+                prompt += f"""
+{combatant.get('name', 'Unknown')}: 
+- HP: {combatant.get('hp', 0)}/{combatant.get('max_hp', combatant.get('hp', 0))}
+- AC: {combatant.get('ac', 10)}
+- Type: {combatant.get('type', 'Unknown')}
+- Status: {combatant.get('status', 'OK')}
+"""
+
+            # Add active combatant with proper indentation
             prompt += f"""
-# ACTIVE COMBATANT DETAILS
+# ACTIVE COMBATANT
 Name: {active.get('name', 'Unknown')}
 HP: {active.get('hp', 0)}/{active.get('max_hp', active.get('hp', 0))}
 AC: {active.get('ac', 10)}
 Type: {active.get('type', 'Unknown')}
 Status: {active.get('status', 'OK')}
 
-# ACTION TAKEN
+"""
+
+            # Add aura information to the prompt
+            active_auras = self._get_active_auras(active, combatants)
+            if active_auras:
+                active_name = active.get('name', 'Unknown')
+                prompt += f"""# ACTIVE AURAS AFFECTING {active_name}
+{self._format_active_auras(active_auras)}
+
+"""
+
+            # Include aura effects that were applied at turn start
+            if aura_effects_str:
+                prompt += aura_effects_str
+
+            prompt += f"""# INTENDED ACTION
 {action}
 
 # DICE RESULTS
-"""
-            # Add all dice results
-            if dice_results:
-                for roll in dice_results:
-                    # Check if roll is a valid dictionary with required keys
-                    if isinstance(roll, dict) and 'purpose' in roll and 'expression' in roll and 'result' in roll:
-                        prompt += f"- {roll['purpose']}: {roll['expression']} = {roll['result']}\n"
-                    else:
-                        # Handle invalid roll format
-                        prompt += f"- Invalid roll format: {roll}\n"
-            else:
-                prompt += "No dice were rolled for this action.\n"
-                
-            # Add other combatants
-            prompt += "\n# OTHER COMBATANTS\n"
-            for i, c in enumerate(combatants):
-                if i == active_idx:
-                    continue
-                prompt += f"- {c.get('name', 'Unknown')} (HP: {c.get('hp', 0)}/{c.get('max_hp', c.get('hp', 0))}, AC: {c.get('ac', 10)}, Status: {c.get('status', 'OK')})\n"
-                
-            # Add limited-use abilities if any
-            if "limited_use" in active:
-                prompt += "\n# LIMITED-USE ABILITIES\n"
-                if isinstance(active.get("limited_use"), dict):
-                    for ability, state in active.get("limited_use", {}).items():
-                        prompt += f"- {ability}: {state}\n"
-                else:
-                    prompt += "Limited-use abilities information is not in the expected format.\n"
+{dice_str}
 
-            # Show spell‑slot info if present
-            if "spell_slots" in active and isinstance(active["spell_slots"], dict):
-                prompt += "\n# SPELL SLOTS REMAINING (level : remaining/total)\n"
-                for lvl, slot_state in active["spell_slots"].items():
-                    prompt += f"- Level {lvl}: {slot_state}\n"
+# INSTRUCTIONS
+1. Create a vivid, exciting narrative of what happens based on the action and dice results
+2. If the action was an attack, determine if it hits based on the attack roll vs. target's AC
+3. If successful, apply any damage or effects based on the dice results
+4. Consider any special abilities, conditions, or ongoing effects
+5. CRUCIAL: Track final HP values accurately!
+6. CRITICALLY IMPORTANT: ONLY use the combatant names exactly as listed above. Do NOT invent new names or refer to generic classes like "Fighter" or "Rogue". Only reference the actual names shown in the COMBATANTS section.
 
-            # Add instructions for resolution
-            prompt += """
-# YOUR TASK
-Resolve the outcome of the action based on the dice results. Follow standard D&D 5e rules:
-1. Compare attack rolls to AC to determine hits
-2. For attack rolls of 20, it's a critical hit (double damage dice)
-3. For attack rolls of 1, it's an automatic miss
-4. Apply damage to appropriate targets when attacks hit
-5. Update status effects as needed
-6. Track usage of limited-use abilities
-7. CRITICAL: Use the EXACT current HP values listed at the start of this prompt when calculating remaining HP
-8. ADVANTAGE AND DISADVANTAGE: For rolls marked with advantage, use the HIGHER of the two d20 rolls. For rolls with disadvantage, use the LOWER of the two d20 rolls.
+Your response MUST be in JSON format with these fields:
+1. "narrative": A vivid description of what happened
+2. "updates": Array of objects containing changes to combatants (name, hp, status)
 
-# HP AND CONDITION RULES
-- When a monster reaches 0 HP, it dies and is removed from combat
-- When a character (PC) reaches 0 HP, they become unconscious and must make death saves
-- Each failed death save brings a character closer to death
-- If a character has 3 failed death saves, they die
-- If a character has 3 successful death saves, they stabilize
-
-# ADDITIONAL RULES FOR THIS PHASE
-1. If during this resolution any combatant is reduced to 0 HP **and** they possess an on‑death or death burst style trait, immediately resolve that effect (add damage, saving throws, conditions as appropriate) within the same "updates" list.
-2. For each Recharge ability you use this turn, include a field "recharge_roll" in the corresponding update like {"ability":"Fire Breath","recharge_roll":"d6 roll result"} so the tracker can mark it available again on a 5‑6 (or stated value).
-3. The "updates" array must fully capture changed HP, status conditions, frightened/stunned flags, limited‑use counters, and recharge state so that the UI can stay in sync.
-4. If a spell was cast, include an update to the caster's spell slot tracker in the form {"name":"Wizard","spell_slots":{"6":"0/1"}} (example shows 6‑level slot expended).
-5. Whenever saving throws are required, ensure the corresponding dice results are listed in the "dice" array you receive and apply half/zero damage as appropriate based on the DC and roll.
-
-# CONDITIONS AND ADVANTAGE/DISADVANTAGE REFERENCE
-- Blinded: Cannot see, has disadvantage on attacks, grants advantage to attackers
-- Frightened: Has disadvantage on attacks while source of fear is in sight
-- Invisible: Has advantage on attacks, attacks against it have disadvantage
-- Paralyzed: Grants advantage on attacks, auto-crits if attacker within 5 feet
-- Poisoned: Has disadvantage on attacks and ability checks
-- Prone: Has disadvantage on attacks, grants advantage on attacks against it within 5 feet, grants disadvantage on ranged attacks against it
-- Restrained: Has disadvantage on attacks, grants advantage to attackers
-- Stunned: Grants advantage on attacks
-- Unconscious: Grants advantage on attacks, auto-crits if attacker within 5 feet
-
-# RESPONSE FORMAT
-Respond with a JSON object containing these fields:
-- "narrative": An engaging, descriptive account of what happened including current HP values
-- "updates": An array of combatant updates, each with:
-  * "name": The combatant's name
-  * "hp": The new HP value (if changed) - ALWAYS USE INTEGER VALUES ONLY, not text descriptions or relative changes like "reduce by X"
-  * "status": New status (if changed)
-  * "limited_use": Updates to limited-use abilities (if used)
-  * "death_saves": For unconscious characters, include status of death saves
-
-EXTREMELY IMPORTANT:
-1. ONLY include combatants in the "updates" array if they were actually affected by an action (took damage, healed, etc.)
-2. Do NOT include combatants in "updates" just because they were mentioned in the narrative
-3. DO NOT update HP values for combatants that were not directly affected
-4. For example, if a monster attacks a character, ONLY include the character (target) in the updates, NOT the monster
-5. USE EXACTLY THE CURRENT HP VALUES listed above - subtract damage from or add healing to these values
-
-Example response:
-{
-  "narrative": "The Hobgoblin Captain's longsword slashes across the Fighter's armor, finding a gap and drawing blood (8 damage, reducing Fighter to 24/32 HP). The fighter grimaces but remains ready for battle. The follow-up shield bash misses as the Fighter deftly steps aside.",
+Example:
+{{
+  "narrative": "Fighter slashes at the Hobgoblin Captain with his longsword. The blade connects with a solid hit, slicing through the hobgoblin's armor and drawing blood. The hobgoblin staggers but remains standing, now visibly wounded. (AC 15 vs. roll 17, hit for 8 damage)",
   "updates": [
-    {
-      "name": "Fighter",
+    {{
+      "name": "Hobgoblin Captain",
       "hp": 24,
       "status": "Wounded"
-    }
+    }}
   ]
-}
-
-DO NOT include "Hobgoblin Captain" in the updates array since it did not take damage or have any status changes.
+}}
 
 IMPORTANT: 
 1. Always include CURRENT HP values in your narrative to help players track the battle state.
@@ -1216,6 +1321,7 @@ IMPORTANT:
 5. A roll of 15 or higher almost always hits average AC targets (around 14-16).
 6. CRITICAL: Use the exact HP values provided at the start of this prompt. DO NOT RESET TO FULL HP or make up values.
 7. Calculate damage from the CURRENT HP values shown at the start of this prompt, not from max HP.
+8. EXTREMELY IMPORTANT: Only update combatants that actually exist in this combat. Use EXACT names as shown above, do not make up new combatants like "Goblin", "Fighter", etc.
 """
             return prompt
         except Exception as e:
@@ -1426,3 +1532,531 @@ Return ONLY the JSON object with no other text.
         # If all else fails, return the current HP or 0 if that's None too
         print(f"[CombatResolver] Could not parse HP update '{hp_update}' for {target_name}, using current HP {current_hp or 0}")
         return current_hp if current_hp is not None else 0 
+
+    def _process_auras(self, active_combatant, all_combatants):
+        """
+        Process aura effects at the start of a combatant's turn
+        
+        Args:
+            active_combatant: The combatant whose turn is starting
+            all_combatants: List of all combatants in the encounter
+            
+        Returns:
+            List of aura effect updates
+        """
+        updates = []
+        
+        # Ensure each combatant has auras detected and processed
+        for combatant in all_combatants:
+            # Add auras if not already present
+            if "auras" not in combatant:
+                self._add_auras_from_traits(combatant)
+        
+        # Check for aura effects from all combatants
+        for c in all_combatants:
+            if "auras" not in c:
+                continue
+                
+            for aura_name, aura in c.get("auras", {}).items():
+                # Skip self-auras that don't affect others (unless they're beneficial)
+                if c.get("name") == active_combatant.get("name") and not aura.get("affects_self", False):
+                    continue
+                    
+                # Skip auras that don't affect allies/enemies appropriately
+                if aura.get("affects", "enemies") == "enemies" and c.get("type") == active_combatant.get("type"):
+                    continue
+                if aura.get("affects", "enemies") == "allies" and c.get("type") != active_combatant.get("type"):
+                    continue
+                
+                # Check if this combatant is affected by the aura based on distance
+                range_feet = aura.get("range", 10)  # Default 10 ft range
+                distance = self._get_distance_between(c, active_combatant)
+                
+                if distance <= range_feet:
+                    effect = aura.get("effect", {})
+                    effect_type = effect.get("type", "damage")
+                    
+                    # Process based on effect type
+                    if effect_type == "damage":
+                        # Get dice expression or default damage amount
+                        damage_expr = effect.get("expression", "1d6")
+                        
+                        # Roll damage using random if dice_roller not available
+                        try:
+                            import re, random
+                            # Simple dice parser for expressions like "2d6+3"
+                            dice_match = re.match(r'(\d+)d(\d+)(?:\+(\d+))?', damage_expr)
+                            if dice_match:
+                                num_dice = int(dice_match.group(1))
+                                dice_size = int(dice_match.group(2))
+                                modifier = int(dice_match.group(3) or 0)
+                                damage = sum(random.randint(1, dice_size) for _ in range(num_dice)) + modifier
+                            else:
+                                # Default to fixed damage if expression parsing fails
+                                damage = int(damage_expr) if damage_expr.isdigit() else 1
+                        except Exception as e:
+                            print(f"[CombatResolver] Error rolling aura damage: {str(e)}")
+                            damage = 1  # Fallback to minimal damage
+                        
+                        # Apply damage to active combatant
+                        damage_type = effect.get("damage_type", "fire")
+                        old_hp = active_combatant.get("hp", 0)
+                        active_combatant["hp"] = max(0, old_hp - damage)
+                        
+                        # Record the update
+                        updates.append({
+                            "source": c.get("name", "Unknown"),
+                            "source_type": c.get("type", "unknown"),
+                            "aura": aura_name,
+                            "target": active_combatant.get("name", "Unknown"),
+                            "effect": f"{damage} {damage_type} damage",
+                            "hp_before": old_hp,
+                            "hp_after": active_combatant.get("hp", 0)
+                        })
+                        
+                    elif effect_type == "condition":
+                        # Add condition to active combatant
+                        condition = effect.get("condition", "")
+                        if condition:
+                            if "conditions" not in active_combatant:
+                                active_combatant["conditions"] = {}
+                            active_combatant["conditions"][condition] = {
+                                "source": f"{c.get('name', 'Unknown')}'s {aura_name}",
+                                "duration": effect.get("duration", 1)
+                            }
+                            
+                            # Record the update
+                            updates.append({
+                                "source": c.get("name", "Unknown"),
+                                "source_type": c.get("type", "unknown"), 
+                                "aura": aura_name,
+                                "target": active_combatant.get("name", "Unknown"),
+                                "effect": f"Condition: {condition}"
+                            })
+        
+        return updates
+    
+    def _get_distance_between(self, combatant1, combatant2):
+        """Get distance between two combatants in feet"""
+        # Check if distances are explicitly defined in position data
+        if "position" in combatant1 and "distance_to" in combatant1["position"]:
+            target_name = combatant2.get("name", "")
+            if target_name in combatant1["position"]["distance_to"]:
+                return combatant1["position"]["distance_to"][target_name]
+                
+        # Default distance if not explicitly defined
+        # 5ft for melee range, otherwise large distance (effectively out of range)
+        if combatant1.get("type") != combatant2.get("type"):
+            return 5  # Assume enemies are in melee range by default
+        return 1  # Assume allies are very close by default
+    
+    def _add_auras_from_traits(self, combatant):
+        """
+        Analyze combatant traits and detect auras using pattern matching or LLM
+        
+        Args:
+            combatant: The combatant to analyze for auras
+            
+        Returns:
+            Updated combatant with auras field
+        """
+        # Initialize auras dict if not present
+        if "auras" not in combatant:
+            combatant["auras"] = {}
+            
+        # Skip if already processed
+        if combatant.get("auras_processed", False):
+            return combatant
+            
+        # Special handling for known monsters with auras
+        name = combatant.get("name", "").lower()
+        
+        # Specific handling for Infernal Tyrant
+        if "infernal tyrant" in name or "demon" in name or "devil" in name:
+            print(f"[CombatResolver] Adding fire aura to {combatant.get('name', 'Unknown')} based on name")
+            combatant["auras"]["fire aura"] = {
+                "range": 10,
+                "effect": {
+                    "type": "damage", 
+                    "expression": "1d6", 
+                    "damage_type": "fire"
+                },
+                "affects": "enemies",
+                "affects_self": False,
+                "source": "infernal_nature"
+            }
+            
+        # Special handling for Magma Mephit
+        if "magma" in name or "mephit" in name or "fire elemental" in name:
+            print(f"[CombatResolver] Adding fire aura to {combatant.get('name', 'Unknown')} based on name")
+            combatant["auras"]["heat aura"] = {
+                "range": 5,
+                "effect": {
+                    "type": "damage", 
+                    "expression": "1d4", 
+                    "damage_type": "fire"
+                },
+                "affects": "enemies",
+                "affects_self": False,
+                "source": "elemental_nature"
+            }
+            
+        # Try pattern matching for common aura types
+        traits = combatant.get("traits", {}) or {}
+        actions = combatant.get("actions", {}) or {}
+        
+        # Check for fire aura in traits
+        common_auras = {
+            "fire aura": {
+                "keywords": ["fire aura", "aura of flame", "burning aura", "heat aura"],
+                "range": 10,
+                "effect": {"type": "damage", "expression": "1d6", "damage_type": "fire"},
+                "affects": "enemies"
+            },
+            "fear aura": {
+                "keywords": ["fear aura", "frightful presence", "aura of fear"],
+                "range": 30,
+                "effect": {"type": "condition", "condition": "frightened", "duration": 1},
+                "affects": "enemies"
+            },
+            "healing aura": {
+                "keywords": ["healing aura", "regenerative aura", "aura of life"],
+                "range": 15,
+                "effect": {"type": "healing", "expression": "1d4", "healing_type": "regeneration"},
+                "affects": "allies",
+                "affects_self": True
+            },
+            "protection aura": {
+                "keywords": ["protection aura", "defensive aura", "aura of warding"],
+                "range": 10,
+                "effect": {"type": "resistance", "damage_types": ["fire", "cold", "lightning"]},
+                "affects": "allies",
+                "affects_self": True
+            }
+        }
+        
+        # Check trait descriptions for aura keywords
+        for trait_name, trait_desc in traits.items():
+            if not trait_desc:
+                continue
+                
+            trait_text = trait_desc.lower() if isinstance(trait_desc, str) else str(trait_desc).lower()
+            
+            # Check each common aura type
+            for aura_type, aura_info in common_auras.items():
+                if any(keyword in trait_text for keyword in aura_info["keywords"]):
+                    # Found a matching aura pattern in traits
+                    aura_name = trait_name
+                    combatant["auras"][aura_name] = {
+                        "range": aura_info["range"],
+                        "effect": aura_info["effect"],
+                        "affects": aura_info["affects"],
+                        "affects_self": aura_info.get("affects_self", False),
+                        "source": "trait"
+                    }
+                    print(f"[CombatResolver] Detected {aura_type} in {combatant.get('name', 'Unknown')}'s traits")
+        
+        # If no auras found through pattern matching, use LLM to detect them
+        if not combatant["auras"]:
+            # Only use LLM detection if enemy has traits but no detected auras
+            if traits or "Monster" in combatant.get("type", ""):
+                combatant = self._detect_auras_with_llm(combatant)
+                
+        # Mark as processed to avoid redundant checks
+        combatant["auras_processed"] = True
+        return combatant
+        
+    def _detect_auras_with_llm(self, combatant, default_range=10):
+        """
+        Use LLM to analyze a combatant's traits and detect potential auras
+        
+        Args:
+            combatant: The combatant to analyze for auras
+            default_range: Default aura range if not specified
+            
+        Returns:
+            Updated combatant with detected auras
+        """
+        # Skip if no LLM service available
+        if not hasattr(self, "llm_service"):
+            return combatant
+            
+        # Prepare information about the combatant for analysis
+        combatant_info = {
+            "name": combatant.get("name", "Unknown"),
+            "type": combatant.get("type", ""),
+            "traits": combatant.get("traits", {}),
+            "actions": combatant.get("actions", {}),
+            "abilities": combatant.get("abilities", {})
+        }
+        
+        # Create an analysis prompt for the LLM
+        prompt = f"""
+You are a D&D 5e rules expert. Analyze this creature's information and identify any aura effects it might have:
+
+{json.dumps(combatant_info, indent=2)}
+
+Only detect auras - magical or supernatural effects that automatically affect creatures near the source.
+Examples include:
+- Fire auras that deal damage to nearby creatures
+- Fear auras that frighten nearby enemies
+- Healing auras that restore hit points to allies
+- Protection auras that provide resistances or bonuses
+
+Respond with a JSON object containing any detected auras in the following format:
+{{
+  "has_auras": true/false,
+  "auras": {{
+    "aura_name": {{
+      "range": 10,
+      "effect": {{
+        "type": "damage/condition/healing/resistance",
+        "expression": "dice expression for damage/healing",
+        "damage_type": "type of damage",
+        "condition": "condition name",
+        "duration": duration in rounds
+      }},
+      "affects": "enemies/allies/all",
+      "affects_self": true/false
+    }}
+  }}
+}}
+
+If no auras are detected, return:
+{{
+  "has_auras": false,
+  "auras": {{}}
+}}
+"""
+
+        try:
+            # Request analysis from LLM
+            available_models = self.llm_service.get_available_models()
+            model_id = available_models[0]["id"] if available_models else None
+            
+            if not model_id:
+                print(f"[CombatResolver] No LLM models available for aura detection")
+                return combatant
+                
+            response = self.llm_service.generate_completion(
+                model=model_id,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=800
+            )
+            
+            # Parse the LLM response
+            if response:
+                # Extract JSON from response
+                json_match = re.search(r'\{[\s\S]*\}', response)
+                if json_match:
+                    result = json.loads(json_match.group(0))
+                    
+                    if result.get("has_auras", False) and result.get("auras"):
+                        # Add detected auras to the combatant
+                        for aura_name, aura_info in result["auras"].items():
+                            if not combatant.get("auras"):
+                                combatant["auras"] = {}
+                            
+                            # Ensure aura has required fields with defaults
+                            if "range" not in aura_info:
+                                aura_info["range"] = default_range
+                            if "affects" not in aura_info:
+                                aura_info["affects"] = "enemies"
+                            if "affects_self" not in aura_info:
+                                aura_info["affects_self"] = False
+                                
+                            # Add source information
+                            aura_info["source"] = "llm_detected"
+                            
+                            # Add to combatant's auras
+                            combatant["auras"][aura_name] = aura_info
+                            print(f"[CombatResolver] LLM detected aura '{aura_name}' for {combatant.get('name', 'Unknown')}")
+        
+        except Exception as e:
+            print(f"[CombatResolver] Error during LLM aura detection: {str(e)}")
+            import traceback
+            traceback.print_exc()
+        
+        return combatant 
+
+    def _get_active_auras(self, active_combatant, all_combatants):
+        """
+        Get a list of auras currently affecting a combatant
+        
+        Args:
+            active_combatant: The combatant to check for affecting auras
+            all_combatants: List of all combatants in the encounter
+            
+        Returns:
+            List of aura objects affecting the combatant
+        """
+        active_auras = []
+        
+        # Ensure auras have been detected on all combatants
+        for combatant in all_combatants:
+            if "auras" not in combatant:
+                self._add_auras_from_traits(combatant)
+        
+        # Check each combatant's auras
+        for c in all_combatants:
+            if "auras" not in c or not c.get("auras"):
+                continue
+                
+            for aura_name, aura in c.get("auras", {}).items():
+                # Skip self-auras that don't affect self
+                if c.get("name") == active_combatant.get("name") and not aura.get("affects_self", False):
+                    continue
+                    
+                # Skip auras that don't affect allies/enemies appropriately
+                if aura.get("affects", "enemies") == "enemies" and c.get("type") == active_combatant.get("type"):
+                    continue
+                if aura.get("affects", "enemies") == "allies" and c.get("type") != active_combatant.get("type"):
+                    continue
+                
+                # Check if this combatant is within the aura's range
+                range_feet = aura.get("range", 10)  # Default 10 ft range
+                distance = self._get_distance_between(c, active_combatant)
+                
+                if distance <= range_feet:
+                    active_auras.append({
+                        "name": aura_name,
+                        "source": c.get("name", "Unknown"),
+                        "range": range_feet,
+                        "effect": aura.get("effect", {}),
+                        "distance": distance
+                    })
+        
+        return active_auras
+    
+    def _format_active_auras(self, auras):
+        """
+        Format a list of active auras into a readable string
+        
+        Args:
+            auras: List of aura objects affecting a combatant
+            
+        Returns:
+            Formatted string describing the auras
+        """
+        if not auras:
+            return "None"
+            
+        aura_strings = []
+        for aura in auras:
+            effect = aura.get("effect", {})
+            effect_type = effect.get("type", "unknown")
+            source = aura.get("source", "Unknown")
+            name = aura.get("name", "unnamed aura")
+            distance = aura.get("distance", 0)
+            
+            effect_desc = ""
+            if effect_type == "damage":
+                damage_expr = effect.get("expression", "")
+                damage_type = effect.get("damage_type", "unspecified")
+                effect_desc = f"{damage_expr} {damage_type} damage"
+            elif effect_type == "condition":
+                condition = effect.get("condition", "")
+                effect_desc = f"applies {condition} condition"
+            elif effect_type == "healing":
+                healing_expr = effect.get("expression", "")
+                effect_desc = f"heals {healing_expr} per turn"
+            elif effect_type == "resistance":
+                damage_types = effect.get("damage_types", [])
+                types_str = ", ".join(damage_types)
+                effect_desc = f"grants resistance to {types_str}"
+                
+            aura_strings.append(f"{source}'s {name} ({distance}ft away) - {effect_desc}")
+            
+        return "\n".join(aura_strings)
+
+    def _get_nearby_combatants(self, active_combatant, all_combatants):
+        """
+        Get a list of nearby combatants for the active combatant
+        
+        Args:
+            active_combatant: The combatant to check for nearby combatants
+            all_combatants: List of all combatants in the encounter
+            
+        Returns:
+            List of nearby combatants
+        """
+        nearby = []
+        
+        # Check for nearby enemies
+        for c in all_combatants:
+            if c.get("type", "").lower() == "monster" and c.get("hp", 0) > 0:
+                nearby.append(c)
+        
+        # Check for nearby allies
+        for c in all_combatants:
+            if c.get("type", "").lower() != "monster" and c.get("name", "") != "Add your party here!":
+                nearby.append(c)
+        
+        return nearby
+
+    def _format_nearby_combatants(self, nearby):
+        """
+        Format a list of nearby combatants into a readable string
+        
+        Args:
+            nearby: List of nearby combatants
+            
+        Returns:
+            Formatted string describing the nearby combatants
+        """
+        if not nearby:
+            return "None"
+        
+        nearby_str = "\n".join([f"- {c.get('name', 'Unknown')} (HP: {c.get('hp', 0)}/{c.get('max_hp', c.get('hp', 0))}, AC: {c.get('ac', 10)}, Status: {c.get('status', 'OK')})" for c in nearby])
+        return nearby_str
+
+    def _format_conditions(self, combatant):
+        """
+        Format a list of conditions affecting the combatant
+        
+        Args:
+            combatant: The combatant to check for conditions
+            
+        Returns:
+            Formatted string describing the conditions
+        """
+        conditions = []
+        
+        # Check for blinded condition
+        if combatant.get("blinded", False):
+            conditions.append("Blinded: Cannot see, has disadvantage on attacks, grants advantage to attackers")
+        
+        # Check for frightened condition
+        if combatant.get("frightened", False):
+            conditions.append("Frightened: Has disadvantage on attacks while source of fear is in sight")
+        
+        # Check for invisible condition
+        if combatant.get("invisible", False):
+            conditions.append("Invisible: Has advantage on attacks, attacks against it have disadvantage")
+        
+        # Check for paralyzed condition
+        if combatant.get("paralyzed", False):
+            conditions.append("Paralyzed: Grants advantage on attacks, auto-crits if attacker within 5 feet")
+        
+        # Check for poisoned condition
+        if combatant.get("poisoned", False):
+            conditions.append("Poisoned: Has disadvantage on attacks and ability checks")
+        
+        # Check for prone condition
+        if combatant.get("prone", False):
+            conditions.append("Prone: Has disadvantage on attacks, grants advantage on attacks against it within 5 feet, grants disadvantage on ranged attacks against it")
+        
+        # Check for restrained condition
+        if combatant.get("restrained", False):
+            conditions.append("Restrained: Has disadvantage on attacks, grants advantage to attackers")
+        
+        # Check for stunned condition
+        if combatant.get("stunned", False):
+            conditions.append("Stunned: Grants advantage on attacks")
+        
+        # Check for unconscious condition
+        if combatant.get("unconscious", False):
+            conditions.append("Unconscious: Grants advantage on attacks, auto-crits if attacker within 5 feet")
+        
+        return "\n".join(conditions) if conditions else "No conditions affecting the combatant."
