@@ -10,6 +10,7 @@ from app.core.llm_service import LLMService, ModelInfo
 import json
 import re
 import time
+import logging
 
 # Import QObject and Signal for thread-safe communication
 from PySide6.QtCore import QObject, Signal
@@ -1121,27 +1122,59 @@ class CombatResolver(QObject):
         
         # Format actions if present
         if "actions" in active:
-            actions = active.get("actions", {})
-            if actions:
+            actions_data = active.get("actions", []) # Get actions data, default to empty list
+            
+            # Check if actions_data is a non-empty list
+            if isinstance(actions_data, list) and actions_data: 
                 actions_str = ""
-                for name, action in actions.items():
-                    desc = action.get("description", "No description")
-                    attack_bonus = action.get("attack_bonus", "")
-                    damage = action.get("damage", "")
-                    if attack_bonus and damage:
-                        actions_str += f"- {name}: {desc} (Attack: +{attack_bonus}, Damage: {damage})\n"
+                # Iterate over the list of action dictionaries
+                for action_dict in actions_data: 
+                    # Ensure the item in the list is actually a dictionary
+                    if isinstance(action_dict, dict): 
+                        # Get action details from the dictionary
+                        name = action_dict.get("name", "Unknown Action") 
+                        desc = action_dict.get("description", "No description")
+                        attack_bonus = action_dict.get("attack_bonus", "")
+                        damage = action_dict.get("damage", "")
+                        
+                        # Format the string based on available details
+                        if attack_bonus and damage:
+                            actions_str += f"- {name}: {desc} (Attack: +{attack_bonus}, Damage: {damage})\n"
+                        else:
+                            actions_str += f"- {name}: {desc}\n"
                     else:
-                        actions_str += f"- {name}: {desc}\n"
-        
+                        # Log a warning if an item in the actions list is not a dictionary
+                        logging.warning(f"[CombatResolver] Item in actions list for {active.get('name', 'Unknown')} is not a dictionary: {action_dict}")
+            # Optional: Handle legacy dictionary format if necessary (add code here if needed)
+            # elif isinstance(actions_data, dict) and actions_data:
+            #    # ... code to handle dictionary format ...
+            #    pass 
+            # If actions_data is empty or not a list/dict, actions_str remains "Basic attack only."
+
         # Format traits if present
         if "traits" in active:
-            traits = active.get("traits", {})
-            if traits:
+            traits_data = active.get("traits", []) # Get traits data, default to empty list
+            
+            # Check if traits_data is a non-empty list
+            if isinstance(traits_data, list) and traits_data:
                 traits_str = ""
-                for name, trait in traits.items():
-                    desc = trait.get("description", "No description")
-                    traits_str += f"- {name}: {desc}\n"
-        
+                # Iterate over the list of trait dictionaries
+                for trait_dict in traits_data:
+                    # Ensure the item in the list is a dictionary
+                    if isinstance(trait_dict, dict):
+                        # Get trait details from the dictionary
+                        name = trait_dict.get("name", "Unknown Trait")
+                        desc = trait_dict.get("description", "No description")
+                        traits_str += f"- {name}: {desc}\n"
+                    else:
+                        # Log a warning if an item in the traits list is not a dictionary
+                        logging.warning(f"[CombatResolver] Item in traits list for {active.get('name', 'Unknown')} is not a dictionary: {trait_dict}")
+            # Optional: Handle legacy dictionary format if needed
+            # elif isinstance(traits_data, dict) and traits_data:
+            #     # ... code to handle dictionary format ...
+            #     pass
+            # If traits_data is empty or not a list/dict, traits_str remains "No special traits."
+
         # Basic attacks if no actions are defined
         if actions_str == "Basic attack only.":
             attack_bonus = active.get("attack_bonus", 0)
@@ -1352,40 +1385,59 @@ Status: {active.get('status', 'OK')}
             
             # Format actions if present
             if "actions" in active:
-                actions = active.get("actions", {})
-                if actions:
-                    actions_str = ""
-                    for name, action in actions.items():
-                        desc = action.get("description", "No description")
-                        attack_bonus = action.get("attack_bonus", "")
-                        damage = action.get("damage", "")
-                        if attack_bonus and damage:
-                            actions_str += f"- {name}: {desc} (Attack: +{attack_bonus}, Damage: {damage})\n"
-                        else:
-                            actions_str += f"- {name}: {desc}\n"
-            
-            # Basic attacks if no actions are defined
-            if actions_str == "Basic attack only.":
-                attack_bonus = active.get("attack_bonus", 0)
-                damage_dice = active.get("damage_dice", "1d6")
-                damage_bonus = active.get("damage_bonus", 0)
-                weapon = active.get("weapon", "weapon")
+                actions_data = active.get("actions", []) # Get actions data, default to empty list
                 
-                if attack_bonus or damage_dice:
-                    actions_str = f"- Basic Attack: Attack with {weapon} (Attack: +{attack_bonus}, Damage: {damage_dice}"
-                    if damage_bonus > 0:
-                        actions_str += f"+{damage_bonus}"
-                    actions_str += ")\n"
-            
+                # Check if actions_data is a non-empty list
+                if isinstance(actions_data, list) and actions_data: 
+                    actions_str = ""
+                    # Iterate over the list of action dictionaries
+                    for action_dict in actions_data: 
+                        # Ensure the item in the list is actually a dictionary
+                        if isinstance(action_dict, dict): 
+                            # Get action details from the dictionary
+                            name = action_dict.get("name", "Unknown Action") 
+                            desc = action_dict.get("description", "No description")
+                            attack_bonus = action_dict.get("attack_bonus", "")
+                            damage = action_dict.get("damage", "")
+                            
+                            # Format the string based on available details
+                            if attack_bonus and damage:
+                                actions_str += f"- {name}: {desc} (Attack: +{attack_bonus}, Damage: {damage})\n"
+                            else:
+                                actions_str += f"- {name}: {desc}\n"
+                        else:
+                            # Log a warning if an item in the actions list is not a dictionary
+                            logging.warning(f"[CombatResolver] Item in actions list for {active.get('name', 'Unknown')} is not a dictionary: {action_dict}")
+                # Optional: Handle legacy dictionary format if necessary (add code here if needed)
+                # elif isinstance(actions_data, dict) and actions_data:
+                #    # ... code to handle dictionary format ...
+                #    pass 
+                # If actions_data is empty or not a list/dict, actions_str remains "Basic attack only."
+
             # Format traits if present
             if "traits" in active:
-                traits = active.get("traits", {})
-                if traits:
+                traits_data = active.get("traits", []) # Get traits data, default to empty list
+                
+                # Check if traits_data is a non-empty list
+                if isinstance(traits_data, list) and traits_data:
                     traits_str = ""
-                    for name, trait in traits.items():
-                        desc = trait.get("description", "No description")
-                        traits_str += f"- {name}: {desc}\n"
-            
+                    # Iterate over the list of trait dictionaries
+                    for trait_dict in traits_data:
+                        # Ensure the item in the list is a dictionary
+                        if isinstance(trait_dict, dict):
+                            # Get trait details from the dictionary
+                            name = trait_dict.get("name", "Unknown Trait")
+                            desc = trait_dict.get("description", "No description")
+                            traits_str += f"- {name}: {desc}\n"
+                        else:
+                            # Log a warning if an item in the traits list is not a dictionary
+                            logging.warning(f"[CombatResolver] Item in traits list for {active.get('name', 'Unknown')} is not a dictionary: {trait_dict}")
+                # Optional: Handle legacy dictionary format if needed
+                # elif isinstance(traits_data, dict) and traits_data:
+                #     # ... code to handle dictionary format ...
+                #     pass
+                # If traits_data is empty or not a list/dict, traits_str remains "No special traits."
+
             prompt += f"""# ABILITIES, ACTIONS AND TRAITS
 IMPORTANT: {active.get('name', 'Unknown')} can ONLY use the following specific abilities, actions, and traits.
 
