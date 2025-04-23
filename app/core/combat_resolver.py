@@ -41,6 +41,7 @@ class CombatResolver(QObject):
             callback: Function called with final result or error (DEPRECATED - Use resolution_complete signal)
             update_ui_callback: Function called after each turn to update UI (optional)
         """
+        logging.debug("--- ENTERING resolve_combat_turn_by_turn ---") # TEST LOG
         # NOTE: The 'callback' argument is now effectively unused, relying on the signal instead.
         # We keep it for now to avoid breaking the calling signature immediately, but it should be removed later.
         import copy
@@ -100,6 +101,7 @@ class CombatResolver(QObject):
         print(f"[CombatResolver] Combat validation passed: {len(monsters)} monsters and {len(characters)} characters")
         
         def run_resolution():
+            logging.debug("--- ENTERING run_resolution thread ---") # TEST LOG
             try:
                 # Use state_copy from outer scope
                 state = state_copy
@@ -278,7 +280,7 @@ class CombatResolver(QObject):
                                         elif not isinstance(new_hp, int):
                                             print(f"[CombatResolver] WARNING: Non-integer HP value {new_hp} for {target_name}, skipping update")
                                             continue
-                                            
+                                        
                                         # Find the combatant
                                         target = next((c for c in combatants if c.get("name") == target_name), None)
                                         if not target:
@@ -561,6 +563,7 @@ class CombatResolver(QObject):
         Returns:
             Dictionary with turn results or None if error
         """
+        logging.debug(f"--- ENTERING _process_turn for index {active_idx}, round {round_num} ---") # TEST LOG
         try:
             active_combatant = combatants[active_idx]
             print(f"[CombatResolver] Processing turn for {active_combatant.get('name', 'Unknown')} (round {round_num})")
@@ -1110,6 +1113,10 @@ class CombatResolver(QObject):
         actions_str = "Basic attack only."
         traits_str = "No special traits."
         
+        # Add a unique marker for this monster to prevent ability mixing
+        monster_id = active.get('id', active_idx)
+        monster_ability_tag = f"{active_name}_{monster_id}_ability"
+        
         # Format abilities if present
         if "abilities" in active:
             abilities = active.get("abilities", {})
@@ -1118,7 +1125,7 @@ class CombatResolver(QObject):
                 for name, ability in abilities.items():
                     desc = ability.get("description", "No description")
                     usage = ability.get("usage", "At will")
-                    abilities_str += f"- {name}: {desc} ({usage})\n"
+                    abilities_str += f"- {name}: {desc} ({usage}) [{monster_ability_tag}]\n"
         
         # Format actions if present
         if "actions" in active:
@@ -1139,9 +1146,9 @@ class CombatResolver(QObject):
                         
                         # Format the string based on available details
                         if attack_bonus and damage:
-                            actions_str += f"- {name}: {desc} (Attack: +{attack_bonus}, Damage: {damage})\n"
+                            actions_str += f"- {name}: {desc} (Attack: +{attack_bonus}, Damage: {damage}) [{monster_ability_tag}]\n"
                         else:
-                            actions_str += f"- {name}: {desc}\n"
+                            actions_str += f"- {name}: {desc} [{monster_ability_tag}]\n"
                     else:
                         # Log a warning if an item in the actions list is not a dictionary
                         logging.warning(f"[CombatResolver] Item in actions list for {active.get('name', 'Unknown')} is not a dictionary: {action_dict}")
@@ -1165,7 +1172,7 @@ class CombatResolver(QObject):
                         # Get trait details from the dictionary
                         name = trait_dict.get("name", "Unknown Trait")
                         desc = trait_dict.get("description", "No description")
-                        traits_str += f"- {name}: {desc}\n"
+                        traits_str += f"- {name}: {desc} [{monster_ability_tag}]\n"
                     else:
                         # Log a warning if an item in the traits list is not a dictionary
                         logging.warning(f"[CombatResolver] Item in traits list for {active.get('name', 'Unknown')} is not a dictionary: {trait_dict}")
@@ -1216,7 +1223,9 @@ Status: {active.get('status', 'OK')}
 - A REACTION (if triggered)
 
 # SPECIFIC ABILITIES, ACTIONS AND TRAITS
-IMPORTANT: {active_name} can ONLY use the following specific abilities, actions, and traits. DO NOT invent new abilities or modify these in any way.
+EXTREMELY IMPORTANT: {active_name} can ONLY use the specific abilities, actions, and traits listed below. DO NOT use abilities from any other monster. DO NOT invent new abilities or modify these in any way.
+
+CRITICAL INSTRUCTION: Each monster has its own unique set of abilities. Even if you've seen similar monsters before, ONLY use the abilities explicitly listed below for THIS specific creature.
 
 ## Actions:
 {actions_str}
@@ -1246,13 +1255,13 @@ IMPORTANT: {active_name} can ONLY use the following specific abilities, actions,
 Decide the most appropriate action for {active_name} this turn. Consider:
 1. Tactical position
 2. HP status of all combatants
-3. STRICTLY USE ONLY the listed abilities and actions - DO NOT INVENT NEW ONES
+3. STRICTLY USE ONLY the abilities and actions listed explicitly for {active_name} - DO NOT USE any abilities from other monsters
 4. Known enemy capabilities
 5. Team strategy (focus fire, crowd control, etc.)
 
 IMPORTANT: {active_name} has FULL ACTIONS available this turn, including standard action, bonus action, and full movement. DO NOT claim the combatant has no actions or movement remaining.
 
-CRITICAL: You MUST choose ONLY from the actions, abilities, and traits explicitly listed above. DO NOT create new abilities or modify the existing ones. Use them exactly as described.
+CRITICAL: You MUST choose ONLY from the actions, abilities, and traits explicitly listed above for {active_name}. DO NOT use abilities from any other monster in the combat. DO NOT create new abilities or modify the existing ones. Use them exactly as described.
 
 Your response should be a JSON object containing:
 {{
@@ -1380,6 +1389,10 @@ Status: {active.get('status', 'OK')}
             actions_str = "Basic attack only."
             traits_str = "No special traits."
             
+            # Add a unique marker for this monster to prevent ability mixing
+            monster_id = active.get('id', active_idx)
+            monster_ability_tag = f"{active_name}_{monster_id}_ability"
+            
             # Format abilities if present
             if "abilities" in active:
                 abilities = active.get("abilities", {})
@@ -1388,7 +1401,7 @@ Status: {active.get('status', 'OK')}
                     for name, ability in abilities.items():
                         desc = ability.get("description", "No description")
                         usage = ability.get("usage", "At will")
-                        abilities_str += f"- {name}: {desc} ({usage})\n"
+                        abilities_str += f"- {name}: {desc} ({usage}) [{monster_ability_tag}]\n"
             
             # Format actions if present
             if "actions" in active:
@@ -1409,9 +1422,9 @@ Status: {active.get('status', 'OK')}
                             
                             # Format the string based on available details
                             if attack_bonus and damage:
-                                actions_str += f"- {name}: {desc} (Attack: +{attack_bonus}, Damage: {damage})\n"
+                                actions_str += f"- {name}: {desc} (Attack: +{attack_bonus}, Damage: {damage}) [{monster_ability_tag}]\n"
                             else:
-                                actions_str += f"- {name}: {desc}\n"
+                                actions_str += f"- {name}: {desc} [{monster_ability_tag}]\n"
                         else:
                             # Log a warning if an item in the actions list is not a dictionary
                             logging.warning(f"[CombatResolver] Item in actions list for {active.get('name', 'Unknown')} is not a dictionary: {action_dict}")
@@ -1435,7 +1448,7 @@ Status: {active.get('status', 'OK')}
                             # Get trait details from the dictionary
                             name = trait_dict.get("name", "Unknown Trait")
                             desc = trait_dict.get("description", "No description")
-                            traits_str += f"- {name}: {desc}\n"
+                            traits_str += f"- {name}: {desc} [{monster_ability_tag}]\n"
                         else:
                             # Log a warning if an item in the traits list is not a dictionary
                             logging.warning(f"[CombatResolver] Item in traits list for {active.get('name', 'Unknown')} is not a dictionary: {trait_dict}")
@@ -1489,10 +1502,10 @@ IMPORTANT: {active.get('name', 'Unknown')} can ONLY use the following specific a
 1. Create a vivid, exciting narrative of what happens based on the action and dice results
 2. If the action was an attack, determine if it hits based on the attack roll vs. target's AC
 3. If successful, apply any damage or effects based on the dice results
-4. ONLY use abilities and actions listed in the ABILITIES, ACTIONS AND TRAITS section - do NOT invent new ones
+4. ONLY use abilities and actions that belong to the active combatant - DO NOT use abilities from other monsters
 5. CRUCIAL: Track final HP values accurately!
 6. CRITICALLY IMPORTANT: ONLY use the combatant names exactly as listed above. Do NOT invent new names or refer to generic classes like "Fighter" or "Rogue". Only reference the actual names shown in the COMBATANTS section.
-7. DO NOT have combatants use abilities they do not possess. Stay strictly within their defined abilities.
+7. DO NOT have combatants use abilities they do not possess. Each monster has its own unique abilities that cannot be used by other monsters.
 
 Your response MUST be in JSON format with these fields:
 1. "narrative": A vivid description of what happened

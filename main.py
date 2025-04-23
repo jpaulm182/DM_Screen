@@ -39,15 +39,27 @@ from app.ui.main_window import MainWindow
 def main():
     """Main application entry point"""
     # Set up logging
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(app_dir / 'debug.log', 'w')
-        ]
-    )
+    log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG) # Set root logger level
+    
+    # Stream Handler (console) - Temporarily disabled for testing file logging
+    # stream_handler = logging.StreamHandler()
+    # stream_handler.setFormatter(log_formatter)
+    # # Keep console at INFO level to avoid excessive noise
+    # stream_handler.setLevel(logging.INFO) 
+    # root_logger.addHandler(stream_handler)
+    
+    # File Handler (debug.log)
+    log_file_path = app_dir / 'debug.log'
+    # Change mode to 'a' (append) to keep logs across runs
+    file_handler = logging.FileHandler(log_file_path, 'a') 
+    file_handler.setFormatter(log_formatter)
+    file_handler.setLevel(logging.DEBUG) # Ensure file handler captures DEBUG messages
+    root_logger.addHandler(file_handler)
+
     logging.info("Starting DM Screen application")
+    logging.debug(f"Logging DEBUG messages to: {log_file_path}") # Add a debug message to test file logging
     
     # Apply stability patches
     logging.info("Applying stability patches")
