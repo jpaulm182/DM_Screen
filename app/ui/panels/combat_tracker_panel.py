@@ -1474,17 +1474,24 @@ class CombatTrackerPanel(BasePanel):
                 
             # Save all monsters IDs and stats before sorting
             monster_stats = {}
+            monster_instance_ids = {}  # NEW: Track instance IDs for each row
             for row in range(row_count):
                 name_item = self.initiative_table.item(row, 0)
-                if name_item and name_item.data(Qt.UserRole + 2) is not None:
-                    monster_id = name_item.data(Qt.UserRole + 2)
-                    monster_stats[monster_id] = {
-                        "id": monster_id,
-                        "name": name_item.text(),
-                        "hp": self.initiative_table.item(row, 2).text() if self.initiative_table.item(row, 2) else "10",
-                        "max_hp": self.initiative_table.item(row, 3).text() if self.initiative_table.item(row, 3) else "10",
-                        "ac": self.initiative_table.item(row, 4).text() if self.initiative_table.item(row, 4) else "10"
-                    }
+                if name_item:
+                    # Save monster ID if it exists
+                    if name_item.data(Qt.UserRole + 2) is not None:
+                        monster_id = name_item.data(Qt.UserRole + 2)
+                        monster_stats[monster_id] = {
+                            "id": monster_id,
+                            "name": name_item.text(),
+                            "hp": self.initiative_table.item(row, 2).text() if self.initiative_table.item(row, 2) else "10",
+                            "max_hp": self.initiative_table.item(row, 3).text() if self.initiative_table.item(row, 3) else "10",
+                            "ac": self.initiative_table.item(row, 4).text() if self.initiative_table.item(row, 4) else "10"
+                        }
+                    
+                    # NEW: Store instance ID for this row
+                    monster_instance_ids[row] = name_item.data(Qt.UserRole + 2) or f"combatant_{row}"
+                    print(f"[CombatTracker] Row {row} has instance ID: {monster_instance_ids[row]}")
             
             # Store pre-sort HP and AC data for verification
             pre_sort_values = {}
@@ -1497,7 +1504,7 @@ class CombatTrackerPanel(BasePanel):
                 hp = hp_item.text() if hp_item else "?"
                 ac = ac_item.text() if ac_item else "?"
                 
-                pre_sort_values[name] = {"hp": hp, "ac": ac}
+                pre_sort_values[name] = {"hp": hp, "ac": ac, "instance_id": monster_instance_ids.get(row, f"combatant_{row}")}
             
             # Collect all the data from the table first
             print(f"[CombatTracker] Collecting data from {row_count} rows")
@@ -1526,7 +1533,8 @@ class CombatTrackerPanel(BasePanel):
                             'text': item.text(),
                             'data': item.data(Qt.UserRole),
                             'checkState': item.checkState() if col == 6 else None,  # Only save checkState for concentration column
-                            'currentTurn': item.data(Qt.UserRole + 1)
+                            'currentTurn': item.data(Qt.UserRole + 1),
+                            'instanceId': item.data(Qt.UserRole + 2) if col == 0 else None  # Save monster ID/instance ID
                         }
                         
                 # Add this row's data to our collection
@@ -1534,7 +1542,8 @@ class CombatTrackerPanel(BasePanel):
                 initiative_values.append((initiative, row))
                 hp_value = row_data.get(2, {}).get('text', '?')
                 ac_value = row_data.get(4, {}).get('text', '?')
-                print(f"[CombatTracker] Row {row}: initiative={initiative}, hp={hp_value}, ac={ac_value}")
+                instance_id = row_data.get(0, {}).get('instanceId', f"combatant_{row}")
+                print(f"[CombatTracker] Row {row}: initiative={initiative}, hp={hp_value}, ac={ac_value}, instance_id={instance_id}")
                 
             # Execute the rest of the original sort code
             # Sort the initiative values in descending order
@@ -1542,6 +1551,8 @@ class CombatTrackerPanel(BasePanel):
             
             # Remap original rows to their new position after sorting
             row_map = {old_row: new_row for new_row, (_, old_row) in enumerate(initiative_values)}
+            # NEW: Also create reverse mapping
+            new_to_old_map = {new_row: old_row for old_row, new_row in row_map.items()}
             
             # Remember the current selection and turn
             current_row = self.initiative_table.currentRow()
@@ -1558,8 +1569,10 @@ class CombatTrackerPanel(BasePanel):
                 # Debug HP and AC for this row
                 hp_value = row_data.get(2, {}).get('text', '?')
                 ac_value = row_data.get(4, {}).get('text', '?')
+                instance_id = row_data.get(0, {}).get('instanceId', f"combatant_{old_row}")
                 print(f"[CombatTracker] Moving HP value: {hp_value} from old_row={old_row} to new_row={new_row}")
                 print(f"[CombatTracker] Moving AC value: {ac_value} from old_row={old_row} to new_row={new_row}")
+                print(f"[CombatTracker] Moving instance ID: {instance_id} from old_row={old_row} to new_row={new_row}")
                 
                 for col, item_data in row_data.items():
                     # Create a new item with the right flags for each column
@@ -1599,6 +1612,11 @@ class CombatTrackerPanel(BasePanel):
                     if 'currentTurn' in item_data and item_data['currentTurn'] is not None:
                         new_item.setData(Qt.UserRole + 1, item_data['currentTurn'])
                     
+                    # IMPORTANT: Restore instance ID for the name column
+                    if col == 0 and 'instanceId' in item_data and item_data['instanceId'] is not None:
+                        new_item.setData(Qt.UserRole + 2, item_data['instanceId'])
+                        print(f"[CombatTracker] Set instance ID {item_data['instanceId']} for new_row={new_row}")
+                    
                     # Set the item in the table
                     self.initiative_table.setItem(new_row, col, new_item)
             
@@ -1610,6 +1628,22 @@ class CombatTrackerPanel(BasePanel):
             if current_turn is not None and current_turn >= 0 and current_turn < row_count:
                 self._current_turn = row_map.get(current_turn, 0)
             
+            # NEW: Update the self.combatants dictionary to keep instance IDs aligned
+            if hasattr(self, 'combatants') and isinstance(self.combatants, dict):
+                new_combatants = {}
+                for old_row, combatant_data in self.combatants.items():
+                    if old_row in row_map:
+                        new_row = row_map[old_row]
+                        new_combatants[new_row] = combatant_data
+                        
+                        # If combatant_data is a dictionary, update its instance_id
+                        if isinstance(combatant_data, dict):
+                            instance_id = monster_instance_ids.get(old_row, f"combatant_{old_row}")
+                            combatant_data['instance_id'] = instance_id
+                            print(f"[CombatTracker] Updated instance_id in combatants dict: {old_row} -> {new_row} with ID {instance_id}")
+                
+                self.combatants = new_combatants
+            
             # Verify HP and AC values after sorting
             post_sort_values = {}
             for row in range(row_count):
@@ -1620,12 +1654,13 @@ class CombatTrackerPanel(BasePanel):
                 name = name_item.text() if name_item else f"Row {row}"
                 hp = hp_item.text() if hp_item else "?"
                 ac = ac_item.text() if ac_item else "?"
+                instance_id = name_item.data(Qt.UserRole + 2) if name_item else f"combatant_{row}"
                 
-                post_sort_values[name] = {"hp": hp, "ac": ac}
+                post_sort_values[name] = {"hp": hp, "ac": ac, "instance_id": instance_id}
             
             # Compare pre and post sort values
             for name, pre_values in pre_sort_values.items():
-                post_values = post_sort_values.get(name, {"hp": "MISSING", "ac": "MISSING"})
+                post_values = post_sort_values.get(name, {"hp": "MISSING", "ac": "MISSING", "instance_id": "MISSING"})
                 
                 # Check HP
                 pre_hp = pre_values["hp"]
@@ -1642,6 +1677,14 @@ class CombatTrackerPanel(BasePanel):
                     print(f"[CombatTracker] WARNING: AC changed during sort for {name}: {pre_ac} -> {post_ac}")
                 else:
                     print(f"[CombatTracker] AC preserved for {name}: {pre_ac}")
+                    
+                # Check instance ID
+                pre_instance_id = pre_values["instance_id"]
+                post_instance_id = post_values["instance_id"]
+                if pre_instance_id != post_instance_id:
+                    print(f"[CombatTracker] WARNING: Instance ID changed during sort for {name}: {pre_instance_id} -> {post_instance_id}")
+                else:
+                    print(f"[CombatTracker] Instance ID preserved for {name}: {pre_instance_id}")
 
             # At the end of the sort function, add the monster stats verification
             # Schedule verification for all monsters after sorting is complete
@@ -3251,8 +3294,10 @@ class CombatTrackerPanel(BasePanel):
             
             # Get monster ID from name item if it's a monster
             monster_id = None
-            if combatant_type == "monster" and name_item:
+            if name_item:
+                # Get instance_id regardless of type (both monsters and characters need consistent IDs)
                 monster_id = name_item.data(Qt.UserRole + 2)
+                
                 if not monster_id:
                     # Generate a unique ID if none exists
                     import time
@@ -3262,6 +3307,9 @@ class CombatTrackerPanel(BasePanel):
                     monster_id = hashlib.md5(hash_base.encode()).hexdigest()[:8]
                     # Store the ID back on the item for future reference
                     name_item.setData(Qt.UserRole + 2, monster_id)
+                    print(f"[CombatTracker] Generated new instance ID {monster_id} for {name}")
+                else:
+                    print(f"[CombatTracker] Using existing instance ID {monster_id} for {name}")
             
             # Debug print current HP values
             print(f"[CombatTracker] DEBUG: Table row {row}: {name} - HP: {hp}/{max_hp} {' (ID: ' + str(monster_id) + ')' if monster_id else ''}")
@@ -3283,6 +3331,11 @@ class CombatTrackerPanel(BasePanel):
             if row in self.combatants:
                 stored_combatant = self.combatants[row]
                 
+                # First, ensure the stored combatant has the same instance ID (sync it)
+                if isinstance(stored_combatant, dict) and "instance_id" in combatant:
+                    # Update the stored combatant's instance_id to match what's in the table
+                    stored_combatant["instance_id"] = combatant["instance_id"]
+                    
                 # Add abilities if available
                 if isinstance(stored_combatant, dict):
                     # Only include keys that are useful for combat resolution
@@ -3322,6 +3375,32 @@ class CombatTrackerPanel(BasePanel):
                                 else:
                                     # If not a list, just store as is
                                     combatant[key] = original_abilities
+                            elif key == "abilities":
+                                # Handle abilities which are typically a dictionary of abilities
+                                if isinstance(stored_combatant[key], dict):
+                                    tagged_abilities = {}
+                                    for ability_name, ability in stored_combatant[key].items():
+                                        if isinstance(ability, dict):
+                                            # Create a copy to avoid modifying the original
+                                            ability_copy = ability.copy()
+                                            # Add instance ID to the ability
+                                            ability_copy["monster_instance_id"] = combatant["instance_id"]
+                                            ability_copy["monster_name"] = name
+                                            
+                                            # Check for monster_source tag
+                                            if "monster_source" not in ability_copy:
+                                                ability_copy["monster_source"] = name
+                                                
+                                            tagged_abilities[ability_name] = ability_copy
+                                        else:
+                                            # Non-dict abilities are simply passed through
+                                            tagged_abilities[ability_name] = ability
+                                    
+                                    # Store the tagged abilities
+                                    combatant[key] = tagged_abilities
+                                else:
+                                    # If not a dict, just store as is
+                                    combatant[key] = stored_combatant[key]
                             else:
                                 # For other attributes, copy as is
                                 combatant[key] = stored_combatant[key]
@@ -4559,17 +4638,24 @@ class CombatTrackerPanel(BasePanel):
                 
             # Save all monsters IDs and stats before sorting
             monster_stats = {}
+            monster_instance_ids = {}  # NEW: Track instance IDs for each row
             for row in range(row_count):
                 name_item = self.initiative_table.item(row, 0)
-                if name_item and name_item.data(Qt.UserRole + 2) is not None:
-                    monster_id = name_item.data(Qt.UserRole + 2)
-                    monster_stats[monster_id] = {
-                        "id": monster_id,
-                        "name": name_item.text(),
-                        "hp": self.initiative_table.item(row, 2).text() if self.initiative_table.item(row, 2) else "10",
-                        "max_hp": self.initiative_table.item(row, 3).text() if self.initiative_table.item(row, 3) else "10",
-                        "ac": self.initiative_table.item(row, 4).text() if self.initiative_table.item(row, 4) else "10"
-                    }
+                if name_item:
+                    # Save monster ID if it exists
+                    if name_item.data(Qt.UserRole + 2) is not None:
+                        monster_id = name_item.data(Qt.UserRole + 2)
+                        monster_stats[monster_id] = {
+                            "id": monster_id,
+                            "name": name_item.text(),
+                            "hp": self.initiative_table.item(row, 2).text() if self.initiative_table.item(row, 2) else "10",
+                            "max_hp": self.initiative_table.item(row, 3).text() if self.initiative_table.item(row, 3) else "10",
+                            "ac": self.initiative_table.item(row, 4).text() if self.initiative_table.item(row, 4) else "10"
+                        }
+                    
+                    # NEW: Store instance ID for this row
+                    monster_instance_ids[row] = name_item.data(Qt.UserRole + 2) or f"combatant_{row}"
+                    print(f"[CombatTracker] Row {row} has instance ID: {monster_instance_ids[row]}")
             
             # Store pre-sort HP and AC data for verification
             pre_sort_values = {}
@@ -4582,7 +4668,7 @@ class CombatTrackerPanel(BasePanel):
                 hp = hp_item.text() if hp_item else "?"
                 ac = ac_item.text() if ac_item else "?"
                 
-                pre_sort_values[name] = {"hp": hp, "ac": ac}
+                pre_sort_values[name] = {"hp": hp, "ac": ac, "instance_id": monster_instance_ids.get(row, f"combatant_{row}")}
             
             # Collect all the data from the table first
             print(f"[CombatTracker] Collecting data from {row_count} rows")
@@ -4611,7 +4697,8 @@ class CombatTrackerPanel(BasePanel):
                             'text': item.text(),
                             'data': item.data(Qt.UserRole),
                             'checkState': item.checkState() if col == 6 else None,  # Only save checkState for concentration column
-                            'currentTurn': item.data(Qt.UserRole + 1)
+                            'currentTurn': item.data(Qt.UserRole + 1),
+                            'instanceId': item.data(Qt.UserRole + 2) if col == 0 else None  # Save monster ID/instance ID
                         }
                         
                 # Add this row's data to our collection
@@ -4619,7 +4706,8 @@ class CombatTrackerPanel(BasePanel):
                 initiative_values.append((initiative, row))
                 hp_value = row_data.get(2, {}).get('text', '?')
                 ac_value = row_data.get(4, {}).get('text', '?')
-                print(f"[CombatTracker] Row {row}: initiative={initiative}, hp={hp_value}, ac={ac_value}")
+                instance_id = row_data.get(0, {}).get('instanceId', f"combatant_{row}")
+                print(f"[CombatTracker] Row {row}: initiative={initiative}, hp={hp_value}, ac={ac_value}, instance_id={instance_id}")
                 
             # Execute the rest of the original sort code
             # Sort the initiative values in descending order
@@ -4627,6 +4715,8 @@ class CombatTrackerPanel(BasePanel):
             
             # Remap original rows to their new position after sorting
             row_map = {old_row: new_row for new_row, (_, old_row) in enumerate(initiative_values)}
+            # NEW: Also create reverse mapping
+            new_to_old_map = {new_row: old_row for old_row, new_row in row_map.items()}
             
             # Remember the current selection and turn
             current_row = self.initiative_table.currentRow()
@@ -4643,8 +4733,10 @@ class CombatTrackerPanel(BasePanel):
                 # Debug HP and AC for this row
                 hp_value = row_data.get(2, {}).get('text', '?')
                 ac_value = row_data.get(4, {}).get('text', '?')
+                instance_id = row_data.get(0, {}).get('instanceId', f"combatant_{old_row}")
                 print(f"[CombatTracker] Moving HP value: {hp_value} from old_row={old_row} to new_row={new_row}")
                 print(f"[CombatTracker] Moving AC value: {ac_value} from old_row={old_row} to new_row={new_row}")
+                print(f"[CombatTracker] Moving instance ID: {instance_id} from old_row={old_row} to new_row={new_row}")
                 
                 for col, item_data in row_data.items():
                     # Create a new item with the right flags for each column
@@ -4684,6 +4776,11 @@ class CombatTrackerPanel(BasePanel):
                     if 'currentTurn' in item_data and item_data['currentTurn'] is not None:
                         new_item.setData(Qt.UserRole + 1, item_data['currentTurn'])
                     
+                    # IMPORTANT: Restore instance ID for the name column
+                    if col == 0 and 'instanceId' in item_data and item_data['instanceId'] is not None:
+                        new_item.setData(Qt.UserRole + 2, item_data['instanceId'])
+                        print(f"[CombatTracker] Set instance ID {item_data['instanceId']} for new_row={new_row}")
+                    
                     # Set the item in the table
                     self.initiative_table.setItem(new_row, col, new_item)
             
@@ -4695,6 +4792,22 @@ class CombatTrackerPanel(BasePanel):
             if current_turn is not None and current_turn >= 0 and current_turn < row_count:
                 self._current_turn = row_map.get(current_turn, 0)
             
+            # NEW: Update the self.combatants dictionary to keep instance IDs aligned
+            if hasattr(self, 'combatants') and isinstance(self.combatants, dict):
+                new_combatants = {}
+                for old_row, combatant_data in self.combatants.items():
+                    if old_row in row_map:
+                        new_row = row_map[old_row]
+                        new_combatants[new_row] = combatant_data
+                        
+                        # If combatant_data is a dictionary, update its instance_id
+                        if isinstance(combatant_data, dict):
+                            instance_id = monster_instance_ids.get(old_row, f"combatant_{old_row}")
+                            combatant_data['instance_id'] = instance_id
+                            print(f"[CombatTracker] Updated instance_id in combatants dict: {old_row} -> {new_row} with ID {instance_id}")
+                
+                self.combatants = new_combatants
+            
             # Verify HP and AC values after sorting
             post_sort_values = {}
             for row in range(row_count):
@@ -4705,12 +4818,13 @@ class CombatTrackerPanel(BasePanel):
                 name = name_item.text() if name_item else f"Row {row}"
                 hp = hp_item.text() if hp_item else "?"
                 ac = ac_item.text() if ac_item else "?"
+                instance_id = name_item.data(Qt.UserRole + 2) if name_item else f"combatant_{row}"
                 
-                post_sort_values[name] = {"hp": hp, "ac": ac}
+                post_sort_values[name] = {"hp": hp, "ac": ac, "instance_id": instance_id}
             
             # Compare pre and post sort values
             for name, pre_values in pre_sort_values.items():
-                post_values = post_sort_values.get(name, {"hp": "MISSING", "ac": "MISSING"})
+                post_values = post_sort_values.get(name, {"hp": "MISSING", "ac": "MISSING", "instance_id": "MISSING"})
                 
                 # Check HP
                 pre_hp = pre_values["hp"]
@@ -4727,6 +4841,14 @@ class CombatTrackerPanel(BasePanel):
                     print(f"[CombatTracker] WARNING: AC changed during sort for {name}: {pre_ac} -> {post_ac}")
                 else:
                     print(f"[CombatTracker] AC preserved for {name}: {pre_ac}")
+                    
+                # Check instance ID
+                pre_instance_id = pre_values["instance_id"]
+                post_instance_id = post_values["instance_id"]
+                if pre_instance_id != post_instance_id:
+                    print(f"[CombatTracker] WARNING: Instance ID changed during sort for {name}: {pre_instance_id} -> {post_instance_id}")
+                else:
+                    print(f"[CombatTracker] Instance ID preserved for {name}: {pre_instance_id}")
 
             # At the end of the sort function, add the monster stats verification
             # Schedule verification for all monsters after sorting is complete
@@ -5526,6 +5648,7 @@ class CombatTrackerPanel(BasePanel):
                 name_item = self.initiative_table.item(row, 0)
                 hp_item = self.initiative_table.item(row, 2)
                 status_item = self.initiative_table.item(row, 5)
+                
                 
                 if name_item and hp_item:
                     name = name_item.text()
