@@ -1188,6 +1188,13 @@ class CombatResolver(QObject):
                     actions_str += f"+{damage_bonus}"
                 actions_str += ")\n"
         
+        # --- BEGIN DEBUG LOGGING ---
+        logging.debug(f"[CombatResolver] Decision Prompt Data for {active_name}:")
+        logging.debug(f"--- Actions String ---\n{actions_str}")
+        logging.debug(f"--- Abilities String ---\n{abilities_str}")
+        logging.debug(f"--- Traits String ---\n{traits_str}")
+        # --- END DEBUG LOGGING ---
+        
         prompt = f"""
 You are the tactical combat AI for a D&D 5e game. You decide actions for {active_name}.
 
@@ -1438,6 +1445,13 @@ Status: {active.get('status', 'OK')}
                 #     pass
                 # If traits_data is empty or not a list/dict, traits_str remains "No special traits."
 
+            # --- BEGIN DEBUG LOGGING ---
+            logging.debug(f"[CombatResolver] Resolution Prompt - Abilities/Actions/Traits for {active.get('name', 'Unknown')}:")
+            logging.debug(f"--- Actions String ---\n{actions_str}")
+            logging.debug(f"--- Abilities String ---\n{abilities_str}")
+            logging.debug(f"--- Traits String ---\n{traits_str}")
+            # --- END DEBUG LOGGING ---
+            
             prompt += f"""# ABILITIES, ACTIONS AND TRAITS
 IMPORTANT: {active.get('name', 'Unknown')} can ONLY use the following specific abilities, actions, and traits.
 
@@ -1886,59 +1900,42 @@ Return ONLY the JSON object with no other text.
             }
             
         # Try pattern matching for common aura types
-        traits = combatant.get("traits", {}) or {}
+        traits_data = combatant.get("traits", []) or [] # Get traits data, default to empty list
         actions = combatant.get("actions", {}) or {}
         
-        # Check for fire aura in traits
-        common_auras = {
-            "fire aura": {
-                "keywords": ["fire aura", "aura of flame", "burning aura", "heat aura"],
-                "range": 10,
-                "effect": {"type": "damage", "expression": "1d6", "damage_type": "fire"},
-                "affects": "enemies"
-            },
-            "fear aura": {
-                "keywords": ["fear aura", "frightful presence", "aura of fear"],
-                "range": 30,
-                "effect": {"type": "condition", "condition": "frightened", "duration": 1},
-                "affects": "enemies"
-            },
-            "healing aura": {
-                "keywords": ["healing aura", "regenerative aura", "aura of life"],
-                "range": 15,
-                "effect": {"type": "healing", "expression": "1d4", "healing_type": "regeneration"},
-                "affects": "allies",
-                "affects_self": True
-            },
-            "protection aura": {
-                "keywords": ["protection aura", "defensive aura", "aura of warding"],
-                "range": 10,
-                "effect": {"type": "resistance", "damage_types": ["fire", "cold", "lightning"]},
-                "affects": "allies",
-                "affects_self": True
-            }
-        }
-        
-        # Check trait descriptions for aura keywords
-        for trait_name, trait_desc in traits.items():
-            if not trait_desc:
-                continue
-                
-            trait_text = trait_desc.lower() if isinstance(trait_desc, str) else str(trait_desc).lower()
+        # Ensure traits_data is a list
+        if not isinstance(traits_data, list):
+            logging.warning(f"[CombatResolver] Traits data for {combatant.get('name', 'Unknown')} is not a list: {traits_data}")
+            traits_data = []
             
-            # Check each common aura type
-            for aura_type, aura_info in common_auras.items():
-                if any(keyword in trait_text for keyword in aura_info["keywords"]):
-                    # Found a matching aura pattern in traits
-                    aura_name = trait_name
-                    combatant["auras"][aura_name] = {
-                        "range": aura_info["range"],
-                        "effect": aura_info["effect"],
-                        "affects": aura_info["affects"],
-                        "affects_self": aura_info.get("affects_self", False),
-                        "source": "trait"
-                    }
-                    print(f"[CombatResolver] Detected {aura_type} in {combatant.get('name', 'Unknown')}'s traits")
+        # Check trait descriptions for aura keywords
+        # Iterate over the list of trait dictionaries
+        for trait_dict in traits_data:
+            # Ensure the item is a dictionary
+            if isinstance(trait_dict, dict):
+                trait_name = trait_dict.get("name", "Unknown Trait")
+                trait_desc = trait_dict.get("description", "")
+                
+                if not trait_desc:
+                    continue
+                    
+                trait_text = trait_desc.lower() if isinstance(trait_desc, str) else str(trait_desc).lower()
+                
+                # Check each common aura type
+                for aura_type, aura_info in common_auras.items():
+                    if any(keyword in trait_text for keyword in aura_info["keywords"]):
+                        # Found a matching aura pattern in traits
+                        aura_name_to_add = trait_name # Use the actual trait name
+                        combatant["auras"][aura_name_to_add] = {
+                            "range": aura_info["range"],
+                            "effect": aura_info["effect"],
+                            "affects": aura_info["affects"],
+                            "affects_self": aura_info.get("affects_self", False),
+                            "source": "trait"
+                        }
+                        print(f"[CombatResolver] Detected {aura_type} ('{aura_name_to_add}') in {combatant.get('name', 'Unknown')}'s traits")
+            else:
+                logging.warning(f"[CombatResolver] Item in traits list for {combatant.get('name', 'Unknown')} is not a dictionary: {trait_dict}")
         
         # If no auras found through pattern matching, use LLM to detect them
         if not combatant["auras"]:
