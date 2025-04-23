@@ -1095,6 +1095,9 @@ class CombatResolver(QObject):
         # Format active combatant's name and position
         active_name = active.get('name', 'Unknown')
         
+        # Get the instance ID for this combatant
+        instance_id = active.get('instance_id', f"combatant_{active_idx}")
+        
         # Format nearby combatants
         nearby = self._get_nearby_combatants(active, combatants)
         nearby_str = self._format_nearby_combatants(nearby)
@@ -1113,9 +1116,8 @@ class CombatResolver(QObject):
         actions_str = "Basic attack only."
         traits_str = "No special traits."
         
-        # Add a unique marker for this monster to prevent ability mixing
-        monster_id = active.get('id', active_idx)
-        monster_ability_tag = f"{active_name}_{monster_id}_ability"
+        # Add a unique marker for this monster instance to prevent ability mixing
+        monster_ability_tag = f"{active_name}_{instance_id}_ability"
         
         # Format abilities if present
         if "abilities" in active:
@@ -1123,6 +1125,14 @@ class CombatResolver(QObject):
             if abilities:
                 abilities_str = ""
                 for name, ability in abilities.items():
+                    # Only filter out abilities explicitly tagged with a different monster's ID
+                    ability_instance_id = ability.get("monster_instance_id", None)
+                    if ability_instance_id is not None and ability_instance_id != instance_id:
+                        source_name = ability.get("monster_name", "another monster")
+                        if source_name != active_name:
+                            print(f"[CombatResolver] WARNING: Skipping ability {name} that belongs to {source_name} ({ability_instance_id}), not {active_name} ({instance_id})")
+                            continue
+                        
                     desc = ability.get("description", "No description")
                     usage = ability.get("usage", "At will")
                     abilities_str += f"- {name}: {desc} ({usage}) [{monster_ability_tag}]\n"
@@ -1138,6 +1148,14 @@ class CombatResolver(QObject):
                 for action_dict in actions_data: 
                     # Ensure the item in the list is actually a dictionary
                     if isinstance(action_dict, dict): 
+                        # Only filter out actions explicitly tagged with a different monster's ID
+                        action_instance_id = action_dict.get("monster_instance_id", None)
+                        if action_instance_id is not None and action_instance_id != instance_id:
+                            source_name = action_dict.get("monster_name", "another monster")
+                            if source_name != active_name:
+                                print(f"[CombatResolver] WARNING: Skipping action {action_dict.get('name', 'Unknown')} that belongs to {source_name} ({action_instance_id}), not {active_name} ({instance_id})")
+                                continue
+                            
                         # Get action details from the dictionary
                         name = action_dict.get("name", "Unknown Action") 
                         desc = action_dict.get("description", "No description")
@@ -1152,10 +1170,6 @@ class CombatResolver(QObject):
                     else:
                         # Log a warning if an item in the actions list is not a dictionary
                         logging.warning(f"[CombatResolver] Item in actions list for {active.get('name', 'Unknown')} is not a dictionary: {action_dict}")
-            # Optional: Handle legacy dictionary format if necessary (add code here if needed)
-            # elif isinstance(actions_data, dict) and actions_data:
-            #    # ... code to handle dictionary format ...
-            #    pass 
             # If actions_data is empty or not a list/dict, actions_str remains "Basic attack only."
 
         # Format traits if present
@@ -1169,6 +1183,14 @@ class CombatResolver(QObject):
                 for trait_dict in traits_data:
                     # Ensure the item in the list is a dictionary
                     if isinstance(trait_dict, dict):
+                        # Only filter out traits explicitly tagged with a different monster's ID
+                        trait_instance_id = trait_dict.get("monster_instance_id", None)
+                        if trait_instance_id is not None and trait_instance_id != instance_id:
+                            source_name = trait_dict.get("monster_name", "another monster")
+                            if source_name != active_name:
+                                print(f"[CombatResolver] WARNING: Skipping trait {trait_dict.get('name', 'Unknown')} that belongs to {source_name} ({trait_instance_id}), not {active_name} ({instance_id})")
+                                continue
+                            
                         # Get trait details from the dictionary
                         name = trait_dict.get("name", "Unknown Trait")
                         desc = trait_dict.get("description", "No description")
@@ -1176,11 +1198,13 @@ class CombatResolver(QObject):
                     else:
                         # Log a warning if an item in the traits list is not a dictionary
                         logging.warning(f"[CombatResolver] Item in traits list for {active.get('name', 'Unknown')} is not a dictionary: {trait_dict}")
-            # Optional: Handle legacy dictionary format if needed
-            # elif isinstance(traits_data, dict) and traits_data:
-            #     # ... code to handle dictionary format ...
-            #     pass
             # If traits_data is empty or not a list/dict, traits_str remains "No special traits."
+            
+        # Debug: Print abilities we found
+        has_abilities = abilities_str != "No special abilities."
+        has_actions = actions_str != "Basic attack only."
+        has_traits = traits_str != "No special traits."
+        print(f"[CombatResolver] For {active_name} (ID: {instance_id}): Has abilities: {has_abilities}, Has actions: {has_actions}, Has traits: {has_traits}")
 
         # Basic attacks if no actions are defined
         if actions_str == "Basic attack only.":
@@ -1196,7 +1220,7 @@ class CombatResolver(QObject):
                 actions_str += ")\n"
         
         # --- BEGIN DEBUG LOGGING ---
-        logging.debug(f"[CombatResolver] Decision Prompt Data for {active_name}:")
+        logging.debug(f"[CombatResolver] Decision Prompt Data for {active_name} (Instance ID: {instance_id}):")
         logging.debug(f"--- Actions String ---\n{actions_str}")
         logging.debug(f"--- Abilities String ---\n{abilities_str}")
         logging.debug(f"--- Traits String ---\n{traits_str}")
@@ -1317,6 +1341,9 @@ For taking no action:
                 
             active = combatants[active_idx]
             
+            # Get the instance ID for this combatant
+            instance_id = active.get('instance_id', f"combatant_{active_idx}")
+            
             # Debug: Log all combatant HP values for debugging
             print(f"\n[CombatResolver] DEBUG: CURRENT HP VALUES IN PROMPT CREATION:")
             for i, c in enumerate(combatants):
@@ -1389,9 +1416,8 @@ Status: {active.get('status', 'OK')}
             actions_str = "Basic attack only."
             traits_str = "No special traits."
             
-            # Add a unique marker for this monster to prevent ability mixing
-            monster_id = active.get('id', active_idx)
-            monster_ability_tag = f"{active_name}_{monster_id}_ability"
+            # Add a unique marker for this monster instance to prevent ability mixing
+            monster_ability_tag = f"{active_name}_{instance_id}_ability"
             
             # Format abilities if present
             if "abilities" in active:
@@ -1399,6 +1425,14 @@ Status: {active.get('status', 'OK')}
                 if abilities:
                     abilities_str = ""
                     for name, ability in abilities.items():
+                        # Only filter out abilities explicitly tagged with a different monster's ID
+                        ability_instance_id = ability.get("monster_instance_id", None)
+                        if ability_instance_id is not None and ability_instance_id != instance_id:
+                            source_name = ability.get("monster_name", "another monster")
+                            if source_name != active_name:
+                                print(f"[CombatResolver] WARNING: Skipping ability {name} that belongs to {source_name} ({ability_instance_id}), not {active_name} ({instance_id})")
+                                continue
+                            
                         desc = ability.get("description", "No description")
                         usage = ability.get("usage", "At will")
                         abilities_str += f"- {name}: {desc} ({usage}) [{monster_ability_tag}]\n"
@@ -1414,6 +1448,14 @@ Status: {active.get('status', 'OK')}
                     for action_dict in actions_data: 
                         # Ensure the item in the list is actually a dictionary
                         if isinstance(action_dict, dict): 
+                            # Only filter out actions explicitly tagged with a different monster's ID
+                            action_instance_id = action_dict.get("monster_instance_id", None)
+                            if action_instance_id is not None and action_instance_id != instance_id:
+                                source_name = action_dict.get("monster_name", "another monster")
+                                if source_name != active_name:
+                                    print(f"[CombatResolver] WARNING: Skipping action {action_dict.get('name', 'Unknown')} that belongs to {source_name} ({action_instance_id}), not {active_name} ({instance_id})")
+                                    continue
+                                
                             # Get action details from the dictionary
                             name = action_dict.get("name", "Unknown Action") 
                             desc = action_dict.get("description", "No description")
@@ -1428,10 +1470,6 @@ Status: {active.get('status', 'OK')}
                         else:
                             # Log a warning if an item in the actions list is not a dictionary
                             logging.warning(f"[CombatResolver] Item in actions list for {active.get('name', 'Unknown')} is not a dictionary: {action_dict}")
-                # Optional: Handle legacy dictionary format if necessary (add code here if needed)
-                # elif isinstance(actions_data, dict) and actions_data:
-                #    # ... code to handle dictionary format ...
-                #    pass 
                 # If actions_data is empty or not a list/dict, actions_str remains "Basic attack only."
 
             # Format traits if present
@@ -1445,6 +1483,14 @@ Status: {active.get('status', 'OK')}
                     for trait_dict in traits_data:
                         # Ensure the item in the list is a dictionary
                         if isinstance(trait_dict, dict):
+                            # Only filter out traits explicitly tagged with a different monster's ID
+                            trait_instance_id = trait_dict.get("monster_instance_id", None)
+                            if trait_instance_id is not None and trait_instance_id != instance_id:
+                                source_name = trait_dict.get("monster_name", "another monster")
+                                if source_name != active_name:
+                                    print(f"[CombatResolver] WARNING: Skipping trait {trait_dict.get('name', 'Unknown')} that belongs to {source_name} ({trait_instance_id}), not {active_name} ({instance_id})")
+                                    continue
+                                
                             # Get trait details from the dictionary
                             name = trait_dict.get("name", "Unknown Trait")
                             desc = trait_dict.get("description", "No description")
@@ -1452,14 +1498,16 @@ Status: {active.get('status', 'OK')}
                         else:
                             # Log a warning if an item in the traits list is not a dictionary
                             logging.warning(f"[CombatResolver] Item in traits list for {active.get('name', 'Unknown')} is not a dictionary: {trait_dict}")
-                # Optional: Handle legacy dictionary format if needed
-                # elif isinstance(traits_data, dict) and traits_data:
-                #     # ... code to handle dictionary format ...
-                #     pass
                 # If traits_data is empty or not a list/dict, traits_str remains "No special traits."
+                
+            # Debug: Print abilities we found
+            has_abilities = abilities_str != "No special abilities."
+            has_actions = actions_str != "Basic attack only."
+            has_traits = traits_str != "No special traits."
+            print(f"[CombatResolver] For {active_name} (ID: {instance_id}): Has abilities: {has_abilities}, Has actions: {has_actions}, Has traits: {has_traits}")
 
             # --- BEGIN DEBUG LOGGING ---
-            logging.debug(f"[CombatResolver] Resolution Prompt - Abilities/Actions/Traits for {active.get('name', 'Unknown')}:")
+            logging.debug(f"[CombatResolver] Resolution Prompt - Abilities/Actions/Traits for {active.get('name', 'Unknown')} (Instance ID: {instance_id}):")
             logging.debug(f"--- Actions String ---\n{actions_str}")
             logging.debug(f"--- Abilities String ---\n{abilities_str}")
             logging.debug(f"--- Traits String ---\n{traits_str}")

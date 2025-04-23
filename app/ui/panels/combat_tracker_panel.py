@@ -34,6 +34,7 @@ import copy
 import time
 import threading
 import gc
+import hashlib
 
 from app.ui.panels.base_panel import BasePanel
 from app.ui.panels.panel_category import PanelCategory
@@ -3248,8 +3249,22 @@ class CombatTrackerPanel(BasePanel):
             concentration = conc_item.checkState() == Qt.Checked if conc_item else False
             combatant_type = type_item.text() if type_item else "unknown"
             
+            # Get monster ID from name item if it's a monster
+            monster_id = None
+            if combatant_type == "monster" and name_item:
+                monster_id = name_item.data(Qt.UserRole + 2)
+                if not monster_id:
+                    # Generate a unique ID if none exists
+                    import time
+                    import hashlib
+                    timestamp = int(time.time())
+                    hash_base = f"{name}_{timestamp}_{row}"
+                    monster_id = hashlib.md5(hash_base.encode()).hexdigest()[:8]
+                    # Store the ID back on the item for future reference
+                    name_item.setData(Qt.UserRole + 2, monster_id)
+            
             # Debug print current HP values
-            print(f"[CombatTracker] DEBUG: Table row {row}: {name} - HP: {hp}/{max_hp}")
+            print(f"[CombatTracker] DEBUG: Table row {row}: {name} - HP: {hp}/{max_hp} {' (ID: ' + str(monster_id) + ')' if monster_id else ''}")
             
             # Create combatant dictionary
             combatant = {
@@ -3261,6 +3276,7 @@ class CombatTrackerPanel(BasePanel):
                 "status": status,
                 "concentration": concentration,
                 "type": combatant_type,
+                "instance_id": monster_id if monster_id else f"combatant_{row}"  # Ensure every combatant has a unique ID
             }
             
             # Add more detailed information if available in the self.combatants dictionary
@@ -3277,7 +3293,38 @@ class CombatTrackerPanel(BasePanel):
                         "ability_recharges", "limited_use"
                     ]:
                         if key in stored_combatant:
-                            combatant[key] = stored_combatant[key]
+                            # FIXED: Tag each ability with the monster instance ID to prevent mixing
+                            if key in ["actions", "traits", "legendary_actions", "reactions"]:
+                                # These are typically lists of dictionaries
+                                tagged_abilities = []
+                                original_abilities = stored_combatant[key]
+                                
+                                if isinstance(original_abilities, list):
+                                    for ability in original_abilities:
+                                        if isinstance(ability, dict):
+                                            # Create a copy to avoid modifying the original
+                                            ability_copy = ability.copy()
+                                            # Add instance ID to the ability
+                                            ability_copy["monster_instance_id"] = combatant["instance_id"]
+                                            ability_copy["monster_name"] = name
+                                            
+                                            # Check for monster_source tag
+                                            if "monster_source" not in ability_copy:
+                                                ability_copy["monster_source"] = name
+                                                
+                                            tagged_abilities.append(ability_copy)
+                                        else:
+                                            # Non-dict abilities are simply passed through
+                                            tagged_abilities.append(ability)
+                                    
+                                    # Store the tagged abilities
+                                    combatant[key] = tagged_abilities
+                                else:
+                                    # If not a list, just store as is
+                                    combatant[key] = original_abilities
+                            else:
+                                # For other attributes, copy as is
+                                combatant[key] = stored_combatant[key]
                     
                     # If monster and no existing limited_use, create basic recharge placeholders
                     if combatant_type == "monster" and "limited_use" not in combatant:
@@ -3299,15 +3346,111 @@ class CombatTrackerPanel(BasePanel):
                         "ability_recharges", "limited_use"
                     ]:
                         if hasattr(stored_combatant, attr):
-                            combatant[attr] = getattr(stored_combatant, attr)
+                            attr_value = getattr(stored_combatant, attr)
+                            
+                            # FIXED: Tag abilities with monster instance ID
+                            if attr in ["actions", "traits", "legendary_actions", "reactions"]:
+                                # These are typically lists of objects
+                                if isinstance(attr_value, list):
+                                    tagged_abilities = []
+                                    
+                                    for ability in attr_value:
+                                        if isinstance(ability, dict):
+                                            # Create a copy to avoid modifying the original
+                                            ability_copy = ability.copy()
+                                            # Add instance ID to the ability
+                                            ability_copy["monster_instance_id"] = combatant["instance_id"]
+                                            ability_copy["monster_name"] = name
+                                            
+                                            # Check for monster_source tag
+                                            if "monster_source" not in ability_copy:
+                                                ability_copy["monster_source"] = name
+                                                
+                                            tagged_abilities.append(ability_copy)
+                                        else:
+                                            # Create a dictionary from the object's attributes
+                                            ability_dict = {}
+                                            for ability_attr in dir(ability):
+                                                if not ability_attr.startswith("_") and not callable(getattr(ability, ability_attr)):
+                                                    ability_dict[ability_attr] = getattr(ability, ability_attr)
+                                            
+                                            # Add monster identifier
+                                            ability_dict["monster_instance_id"] = combatant["instance_id"]
+                                            ability_dict["monster_name"] = name
+                                            ability_dict["monster_source"] = name
+                                            
+                                            tagged_abilities.append(ability_dict)
+                                    
+                                    # Store the tagged abilities
+                                    combatant[attr] = tagged_abilities
+                                else:
+                                    # If not a list, just store as is
+                                    combatant[attr] = attr_value
+                            else:
+                                # For other attributes, copy as is
+                                combatant[attr] = attr_value
             
             combatants.append(combatant)
+            
+        # FIXED: Add a validation step to ensure no ability mixing
+        self._validate_no_ability_mixing(combatants)
             
         return {
             "round": self.current_round,
             "current_turn_index": self.current_turn,
             "combatants": combatants
         }
+        
+    def _validate_no_ability_mixing(self, combatants):
+        """
+        Validate that no abilities are mixed between different monster instances.
+        This is an additional safety check after the main preparation.
+        """
+        ability_sources = {}  # Maps ability names to their source monsters
+        
+        for combatant in combatants:
+            combatant_id = combatant.get("instance_id", "unknown")
+            combatant_name = combatant.get("name", "Unknown")
+            
+            # Check each ability-containing attribute
+            for ability_type in ["actions", "traits", "legendary_actions", "reactions"]:
+                abilities = combatant.get(ability_type, [])
+                if not isinstance(abilities, list):
+                    continue
+                
+                for i, ability in enumerate(abilities):
+                    if not isinstance(ability, dict):
+                        continue
+                        
+                    ability_name = ability.get("name", f"Unknown_{i}")
+                    
+                    # Make sure all abilities have the instance ID and source name
+                    if "monster_instance_id" not in ability:
+                        print(f"[CombatTracker] WARNING: Adding missing instance ID to {ability_name} for {combatant_name}")
+                        ability["monster_instance_id"] = combatant_id
+                        
+                    if "monster_name" not in ability:
+                        print(f"[CombatTracker] WARNING: Adding missing monster name to {ability_name} for {combatant_name}")
+                        ability["monster_name"] = combatant_name
+                        
+                    if "monster_source" not in ability:
+                        ability["monster_source"] = combatant_name
+                    
+                    # Track the ability source
+                    source_key = f"{ability_name.lower()}"
+                    if source_key in ability_sources:
+                        # If the ability exists, make sure it comes from the right monster instance
+                        previous_source = ability_sources[source_key]
+                        if previous_source != combatant_id:
+                            # This is a potential mixing situation - check if names match to confirm
+                            prev_name = ability.get("monster_name", "Unknown")
+                            if prev_name != combatant_name:
+                                print(f"[CombatTracker] WARNING: Ability {ability_name} may be mixed between {prev_name} and {combatant_name}")
+                                # Ensure this ability is clearly marked with its source for the resolver
+                                ability["name"] = f"{combatant_name} {ability_name}"
+                    else:
+                        # Register this ability with its source
+                        ability_sources[source_key] = combatant_id
 
     def _apply_combat_updates(self, updates):
         """Apply final combatant updates from the resolution result."""
