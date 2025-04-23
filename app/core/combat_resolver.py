@@ -574,6 +574,10 @@ class CombatResolver(QObject):
             # Initialize or reset action economy at the start of the turn
             active_combatant = ActionEconomyManager.initialize_action_economy(active_combatant)
             
+            # Process recharge abilities for monsters
+            if active_combatant.get("type", "").lower() == "monster":
+                self._process_recharge_abilities(active_combatant, dice_roller)
+            
             # Debug: Log all combatant HP values at start of turn
             print(f"\n[CombatResolver] DEBUG: CURRENT HP VALUES AT START OF TURN:")
             for i, c in enumerate(combatants):
@@ -791,7 +795,7 @@ class CombatResolver(QObject):
             try:
                 # Include aura updates in the resolution context
                 resolution_prompt = self._create_resolution_prompt(
-                    combatants, active_idx, round_num, action, dice_results, aura_updates)
+                    combatants, active_idx, action, dice_results, round_num)
                     
                 print(f"[CombatResolver] Requesting resolution from LLM for {active_combatant.get('name', 'Unknown')}")
                 resolution_response = self.llm_service.generate_completion(
@@ -1068,568 +1072,370 @@ class CombatResolver(QObject):
                 "dice": []
             }
 
-    def _create_decision_prompt(self, combatants, active_idx, round_num):
+    def _process_recharge_abilities(self, combatant, dice_roller):
         """
-        Create a prompt for the LLM to decide the action for a combatant.
+        Process recharge abilities for a combatant's turn.
+        
+        This method:
+        1. Checks for any abilities that need to recharge
+        2. Rolls appropriate dice for recharge
+        3. Updates the combatant's state with freshly recharged abilities
         
         Args:
-            combatants: List of all combatants
-            active_idx: Index of active combatant
-            round_num: Current round number
+            combatant: The combatant data object
+            dice_roller: Function for rolling dice
             
         Returns:
-            Prompt string
+            Updated combatant data
         """
-        active = combatants[active_idx]
-        
-        # Import ActionEconomyManager if needed for checking available actions
-        from app.combat.action_economy import ActionEconomyManager
-        
-        # Initialize action economy if not already present
-        if "action_economy" not in active:
-            active = ActionEconomyManager.initialize_action_economy(active)
+        if combatant.get("type", "").lower() != "monster":
+            return combatant
             
-        # Get available actions
-        available_actions = ActionEconomyManager.check_available_actions(active)
-
-        # Format active combatant's name and position
-        active_name = active.get('name', 'Unknown')
+        combatant_name = combatant.get("name", "Unknown")
+        print(f"[CombatResolver] Processing recharge abilities for {combatant_name}")
         
-        # Get the instance ID for this combatant
-        instance_id = active.get('instance_id', f"combatant_{active_idx}")
-        
-        # Format nearby combatants
-        nearby = self._get_nearby_combatants(active, combatants)
-        nearby_str = self._format_nearby_combatants(nearby)
-        
-        # Get and format conditions affecting the active combatant
-        condition_str = self._format_conditions(active)
-        
-        # Get active auras affecting the combatant
-        active_auras = self._get_active_auras(active, combatants)
-        active_auras_str = self._format_active_auras(active_auras)
-        num_auras = len(active_auras)
-        print(f"[CombatResolver] Found {num_auras} active auras affecting {active_name}")
-        
-        # Extract abilities and actions the combatant can use
-        abilities_str = "No special abilities."
-        actions_str = "Basic attack only."
-        traits_str = "No special traits."
-        
-        # Add a unique marker for this monster instance to prevent ability mixing
-        monster_ability_tag = f"{active_name}_{instance_id}_ability"
-        
-        # Initialize ability counters for debugging
-        actions_count = 0
-        abilities_count = 0
-        traits_count = 0
-        
-        # Format abilities if present
-        if "abilities" in active:
-            abilities = active.get("abilities", {})
-            if abilities and isinstance(abilities, dict) and len(abilities) > 0:
-                abilities_str = ""
-                abilities_count = len(abilities)
-                for name, ability in abilities.items():
-                    # Only filter out abilities explicitly tagged with a different monster's ID
-                    ability_instance_id = ability.get("monster_instance_id", None)
-                    if ability_instance_id is not None and ability_instance_id != instance_id:
-                        source_name = ability.get("monster_name", "another monster")
-                        if source_name != active_name:
-                            print(f"[CombatResolver] WARNING: Skipping ability {name} that belongs to {source_name} ({ability_instance_id}), not {active_name} ({instance_id})")
-                            continue
-                        
-                    desc = ability.get("description", "No description")
-                    usage = ability.get("usage", "At will")
-                    abilities_str += f"- {name}: {desc} ({usage}) [{monster_ability_tag}]\n"
-            else:
-                # Special case: Ensure Red Dragons have their legendary resistance
-                if "dragon" in active_name.lower() and "red" in active_name.lower() and "abilities" not in active:
-                    print(f"[CombatResolver] Adding default legendary resistance to {active_name}")
-                    abilities_str = f"- Legendary Resistance (3/Day): If the dragon fails a saving throw, it can choose to succeed instead. [{monster_ability_tag}]\n"
-                    abilities_count = 1
-        
-        # Format actions if present
-        if "actions" in active:
-            actions_data = active.get("actions", []) # Get actions data, default to empty list
+        # Initialize recharge abilities tracking if not present
+        if "recharge_abilities" not in combatant:
+            combatant["recharge_abilities"] = {}
             
-            # Check if actions_data is a non-empty list
-            if isinstance(actions_data, list) and actions_data:
-                actions_str = ""
-                actions_count = len(actions_data)
-                # Iterate over the list of action dictionaries
-                for action_dict in actions_data: 
-                    # Ensure the item in the list is actually a dictionary
-                    if isinstance(action_dict, dict): 
-                        # Only filter out actions explicitly tagged with a different monster's ID
-                        action_instance_id = action_dict.get("monster_instance_id", None)
-                        if action_instance_id is not None and action_instance_id != instance_id:
-                            source_name = action_dict.get("monster_name", "another monster")
-                            if source_name != active_name:
-                                print(f"[CombatResolver] WARNING: Skipping action {action_dict.get('name', 'Unknown')} that belongs to {source_name} ({action_instance_id}), not {active_name} ({instance_id})")
-                                continue
-                            
-                        # Get action details from the dictionary
-                        name = action_dict.get("name", "Unknown Action") 
-                        desc = action_dict.get("description", "No description")
-                        attack_bonus = action_dict.get("attack_bonus", "")
-                        damage = action_dict.get("damage", "")
-                        
-                        # Format the string based on available details
-                        if attack_bonus and damage:
-                            actions_str += f"- {name}: {desc} (Attack: +{attack_bonus}, Damage: {damage}) [{monster_ability_tag}]\n"
-                        else:
-                            actions_str += f"- {name}: {desc} [{monster_ability_tag}]\n"
-                    else:
-                        # Log a warning if an item in the actions list is not a dictionary
-                        logging.warning(f"[CombatResolver] Item in actions list for {active.get('name', 'Unknown')} is not a dictionary: {action_dict}")
-            # If actions_data is empty or not a list/dict, actions_str remains "Basic attack only."
-
-        # Format traits if present
-        if "traits" in active:
-            traits_data = active.get("traits", []) # Get traits data, default to empty list
+        # Handle special case for dragons - detect breath weapons and add them as recharge abilities
+        if "dragon" in combatant_name.lower() and combatant.get("actions"):
+            is_first_turn = "turn_count" not in combatant or combatant["turn_count"] == 0
             
-            # Check if traits_data is a non-empty list
-            if isinstance(traits_data, list) and traits_data:
-                traits_str = ""
-                traits_count = len(traits_data)
-                # Iterate over the list of trait dictionaries
-                for trait_dict in traits_data:
-                    # Ensure the item in the list is a dictionary
-                    if isinstance(trait_dict, dict):
-                        # Only filter out traits explicitly tagged with a different monster's ID
-                        trait_instance_id = trait_dict.get("monster_instance_id", None)
-                        if trait_instance_id is not None and trait_instance_id != instance_id:
-                            source_name = trait_dict.get("monster_name", "another monster")
-                            if source_name != active_name:
-                                print(f"[CombatResolver] WARNING: Skipping trait {trait_dict.get('name', 'Unknown')} that belongs to {source_name} ({trait_instance_id}), not {active_name} ({instance_id})")
-                                continue
-                            
-                        # Get trait details from the dictionary
-                        name = trait_dict.get("name", "Unknown Trait")
-                        desc = trait_dict.get("description", "No description")
-                        traits_str += f"- {name}: {desc} [{monster_ability_tag}]\n"
-                    else:
-                        # Log a warning if an item in the traits list is not a dictionary
-                        logging.warning(f"[CombatResolver] Item in traits list for {active.get('name', 'Unknown')} is not a dictionary: {trait_dict}")
-            # If traits_data is empty or not a list/dict, traits_str remains "No special traits."
-            
-        # Debug: Print abilities we found
-        has_abilities = abilities_str != "No special abilities."
-        has_actions = actions_str != "Basic attack only."
-        has_traits = traits_str != "No special traits."
-        print(f"[CombatResolver] For {active_name} (ID: {instance_id}): Has abilities: {has_abilities} ({abilities_count}), Has actions: {has_actions} ({actions_count}), Has traits: {has_traits} ({traits_count})")
-
-        # Basic attacks if no actions are defined
-        if actions_str == "Basic attack only.":
-            attack_bonus = active.get("attack_bonus", 0)
-            damage_dice = active.get("damage_dice", "1d6")
-            damage_bonus = active.get("damage_bonus", 0)
-            weapon = active.get("weapon", "weapon")
-            
-            if attack_bonus or damage_dice:
-                actions_str = f"- Basic Attack: Attack with {weapon} (Attack: +{attack_bonus}, Damage: {damage_dice}"
-                if damage_bonus > 0:
-                    actions_str += f"+{damage_bonus}"
-                actions_str += ")\n"
-        
-        # --- BEGIN DEBUG LOGGING ---
-        logging.debug(f"[CombatResolver] Decision Prompt Data for {active_name} (Instance ID: {instance_id}):")
-        logging.debug(f"--- Actions String ---\n{actions_str}")
-        logging.debug(f"--- Abilities String ---\n{abilities_str}")
-        logging.debug(f"--- Traits String ---\n{traits_str}")
-        # --- END DEBUG LOGGING ---
-        
-        prompt = f"""
-You are the tactical combat AI for a D&D 5e game. You decide actions for {active_name}.
-
-# COMBAT SITUATION
-Round: {round_num}
-Active Combatant: {active_name}
-
-# {active_name.upper()} DETAILS
-HP: {active.get('hp', 0)}/{active.get('max_hp', active.get('hp', 0))}
-AC: {active.get('ac', 10)}
-Type: {active.get('type', 'Unknown')}
-Status: {active.get('status', 'OK')}
-
-# AVAILABLE ACTIONS
-{active_name} has ALL of the following available this turn:
-- A standard ACTION
-- A BONUS ACTION
-- MOVEMENT up to {active.get('speed', 30)} feet
-- A REACTION (if triggered)
-
-# SPECIFIC ABILITIES, ACTIONS AND TRAITS
-EXTREMELY IMPORTANT: {active_name} can ONLY use the specific abilities, actions, and traits listed below. DO NOT use abilities from any other monster. DO NOT invent new abilities or modify these in any way.
-
-CRITICAL INSTRUCTION: Each monster has its own unique set of abilities. Even if you've seen similar monsters before, ONLY use the abilities explicitly listed below for THIS specific creature.
-
-## Actions:
-{actions_str}
-
-## Special Abilities:
-{abilities_str}
-
-## Traits:
-{traits_str}
-
-# NEARBY COMBATANTS
-{nearby_str}
-
-# CURRENT CONDITIONS
-{condition_str}
-"""
-        
-        # Add aura information if present
-        if active_auras:
-            prompt += f"""
-# ACTIVE AURAS AFFECTING {active_name}
-{active_auras_str}
-"""
-
-        prompt += f"""
-# YOUR TASK
-Decide the most appropriate action for {active_name} this turn. Consider:
-1. Tactical position
-2. HP status of all combatants
-3. STRICTLY USE ONLY the abilities and actions listed explicitly for {active_name} - DO NOT USE any abilities from other monsters
-4. Known enemy capabilities
-5. Team strategy (focus fire, crowd control, etc.)
-
-IMPORTANT: {active_name} has FULL ACTIONS available this turn, including standard action, bonus action, and full movement. DO NOT claim the combatant has no actions or movement remaining.
-
-CRITICAL: You MUST choose ONLY from the actions, abilities, and traits explicitly listed above for {active_name}. DO NOT use abilities from any other monster in the combat. DO NOT create new abilities or modify the existing ones. Use them exactly as described.
-
-Your response should be a JSON object containing:
-{{
-  "action": "A detailed description of what the active combatant does, including any choices that affect the game mechanics",
-  "dice_requests": [
-    {{"expression": "1d20+5", "purpose": "Attack roll"}},
-    {{"expression": "2d6+3", "purpose": "Damage roll"}}
-  ],
-  "action_type": "action/bonus_action/movement/etc.",
-  "target": "The target of the action, if applicable"
-}}
-
-ACTION: Describe the action and any choices clearly. Be specific about ranges, area effects, etc.
-DICE_REQUESTS: List any dice rolls needed to resolve the action with precise expressions and modifiers.
-ACTION_TYPE: 'action', 'bonus_action', 'movement', 'reaction', 'legendary_action', or 'none'
-TARGET: The target of the action, if applicable. Use exact combatant names, not generic descriptions.
-
-RESPONSE FORMAT EXAMPLES:
-For attacks:
-{{"action": "The Orc Captain attacks the nearest enemy with its greataxe.", "dice_requests": [{{"expression": "1d20+5", "purpose": "Attack roll"}}, {{"expression": "1d12+3", "purpose": "Damage roll"}}], "action_type": "action", "target": "Fighter"}}
-
-For spells:
-{{"action": "The Wizard casts Fireball centered on the group of goblins.", "dice_requests": [{{"expression": "8d6", "purpose": "Fire damage (DEX save DC 15 for half)"}}], "action_type": "action", "target": "Enemy group"}}
-
-For movement:
-{{"action": "The Rogue moves 30 feet to get behind the ogre for a flanking position.", "dice_requests": [], "action_type": "movement", "movement_cost": 30}}
-
-For taking no action:
-{{"action": "The Goblin is frightened and stunned, unable to act this turn.", "dice_requests": [], "action_type": "none"}}
-"""
-        return prompt
-
-    def _create_resolution_prompt(self, combatants, active_idx, round_num, action, dice_results, aura_updates=None):
-        """
-        Create a detailed prompt for the LLM to resolve combat.
-        
-        Args:
-            combatants: List of all combatants
-            active_idx: Index of active combatant
-            round_num: Current round number
-            action: Action description
-            dice_results: List of dice roll results
-            aura_updates: List of aura effects applied at the start of the turn
-            
-        Returns:
-            Formatted prompt for the LLM
-        """
-        try:
-            # Check for valid indices
-            if not combatants or active_idx >= len(combatants):
-                print(f"[CombatResolver] Invalid combatants or index: {active_idx}, {len(combatants) if combatants else 0}")
-                return ""
-                
-            active = combatants[active_idx]
-            
-            # Get the instance ID for this combatant
-            instance_id = active.get('instance_id', f"combatant_{active_idx}")
-            
-            # Debug: Log all combatant HP values for debugging
-            print(f"\n[CombatResolver] DEBUG: CURRENT HP VALUES IN PROMPT CREATION:")
-            for i, c in enumerate(combatants):
-                print(f"[CombatResolver] DEBUG: Combatant {i}: {c.get('name')} - HP: {c.get('hp', 0)}/{c.get('max_hp', c.get('hp', 0))}")
-            
-            # Format active combatant information
-            active_name = active.get('name', 'Unknown')
-            
-            # Format dice results for the prompt
-            dice_str = ""
-            for dice in dice_results:
-                expr = dice.get("expression", "")
-                result = dice.get("result", "")
-                purpose = dice.get("purpose", "")
-                
-                dice_str += f"{purpose}: {expr} = {result}\n"
-            
-            # Format aura updates if provided
-            aura_effects_str = ""
-            if aura_updates and len(aura_updates) > 0:
-                aura_effects_str = "# AURA EFFECTS APPLIED\n"
-                for update in aura_updates:
-                    source = update.get("source", "Unknown")
-                    target = update.get("target", "Unknown")
-                    effect = update.get("effect", "Unknown effect")
-                    aura_name = update.get("aura", "unnamed aura")
+            # Look for breath weapon in actions
+            for action in combatant["actions"]:
+                if isinstance(action, dict):
+                    action_name = action.get("name", "")
+                    description = action.get("description", "")
                     
-                    # Add HP information if available for damage auras
-                    if "hp_before" in update and "hp_after" in update:
-                        hp_before = update.get("hp_before", 0)
-                        hp_after = update.get("hp_after", 0)
-                        aura_effects_str += f"{source}'s {aura_name} affected {target}, causing {effect}. HP: {hp_before} → {hp_after}\n"
-                    else:
-                        aura_effects_str += f"{source}'s {aura_name} affected {target}, causing {effect}.\n"
-                aura_effects_str += "\n"
+                    # Check if this is a breath weapon with recharge
+                    is_breath = "breath" in action_name.lower()
+                    recharge_match = re.search(r"recharge (\d+)(?:-(\d+))?", description, re.IGNORECASE)
+                    
+                    if is_breath and recharge_match:
+                        # Extract recharge range
+                        recharge_min = int(recharge_match.group(1))
+                        recharge_max = int(recharge_match.group(2)) if recharge_match.group(2) else recharge_min
+                        
+                        # Add to tracked recharge abilities if not already there
+                        if action_name not in combatant["recharge_abilities"]:
+                            print(f"[CombatResolver] Detected breath weapon: {action_name} with recharge {recharge_min}-{recharge_max}")
+                            combatant["recharge_abilities"][action_name] = {
+                                "available": is_first_turn,  # Available on first turn
+                                "recharge_range": (recharge_min, recharge_max),
+                                "recharge_text": f"Recharge {recharge_min}-{recharge_max}"
+                            }
+        
+        # Special case for adult red dragons - ensure Fire Breath is tracked
+        if "red" in combatant_name.lower() and "dragon" in combatant_name.lower() and "adult" in combatant_name.lower():
+            has_fire_breath = False
             
-            # Create a detailed prompt
-            prompt = f"""
-You are the combat AI for a D&D 5e game. Resolve the current action and create a JSON response with a narrative description and updates to any combatants.
-
-# COMBAT STATE 
-Round: {round_num}
-
-# COMBATANTS
-"""
+            # Check if Fire Breath is already in recharge abilities
+            if "Fire Breath" in combatant["recharge_abilities"]:
+                has_fire_breath = True
+            else:
+                # Look for Fire Breath in actions
+                for action in combatant.get("actions", []):
+                    if isinstance(action, dict) and action.get("name") == "Fire Breath":
+                        has_fire_breath = True
+                        break
             
-            # Add each combatant with proper indentation
-            for combatant in combatants:
-                prompt += f"""
-{combatant.get('name', 'Unknown')}: 
-- HP: {combatant.get('hp', 0)}/{combatant.get('max_hp', combatant.get('hp', 0))}
-- AC: {combatant.get('ac', 10)}
-- Type: {combatant.get('type', 'Unknown')}
-- Status: {combatant.get('status', 'OK')}
-"""
-
-            # Add active combatant with proper indentation
-            prompt += f"""
-# ACTIVE COMBATANT
-Name: {active.get('name', 'Unknown')}
-HP: {active.get('hp', 0)}/{active.get('max_hp', active.get('hp', 0))}
-AC: {active.get('ac', 10)}
-Type: {active.get('type', 'Unknown')}
-Status: {active.get('status', 'OK')}
-
-"""
-
-            # Add the active combatant's abilities, actions, and traits
-            abilities_str = "No special abilities."
-            actions_str = "Basic attack only."
-            traits_str = "No special traits."
-            
-            # Add a unique marker for this monster instance to prevent ability mixing
-            monster_ability_tag = f"{active_name}_{instance_id}_ability"
-            
-            # Initialize ability counters for debugging
-            actions_count = 0
-            abilities_count = 0
-            traits_count = 0
-            
-            # Format abilities if present
-            if "abilities" in active:
-                abilities = active.get("abilities", {})
-                if abilities and isinstance(abilities, dict) and len(abilities) > 0:
-                    abilities_str = ""
-                    abilities_count = len(abilities)
-                    for name, ability in abilities.items():
-                        # Only filter out abilities explicitly tagged with a different monster's ID
-                        ability_instance_id = ability.get("monster_instance_id", None)
-                        if ability_instance_id is not None and ability_instance_id != instance_id:
-                            source_name = ability.get("monster_name", "another monster")
-                            if source_name != active_name:
-                                print(f"[CombatResolver] WARNING: Skipping ability {name} that belongs to {source_name} ({ability_instance_id}), not {active_name} ({instance_id})")
-                                continue
-                            
-                        desc = ability.get("description", "No description")
-                        usage = ability.get("usage", "At will")
-                        abilities_str += f"- {name}: {desc} ({usage}) [{monster_ability_tag}]\n"
-                else:
-                    # Special case: Ensure Red Dragons have their legendary resistance
-                    if "dragon" in active_name.lower() and "red" in active_name.lower() and "abilities" not in active:
-                        print(f"[CombatResolver] Adding default legendary resistance to {active_name}")
-                        abilities_str = f"- Legendary Resistance (3/Day): If the dragon fails a saving throw, it can choose to succeed instead. [{monster_ability_tag}]\n"
-                        abilities_count = 1
-            
-            # Format actions if present
-            if "actions" in active:
-                actions_data = active.get("actions", []) # Get actions data, default to empty list
+            # If no Fire Breath is found, add it manually
+            if not has_fire_breath:
+                is_first_turn = "turn_count" not in combatant or combatant["turn_count"] == 0
+                print(f"[CombatResolver] Adding standard Fire Breath to Adult Red Dragon {combatant_name}")
+                combatant["recharge_abilities"]["Fire Breath"] = {
+                    "available": is_first_turn,
+                    "recharge_range": (5, 6),
+                    "recharge_text": "Recharge 5-6"
+                }
                 
-                # Check if actions_data is a non-empty list
-                if isinstance(actions_data, list) and actions_data: 
-                    actions_str = ""
-                    actions_count = len(actions_data)
-                    # Iterate over the list of action dictionaries
-                    for action_dict in actions_data: 
-                        # Ensure the item in the list is actually a dictionary
-                        if isinstance(action_dict, dict): 
-                            # Only filter out actions explicitly tagged with a different monster's ID
-                            action_instance_id = action_dict.get("monster_instance_id", None)
-                            if action_instance_id is not None and action_instance_id != instance_id:
-                                source_name = action_dict.get("monster_name", "another monster")
-                                if source_name != active_name:
-                                    print(f"[CombatResolver] WARNING: Skipping action {action_dict.get('name', 'Unknown')} that belongs to {source_name} ({action_instance_id}), not {active_name} ({instance_id})")
-                                    continue
-                                
-                            # Get action details from the dictionary
-                            name = action_dict.get("name", "Unknown Action") 
-                            desc = action_dict.get("description", "No description")
-                            attack_bonus = action_dict.get("attack_bonus", "")
-                            damage = action_dict.get("damage", "")
+                # If actions array doesn't exist or is empty, create it and add Fire Breath
+                if not combatant.get("actions"):
+                    combatant["actions"] = []
+                
+                # Check if Fire Breath already exists in actions
+                fire_breath_exists = False
+                for action in combatant.get("actions", []):
+                    if isinstance(action, dict) and action.get("name") == "Fire Breath":
+                        fire_breath_exists = True
+                        break
+                
+                # Add Fire Breath action if it doesn't exist
+                if not fire_breath_exists:
+                    combatant["actions"].append({
+                        "name": "Fire Breath",
+                        "description": "The dragon exhales fire in a 60-foot cone. Each creature in that area must make a DC 21 Dexterity saving throw, taking 63 (18d6) fire damage on a failed save, or half as much damage on a successful one. (Recharge 5-6)",
+                        "attack_bonus": "",
+                        "damage": "18d6"
+                    })
+                    
+        # Attempt to recharge abilities
+        recharge_results = []
+        
+        # Make a copy to avoid modification during iteration
+        for name, ability in list(combatant["recharge_abilities"].items()):
+            if not ability.get("available", False):
+                # Get recharge range
+                recharge_range = ability.get("recharge_range", (6, 6))  # Default to 6 only
+                
+                # Roll d6 for recharge
+                roll_result = dice_roller("1d6")
+                did_recharge = roll_result >= recharge_range[0] and roll_result <= recharge_range[1]
+                
+                # Update ability status
+                ability["available"] = did_recharge
+                
+                # Log result
+                recharge_text = ability.get("recharge_text", f"Recharge {recharge_range[0]}-{recharge_range[1]}")
+                result_str = "recharged" if did_recharge else "did not recharge"
+                print(f"[CombatResolver] {name} ({recharge_text}) rolled {roll_result}: {result_str}")
+                
+                # Add to results for reporting
+                recharge_results.append({
+                    "name": name,
+                    "roll": roll_result,
+                    "recharged": did_recharge,
+                    "range": recharge_range
+                })
+        
+        # Log a summary
+        if recharge_results:
+            success_count = sum(1 for r in recharge_results if r["recharged"])
+            print(f"[CombatResolver] Recharge results for {combatant_name}: {success_count}/{len(recharge_results)} abilities recharged")
+            
+            # List all available abilities
+            available_abilities = [name for name, ability in combatant["recharge_abilities"].items() if ability.get("available", False)]
+            if available_abilities:
+                print(f"[CombatResolver] Available recharge abilities: {', '.join(available_abilities)}")
+            else:
+                print(f"[CombatResolver] No recharge abilities currently available for {combatant_name}")
+        else:
+            print(f"[CombatResolver] No recharge abilities to process for {combatant_name}")
+            
+        return combatant
+
+    def _create_decision_prompt(self, combat_state, turn_combatant):
+        """Create a prompt for the LLM to decide a combatant's action."""
+        prompt = "You are playing the role of a combatant in a D&D 5e battle. Make a tactical decision for your next action.\n\n"
+        
+        # Basic combat situation
+        active_combatant = next((c for c in combat_state.get("combatants", []) if c.get("id") == turn_combatant.get("id")), None)
+        if not active_combatant:
+            return "Error: Could not find active combatant in combat state."
+            
+        instance_id = active_combatant.get("instance_id", "")
+        
+        # Get lists of available and unavailable recharge abilities
+        available_recharge_abilities = []
+        unavailable_recharge_abilities = []
+        
+        for name, info in active_combatant.get("recharge_abilities", {}).items():
+            if info.get("available", False):
+                available_recharge_abilities.append(f"{name} ({info.get('recharge_text', 'Recharge ability')})")
+            else:
+                unavailable_recharge_abilities.append(f"{name} ({info.get('recharge_text', 'Recharge ability')})")
+        
+        # Format initiative order
+        initiative_order = []
+        for c in sorted([c for c in combat_state.get("combatants", [])], key=lambda x: x.get("initiative", 0), reverse=True):
+            initiative_text = f"{c.get('name')} (Initiative: {c.get('initiative')})"
+            if c.get("id") == active_combatant.get("id"):
+                initiative_text += " - ACTIVE TURN"
+            initiative_order.append(initiative_text)
+        
+        # Describe the combat situation
+        prompt += "# Combat Situation\n"
+        prompt += f"You are playing as: {active_combatant.get('name')} (Type: {active_combatant.get('type')})\n"
+        prompt += f"Current HP: {active_combatant.get('current_hp', 0)}/{active_combatant.get('max_hp', 0)}\n"
+        prompt += f"AC: {active_combatant.get('ac', 0)}\n"
+        
+        # Add status effects if any
+        status_effects = active_combatant.get("status_effects", [])
+        if status_effects:
+            prompt += f"Status Effects: {', '.join(status_effects)}\n"
+        
+        # Initiative order
+        prompt += "\n## Initiative Order\n"
+        for init in initiative_order:
+            prompt += f"- {init}\n"
+        
+        # Current turn number
+        prompt += f"\nCurrent Turn: {combat_state.get('turn_number', 1)}\n"
+        
+        # Add information about all combatants
+        prompt += "\n# Combatants\n"
+        for c in combat_state.get("combatants", []):
+            if c.get("id") == active_combatant.get("id"):
+                continue  # Skip active combatant as we've already described them
+                
+            prompt += f"## {c.get('name')} ({c.get('type')})\n"
+            prompt += f"HP: {c.get('current_hp', 0)}/{c.get('max_hp', 0)}\n"
+            prompt += f"AC: {c.get('ac', 0)}\n"
+            
+            # Add status effects if any
+            status = c.get("status_effects", [])
+            if status:
+                prompt += f"Status Effects: {', '.join(status)}\n"
+                
+            # Add distance information if available
+            distance = c.get("distance_to_active", "Unknown")
+            if distance != "Unknown":
+                prompt += f"Distance from you: {distance} ft\n"
+                
+            # Add potential threat level
+            if c.get("type", "").lower() == "pc" and active_combatant.get("type", "").lower() == "monster":
+                prompt += "This is a player character (potential threat).\n"
+            elif c.get("type", "").lower() == "monster" and active_combatant.get("type", "").lower() == "pc":
+                prompt += "This is a monster (potential threat).\n"
+            prompt += "\n"
+        
+        # Recharge abilities status
+        if available_recharge_abilities or unavailable_recharge_abilities:
+            prompt += "\n# Recharge Abilities Status\n"
+            
+            if available_recharge_abilities:
+                prompt += "## Available Recharge Abilities\n"
+                for ability in available_recharge_abilities:
+                    prompt += f"- {ability} (AVAILABLE NOW)\n"
+                    
+            if unavailable_recharge_abilities:
+                prompt += "## Unavailable Recharge Abilities\n"
+                for ability in unavailable_recharge_abilities:
+                    prompt += f"- {ability} (NOT YET RECHARGED - unavailable this turn)\n"
+                    
+            prompt += "\n"
+        
+        # Add actions, abilities, and traits
+        prompt += "\n# Your Available Options\n"
+        
+        # Actions
+        actions = active_combatant.get("actions", [])
+        if actions:
+            prompt += "## Actions\n"
+            for action in actions:
+                if isinstance(action, dict):
+                    name = action.get("name", "Unknown")
+                    desc = action.get("description", "No description")
+                    
+                    # Check if this is a recharge ability
+                    recharge_info = ""
+                    is_recharge = False
+                    is_available = True
+                    
+                    if "recharge_abilities" in active_combatant:
+                        if name in active_combatant["recharge_abilities"]:
+                            is_recharge = True
+                            recharge_data = active_combatant["recharge_abilities"][name]
+                            is_available = recharge_data.get("available", False)
+                            recharge_text = recharge_data.get("recharge_text", "Recharge ability")
                             
-                            # Format the string based on available details
-                            if attack_bonus and damage:
-                                actions_str += f"- {name}: {desc} (Attack: +{attack_bonus}, Damage: {damage}) [{monster_ability_tag}]\n"
+                            if is_available:
+                                recharge_info = f" - {recharge_text} (AVAILABLE)"
                             else:
-                                actions_str += f"- {name}: {desc} [{monster_ability_tag}]\n"
-                        else:
-                            # Log a warning if an item in the actions list is not a dictionary
-                            logging.warning(f"[CombatResolver] Item in actions list for {active.get('name', 'Unknown')} is not a dictionary: {action_dict}")
-                # If actions_data is empty or not a list/dict, actions_str remains "Basic attack only."
-
-            # Format traits if present
-            if "traits" in active:
-                traits_data = active.get("traits", []) # Get traits data, default to empty list
-                
-                # Check if traits_data is a non-empty list
-                if isinstance(traits_data, list) and traits_data:
-                    traits_str = ""
-                    traits_count = len(traits_data)
-                    # Iterate over the list of trait dictionaries
-                    for trait_dict in traits_data:
-                        # Ensure the item in the list is a dictionary
-                        if isinstance(trait_dict, dict):
-                            # Only filter out traits explicitly tagged with a different monster's ID
-                            trait_instance_id = trait_dict.get("monster_instance_id", None)
-                            if trait_instance_id is not None and trait_instance_id != instance_id:
-                                source_name = trait_dict.get("monster_name", "another monster")
-                                if source_name != active_name:
-                                    print(f"[CombatResolver] WARNING: Skipping trait {trait_dict.get('name', 'Unknown')} that belongs to {source_name} ({trait_instance_id}), not {active_name} ({instance_id})")
-                                    continue
-                                
-                            # Get trait details from the dictionary
-                            name = trait_dict.get("name", "Unknown Trait")
-                            desc = trait_dict.get("description", "No description")
-                            traits_str += f"- {name}: {desc} [{monster_ability_tag}]\n"
-                        else:
-                            # Log a warning if an item in the traits list is not a dictionary
-                            logging.warning(f"[CombatResolver] Item in traits list for {active.get('name', 'Unknown')} is not a dictionary: {trait_dict}")
-                # If traits_data is empty or not a list/dict, traits_str remains "No special traits."
-                
-            # Debug: Print abilities we found
-            has_abilities = abilities_str != "No special abilities."
-            has_actions = actions_str != "Basic attack only."
-            has_traits = traits_str != "No special traits."
-            print(f"[CombatResolver] For {active_name} (ID: {instance_id}): Has abilities: {has_abilities} ({abilities_count}), Has actions: {has_actions} ({actions_count}), Has traits: {has_traits} ({traits_count})")
-
-            # --- BEGIN DEBUG LOGGING ---
-            logging.debug(f"[CombatResolver] Resolution Prompt - Abilities/Actions/Traits for {active.get('name', 'Unknown')} (Instance ID: {instance_id}):")
-            logging.debug(f"--- Actions String ---\n{actions_str}")
-            logging.debug(f"--- Abilities String ---\n{abilities_str}")
-            logging.debug(f"--- Traits String ---\n{traits_str}")
-            # --- END DEBUG LOGGING ---
-            
-            prompt += f"""# ABILITIES, ACTIONS AND TRAITS
-IMPORTANT: {active.get('name', 'Unknown')} can ONLY use the following specific abilities, actions, and traits.
-
-## Actions:
-{actions_str}
-
-## Special Abilities:
-{abilities_str}
-
-## Traits:
-{traits_str}
-
-"""
-
-            # Add aura information to the prompt
-            active_auras = self._get_active_auras(active, combatants)
-            if active_auras:
-                active_name = active.get('name', 'Unknown')
-                prompt += f"""# ACTIVE AURAS AFFECTING {active_name}
-{self._format_active_auras(active_auras)}
-
-"""
-
-            # Include aura effects that were applied at turn start
-            if aura_effects_str:
-                prompt += aura_effects_str
-
-            prompt += f"""# INTENDED ACTION
-{action}
-
-# DICE RESULTS
-{dice_str}
-
-# INSTRUCTIONS
-1. Create a vivid, exciting narrative of what happens based on the action and dice results
-2. If the action was an attack, determine if it hits based on the attack roll vs. target's AC
-3. If successful, apply any damage or effects based on the dice results
-4. ONLY use abilities and actions that belong to the active combatant - DO NOT use abilities from other monsters
-5. CRUCIAL: Track final HP values accurately!
-6. CRITICALLY IMPORTANT: ONLY use the combatant names exactly as listed above. Do NOT invent new names or refer to generic classes like "Fighter" or "Rogue". Only reference the actual names shown in the COMBATANTS section.
-7. DO NOT have combatants use abilities they do not possess. Each monster has its own unique abilities that cannot be used by other monsters.
-
-Your response MUST be in JSON format with these fields:
-1. "narrative": A vivid description of what happened
-2. "updates": Array of objects containing changes to combatants (name, hp, status)
-
-Example:
-{{
-  "narrative": "Fighter slashes at the Hobgoblin Captain with his longsword. The blade connects with a solid hit, slicing through the hobgoblin's armor and drawing blood. The hobgoblin staggers but remains standing, now visibly wounded. (AC 15 vs. roll 17, hit for 8 damage)",
-  "updates": [
-    {{
-      "name": "Hobgoblin Captain",
-      "hp": 24,
-      "status": "Wounded"
-    }}
-  ]
-}}
-
-IMPORTANT: 
-1. Always include CURRENT HP values in your narrative to help players track the battle state.
-2. ALWAYS express HP updates as absolute integer values (e.g., "hp": 24), not as text like "reduce by 5" or relative changes.
-3. Your response MUST be valid JSON that can be parsed, with no extra text before or after.
-4. For this combat to be interesting, attacks should often hit and do damage. 
-5. A roll of 15 or higher almost always hits average AC targets (around 14-16).
-6. CRITICAL: Use the exact HP values provided at the start of this prompt. DO NOT RESET TO FULL HP or make up values.
-7. Calculate damage from the CURRENT HP values shown at the start of this prompt, not from max HP.
-8. EXTREMELY IMPORTANT: Only update combatants that actually exist in this combat. Use EXACT names as shown above, do not make up new combatants like "Goblin", "Fighter", etc.
-9. NEVER invent new abilities or actions that are not explicitly listed in the ABILITIES, ACTIONS AND TRAITS section.
-"""
-            return prompt
-        except Exception as e:
-            print(f"[CombatResolver] Error creating resolution prompt: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            
-            # Return a simplified prompt that still works but has minimal data
-            return f"""
-You are the combat AI for a D&D 5e game. Create a JSON response with these fields:
-- "narrative": A brief description of what happened
-- "updates": An array of combatant updates (empty if nothing changed)
-
-Example:
-{{
-  "narrative": "The combatant attacks but misses.",
-  "updates": []
-}}
-
-IMPORTANT: Your response MUST be valid JSON with no text before or after.
-"""
+                                recharge_info = f" - {recharge_text} (NOT AVAILABLE THIS TURN)"
+                    
+                    # Skip unavailable recharge abilities in the prompt (to avoid confusion)
+                    if is_recharge and not is_available:
+                        continue
+                        
+                    # Check for instance ID to ensure this is for the right monster
+                    action_instance_id = action.get("instance_id", "")
+                    if action_instance_id and action_instance_id != instance_id:
+                        continue  # Skip actions belonging to different instances
+                    
+                    attack_bonus = action.get("attack_bonus", "")
+                    if attack_bonus:
+                        attack_text = f"Attack Bonus: {attack_bonus}"
+                    else:
+                        attack_text = ""
+                        
+                    damage = action.get("damage", "")
+                    if damage:
+                        damage_text = f"Damage: {damage}"
+                    else:
+                        damage_text = ""
+                        
+                    prompt += f"- {name}{recharge_info}\n"
+                    prompt += f"  {desc}\n"
+                    if attack_text:
+                        prompt += f"  {attack_text}\n"
+                    if damage_text:
+                        prompt += f"  {damage_text}\n"
+                    prompt += "\n"
+        
+        # Abilities
+        abilities = active_combatant.get("abilities", [])
+        if abilities:
+            prompt += "## Abilities\n"
+            for ability in abilities:
+                if isinstance(ability, dict):
+                    name = ability.get("name", "Unknown")
+                    desc = ability.get("description", "No description")
+                    
+                    # Check if this is a recharge ability
+                    recharge_info = ""
+                    is_recharge = False
+                    is_available = True
+                    
+                    if "recharge_abilities" in active_combatant:
+                        if name in active_combatant["recharge_abilities"]:
+                            is_recharge = True
+                            recharge_data = active_combatant["recharge_abilities"][name]
+                            is_available = recharge_data.get("available", False)
+                            recharge_text = recharge_data.get("recharge_text", "Recharge ability")
+                            
+                            if is_available:
+                                recharge_info = f" - {recharge_text} (AVAILABLE)"
+                            else:
+                                recharge_info = f" - {recharge_text} (NOT AVAILABLE THIS TURN)"
+                    
+                    # Skip unavailable recharge abilities in the prompt
+                    if is_recharge and not is_available:
+                        continue
+                        
+                    # Check for instance ID to ensure this is for the right monster
+                    ability_instance_id = ability.get("instance_id", "")
+                    if ability_instance_id and ability_instance_id != instance_id:
+                        continue  # Skip abilities belonging to different instances
+                    
+                    prompt += f"- {name}{recharge_info}\n"
+                    prompt += f"  {desc}\n\n"
+        
+        # Traits/Features
+        traits = active_combatant.get("traits", [])
+        if traits:
+            prompt += "## Traits/Features\n"
+            for trait in traits:
+                if isinstance(trait, dict):
+                    name = trait.get("name", "Unknown")
+                    desc = trait.get("description", "No description")
+                    
+                    # Check for instance ID to ensure this is for the right monster
+                    trait_instance_id = trait.get("instance_id", "")
+                    if trait_instance_id and trait_instance_id != instance_id:
+                        continue  # Skip traits belonging to different instances
+                    
+                    prompt += f"- {name}\n"
+                    prompt += f"  {desc}\n\n"
+        
+        # Decision request
+        prompt += "\n# Your Decision\n"
+        prompt += "Given the current combat situation, decide what action to take. Consider the following:\n"
+        prompt += "1. Which available action would be most effective tactically?\n"
+        prompt += "2. Consider using any available recharged abilities (like breath weapons) when they're available\n"
+        prompt += "3. Consider the positioning of allies and enemies\n"
+        prompt += "4. If you have low HP, consider defensive actions or targeting dangerous opponents first\n\n"
+        
+        if available_recharge_abilities:
+            prompt += f"IMPORTANT: You have {len(available_recharge_abilities)} recharged special abilities available now! Consider using them!\n\n"
+        
+        prompt += "Reply with a single action in this format:\n"
+        prompt += "ACTION: [action name]\n"
+        prompt += "TARGET: [target name or 'none' if no target]\n"
+        prompt += "REASONING: [brief tactical reasoning for this choice]\n"
+        
+        return prompt
 
     def _process_death_save(self, combatant):
         """Process a death save for an unconscious character"""
@@ -2251,3 +2057,178 @@ Return ONLY the JSON object with no other text.
             conditions.append("Unconscious: Grants advantage on attacks, auto-crits if attacker within 5 feet")
         
         return "\n".join(conditions) if conditions else "No conditions affecting the combatant."
+
+    def _create_resolution_prompt(self, combatants, active_idx, combatant_decision, dice_results, round_num):
+        """
+        Create a prompt for the LLM to resolve a combatant's action.
+        
+        This method generates a detailed prompt to help the LLM narrate and resolve
+        the outcome of a combatant's action, including handling damage, conditions,
+        and special ability effects, including recharge ability tracking.
+        
+        Args:
+            combatants: List of all combatants
+            active_idx: Index of active combatant
+            combatant_decision: The decision made by the LLM for the active combatant
+            dice_results: Results of any dice rolls requested by the decision LLM
+            round_num: Current round number
+            
+        Returns:
+            Prompt string for the resolution LLM
+        """
+        active = combatants[active_idx]
+        active_name = active.get('name', 'Unknown')
+        
+        # Get the instance ID for this combatant
+        instance_id = active.get('instance_id', f"combatant_{active_idx}")
+        
+        # Extract the decision components
+        action = combatant_decision.get('action', 'No action taken')
+        target = combatant_decision.get('target', None)
+        action_type = combatant_decision.get('action_type', 'none')
+        
+        # Format dice results
+        dice_str = self._format_dice_results(dice_results)
+        
+        # Format nearby combatants
+        nearby = self._get_nearby_combatants(active, combatants)
+        nearby_str = self._format_nearby_combatants(nearby)
+        
+        # Format the target information
+        target_str = "No specific target."
+        target_data = None
+        
+        if target:
+            # Find the target in the list of combatants
+            for combatant in combatants:
+                if combatant.get('name') == target:
+                    target_data = combatant
+                    break
+            
+            if target_data:
+                target_str = f"""
+Target: {target_data.get('name', 'Unknown')}
+HP: {target_data.get('hp', 0)}/{target_data.get('max_hp', target_data.get('hp', 0))}
+AC: {target_data.get('ac', 10)}
+Type: {target_data.get('type', 'Unknown')}
+Status: {target_data.get('status', 'OK')}
+"""
+            else:
+                target_str = f"Target: {target} (details unknown)"
+        
+        # Get and format conditions affecting the active combatant
+        condition_str = self._format_conditions(active)
+        
+        # Check for recharge ability usage
+        recharge_warning = ""
+        recharge_status = ""
+        used_ability_name = None
+        
+        # First, compile a list of available and unavailable recharge abilities
+        available_recharge = []
+        unavailable_recharge = []
+        
+        if "recharge_abilities" in active and active["recharge_abilities"]:
+            for ability_name, info in active["recharge_abilities"].items():
+                if info.get("available", False):
+                    available_recharge.append(ability_name)
+                else:
+                    unavailable_recharge.append(ability_name)
+        
+            # Add recharge status information
+            recharge_status = f"""
+# RECHARGE ABILITIES STATUS
+Available now: {', '.join(available_recharge) if available_recharge else 'None'}
+NOT available (needs recharge): {', '.join(unavailable_recharge) if unavailable_recharge else 'None'}
+"""
+            
+        # Try to identify which ability is being used from the action description
+        if "recharge_abilities" in active and active["recharge_abilities"]:
+            for ability_name in active["recharge_abilities"].keys():
+                # Check if the ability name appears in the action text
+                if ability_name.lower() in action.lower():
+                    used_ability_name = ability_name
+                    break
+            
+            # If we identified a recharge ability being used
+            if used_ability_name:
+                is_available = active["recharge_abilities"][used_ability_name].get("available", False)
+                
+                # If the ability is not available, add a warning
+                if not is_available:
+                    recharge_warning = f"""
+⚠️ WARNING - RECHARGE ABILITY NOT AVAILABLE ⚠️
+The combatant is attempting to use {used_ability_name}, but this ability has not recharged yet!
+This ability cannot be used until it recharges (typically on a roll of 5-6 on a d6 at the start of the creature's turn).
+Please adjust the resolution to indicate the creature attempted to use this ability but couldn't, and had to choose a different action instead.
+"""
+                else:
+                    # If the ability is available, mark it as used (unavailable for next turn)
+                    active["recharge_abilities"][used_ability_name]["available"] = False
+                    recharge_warning = f"""
+RECHARGE ABILITY USED: {used_ability_name} has been used and is now unavailable until recharged.
+Make sure to reflect this in your resolution by setting "recharge_ability_used" to "{used_ability_name}".
+"""
+        
+        # Start constructing the prompt
+        prompt = f"""
+You are the combat resolution AI for a D&D 5e game. Your task is to resolve {active_name}'s action this turn and narrate the outcome.
+
+# COMBAT SITUATION
+Round: {round_num}
+Active Combatant: {active_name}
+
+# {active_name.upper()} DETAILS
+HP: {active.get('hp', 0)}/{active.get('max_hp', active.get('hp', 0))}
+AC: {active.get('ac', 10)}
+Type: {active.get('type', 'Unknown')}
+Status: {active.get('status', 'OK')}
+
+# CHOSEN ACTION
+{action}
+Action Type: {action_type}
+
+{recharge_status}
+{recharge_warning}
+
+# DICE RESULTS
+{dice_str}
+
+# TARGET INFORMATION
+{target_str}
+
+# NEARBY COMBATANTS
+{nearby_str}
+
+# CURRENT CONDITIONS
+{condition_str}
+
+# RESOLUTION INSTRUCTIONS
+1. Narrate what happens when {active_name} takes their action.
+2. Determine outcomes based on dice results.
+3. Calculate damage dealt or healing provided.
+4. Apply any conditions that result from the action.
+5. Note any resource usage (spell slots, limited use abilities, etc.).
+
+Your response should be a JSON object containing:
+{{
+  "description": "A vivid narration of what happens when the action is taken and its immediate effects",
+  "damage_dealt": {{"target_name": damage_amount, ...}},
+  "damage_taken": {{"source_name": damage_amount, ...}},
+  "healing": {{"target_name": healing_amount, ...}},
+  "conditions_applied": {{"target_name": ["condition1", "condition2", ...], ...}},
+  "conditions_removed": {{"target_name": ["condition1", "condition2", ...], ...}},
+  "recharge_ability_used": ""
+}}
+
+DESCRIPTION: A detailed narrative of what happens
+DAMAGE_DEALT: A mapping of target names to damage amounts
+DAMAGE_TAKEN: A mapping of damage sources to damage amounts
+HEALING: A mapping of target names to healing amounts
+CONDITIONS_APPLIED: A mapping of target names to lists of conditions applied
+CONDITIONS_REMOVED: A mapping of target names to lists of conditions removed
+RECHARGE_ABILITY_USED: If a recharge ability was used, set this to the name of the ability (e.g. "Fire Breath")
+
+IMPORTANT: If the action involves using a recharge ability that is not available, adjust your narration to describe how the creature attempted to use that ability but found it wasn't ready, and then chose an alternative action instead.
+"""
+        return prompt
