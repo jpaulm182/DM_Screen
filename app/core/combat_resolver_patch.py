@@ -10,8 +10,30 @@ import traceback
 import gc
 import sys
 from functools import wraps
+import time
+import threading
+import functools
+
+# Import the monster ability validator
+from app.core.utils.monster_ability_validator import (
+    validate_combat_prompt,
+    clean_abilities_in_prompt,
+    fix_mixed_abilities_in_prompt
+)
 
 logger = logging.getLogger("combat_resolver_patch")
+
+# Process-wide lock for OpenAI API calls by model ID
+_openai_api_locks = {
+    "default": threading.RLock()
+}
+
+_active_resolutions = set()
+_resolution_lock = threading.RLock()
+
+# Last problem detection time to avoid spam
+_last_warning_time = 0
+_warning_interval = 30.0  # seconds
 
 def patch_process_turn(combat_resolver_instance):
     """
@@ -623,4 +645,118 @@ def patch_resolution_timeout(combat_resolver_instance):
     
     # Apply the patch
     combat_resolver_instance.resolve_combat_turn_by_turn = patched_resolve_combat_turn_by_turn
-    logger.info("Successfully patched resolve_combat_turn_by_turn with timeout protection") 
+    logger.info("Successfully patched resolve_combat_turn_by_turn with timeout protection")
+
+def combat_resolver_patch(app_state):
+    """Apply stability patches to the combat resolver."""
+    if not hasattr(app_state, 'combat_resolver'):
+        logger.error("Cannot apply combat_resolver_patch: app_state has no combat_resolver")
+        return
+        
+    if hasattr(app_state.combat_resolver, '_patched'):
+        logger.info("Combat resolver already patched, skipping")
+        return
+    
+    logger.info("Applying combat resolver patches")
+    
+    # Patch the _process_turn method to add monitoring
+    original_process_turn = app_state.combat_resolver._process_turn
+    
+    @functools.wraps(original_process_turn)
+    def patched_process_turn(combatants, active_idx, round_num, dice_roller):
+        """Add monitoring to detect long-running or stuck combat resolution."""
+        resolution_id = f"Turn_{round_num}_{active_idx}_{time.time()}"
+        
+        with _resolution_lock:
+            _active_resolutions.add(resolution_id)
+        
+        start_time = time.time()
+        
+        def check_timeout():
+            global _last_warning_time
+            while True:
+                elapsed = time.time() - start_time
+                
+                if resolution_id not in _active_resolutions:
+                    # Resolution completed
+                    break
+                    
+                if elapsed > 30.0 and time.time() - _last_warning_time > _warning_interval:
+                    # Log warning about long-running resolution
+                    _last_warning_time = time.time()
+                    logger.warning(f"Combat resolution still running after {elapsed:.1f} seconds")
+                
+                # Check every 5 seconds
+                time.sleep(5.0)
+        
+        # Start monitoring thread
+        monitor_thread = threading.Thread(target=check_timeout, daemon=True)
+        monitor_thread.start()
+        
+        try:
+            # Call original method
+            result = original_process_turn(combatants, active_idx, round_num, dice_roller)
+            return result
+        except Exception as e:
+            logger.error(f"Error in _process_turn: {str(e)}")
+            traceback.print_exc()
+            return None
+        finally:
+            # Remove from active resolutions
+            with _resolution_lock:
+                if resolution_id in _active_resolutions:
+                    _active_resolutions.remove(resolution_id)
+    
+    # Patch the _create_decision_prompt method to add ability validation
+    original_create_decision_prompt = app_state.combat_resolver._create_decision_prompt
+    
+    @functools.wraps(original_create_decision_prompt)
+    def patched_create_decision_prompt(combatants, active_idx, round_num):
+        """Add monster ability validation to the decision prompt with automatic correction."""
+        # Call original method
+        prompt = original_create_decision_prompt(combatants, active_idx, round_num)
+        
+        # Clean the prompt to ensure all abilities have proper tags
+        prompt = clean_abilities_in_prompt(prompt)
+        
+        # Validate the prompt to check for ability mixing
+        is_valid, result = validate_combat_prompt(prompt)
+        
+        if not is_valid:
+            # Log the validation failure
+            logger.warning(f"Ability mixing detected in prompt: {result}")
+            
+            # Extract the active monster name for further logging
+            import re
+            active_monster = "Unknown"
+            active_match = re.search(r"Active Combatant: ([A-Za-z0-9_\s]+)", prompt)
+            if active_match:
+                active_monster = active_match.group(1).strip()
+                
+            logger.warning(f"Ability mixing affects monster: {active_monster}")
+            
+            # Apply automatic correction to fix the ability mixing
+            logger.info(f"Attempting to automatically correct mixed abilities for {active_monster}")
+            fixed_prompt = fix_mixed_abilities_in_prompt(prompt)
+            
+            # Validate the fixed prompt to ensure it worked
+            fixed_is_valid, fixed_result = validate_combat_prompt(fixed_prompt)
+            
+            if fixed_is_valid:
+                logger.info("Successfully fixed ability mixing!")
+                return fixed_prompt
+            else:
+                logger.warning(f"Failed to fix ability mixing: {fixed_result}")
+                # Continue with best effort
+        
+        return prompt
+    
+    # Replace methods with patched versions
+    app_state.combat_resolver._process_turn = patched_process_turn
+    app_state.combat_resolver._create_decision_prompt = patched_create_decision_prompt
+    
+    # Mark as patched
+    app_state.combat_resolver._patched = True
+    
+    logger.info("Combat resolver successfully patched")
+    return True 

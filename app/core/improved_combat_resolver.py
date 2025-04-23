@@ -16,9 +16,24 @@ from app.core.initiative_integration import (
     get_next_combatant
 )
 import copy
+import logging
+import re
+from typing import Dict, List, Any, Optional
 
 # Import QObject and Signal for thread-safe communication
 from PySide6.QtCore import QObject, Signal
+
+# Import the monster ability validator
+from app.core.utils.monster_ability_validator import (
+    extract_ability_names,
+    get_canonical_abilities,
+    validate_combat_prompt,
+    clean_abilities_in_prompt,
+    fix_mixed_abilities_in_prompt,
+    verify_abilities_match_monster
+)
+
+logger = logging.getLogger(__name__)
 
 class ImprovedCombatResolver(QObject):
     """
@@ -32,6 +47,17 @@ class ImprovedCombatResolver(QObject):
         super().__init__()
         self.llm_service = llm_service
         self.combat_resolver = CombatResolver(llm_service)
+        
+        # Apply patches to the combat resolver to ensure ability validation
+        from app.core.combat_resolver_patch import combat_resolver_patch
+        
+        # Create mock app_state for patching
+        class MockAppState:
+            def __init__(self, resolver):
+                self.combat_resolver = resolver
+        
+        app_state = MockAppState(self.combat_resolver)
+        combat_resolver_patch(app_state)
         
         # Connect the combat resolver's signal to our own signal
         self.combat_resolver.resolution_complete.connect(
@@ -52,8 +78,11 @@ class ImprovedCombatResolver(QObject):
         
         def run_resolution():
             try:
-                # First, enhance the combat state with improved initiative handling
-                enhanced_state = initialize_combat_with_improved_initiative(combat_state)
+                # First, clean the combat state by validating all monster abilities
+                validated_state = self.prepare_combat_data(combat_state)
+                
+                # Next, enhance the combat state with improved initiative handling
+                enhanced_state = initialize_combat_with_improved_initiative(validated_state)
                 
                 # We'll use our own turn processing logic instead of delegating to the original resolver
                 self._process_combat_with_improved_initiative(
@@ -230,9 +259,18 @@ class ImprovedCombatResolver(QObject):
             update_ui_callback: Function to update the UI
         """
         import time
+        import json
+        
         combatants = state.get("combatants", [])
         combatant = combatants[combatant_idx]
         
+        # Validate monster abilities if this is a monster
+        if combatant.get("type", "").lower() == "monster":
+            # Validate abilities to ensure no mixing
+            combatant = self.validate_monster_abilities(combatant)
+            # Update the combatant in the state
+            combatants[combatant_idx] = combatant
+            
         # Initialize action economy for this combatant's turn
         combatant = ActionEconomyManager.initialize_action_economy(combatant)
         
@@ -275,20 +313,91 @@ class ImprovedCombatResolver(QObject):
                 # Track condition effects for LLM prompt
                 condition_effects.append(condition_name)
         
-        # Use the original turn processor but with additional context
-        # Create a temporary state to pass to the original processor
-        temp_state = {
-            "round": round_num,
-            "current_turn_index": combatant_idx,
-            "combatants": combatants
-        }
-        
-        # Process the turn with the original combat resolver's _process_turn method
-        turn_result = self.combat_resolver._process_turn(combatants, combatant_idx, round_num, dice_roller)
-        
-        if not turn_result:
-            # Error or timeout processing turn - create a basic result to continue
-            print(f"[ImprovedCombatResolver] Error processing turn for {combatant.get('name', 'Unknown')} - using fallback")
+        try:
+            # Use our own decision prompt method to ensure ability validation
+            decision_prompt = self._create_decision_prompt(combatants, combatant_idx, round_num)
+            
+            # Send the prompt to the LLM
+            model = self.llm_service.get_available_models()[0]["id"]
+            
+            # Format the prompt as a message for the LLM
+            messages = [{
+                "role": "user",
+                "content": decision_prompt
+            }]
+            
+            # Get the LLM response
+            response_text = self.llm_service.generate_completion(
+                model=model,
+                messages=messages,
+                temperature=0.7,
+                max_tokens=1000
+            )
+            
+            # Parse the response
+            try:
+                decision = json.loads(response_text)
+                
+                # Create a turn result in the expected format
+                turn_result = {
+                    "action": decision.get("action", f"{combatant.get('name', 'Unknown')} takes no action."),
+                    "narrative": decision.get("narrative", decision.get("action", "")),
+                    "dice": [], 
+                    "updates": []
+                }
+                
+                # Process dice rolls if requested
+                if "dice_requests" in decision and isinstance(decision["dice_requests"], list):
+                    dice_rolls = []
+                    
+                    for request in decision["dice_requests"]:
+                        if "expression" in request and "purpose" in request:
+                            result = dice_roller(request["expression"])
+                            dice_rolls.append({
+                                "expression": request["expression"],
+                                "result": result,
+                                "purpose": request["purpose"]
+                            })
+                    
+                    turn_result["dice"] = dice_rolls
+                
+                # Process target updates
+                if "target" in decision:
+                    target_name = decision["target"]
+                    for i, target in enumerate(combatants):
+                        if target.get("name", "") == target_name:
+                            # Found the target, apply damage or effects
+                            if "damage" in decision:
+                                damage = int(decision["damage"]) if isinstance(decision["damage"], (int, float)) else 0
+                                if damage > 0:
+                                    # Apply damage to the target
+                                    current_hp = target.get("hp", 0)
+                                    new_hp = max(0, current_hp - damage)
+                                    
+                                    # Check if the target is defeated
+                                    status = target.get("status", "")
+                                    if new_hp == 0 and status != "dead":
+                                        status = "unconscious" if target.get("type", "").lower() != "monster" else "dead"
+                                    
+                                    # Create an update
+                                    update = {
+                                        "name": target_name,
+                                        "hp": new_hp,
+                                        "status": status
+                                    }
+                                    turn_result["updates"].append(update)
+                            break
+            except json.JSONDecodeError:
+                # Fallback for invalid JSON
+                logger.error(f"Error parsing LLM response as JSON: {response_text[:100]}...")
+                turn_result = {
+                    "action": f"{combatant.get('name', 'Unknown')} takes no action due to confusion.",
+                    "narrative": f"{combatant.get('name', 'Unknown')} looks confused and takes no action this turn.",
+                    "updates": []
+                }
+        except Exception as e:
+            # Error processing turn - create a basic result to continue
+            logger.error(f"[ImprovedCombatResolver] Error processing turn for {combatant.get('name', 'Unknown')}: {str(e)}")
             turn_result = {
                 "action": f"{combatant.get('name', 'Unknown')} takes no action due to confusion.",
                 "narrative": f"{combatant.get('name', 'Unknown')} looks confused and takes no action this turn.",
@@ -664,4 +773,276 @@ class ImprovedCombatResolver(QObject):
             return True
             
         # Combat continues
-        return False 
+        return False
+
+    def validate_monster_abilities(self, monster_data):
+        """
+        Validate that a monster's abilities are consistent and not mixed with other monsters.
+        This method performs a thorough cleaning of the monster's abilities to ensure
+        it only has abilities that canonically belong to it.
+        
+        Args:
+            monster_data: Dictionary with monster data
+            
+        Returns:
+            Validated monster data with any invalid abilities removed
+        """
+        if not monster_data or not isinstance(monster_data, dict):
+            logger.warning("Cannot validate abilities for invalid monster data")
+            return monster_data
+        
+        monster_name = monster_data.get("name", "Unknown Monster")
+        logger.info(f"Validating abilities for monster: {monster_name}")
+        
+        # Extract canonical abilities for this specific monster type
+        canonical_abilities = get_canonical_abilities(monster_name, monster_data)
+        logger.info(f"Found {len(canonical_abilities)} canonical abilities for {monster_name}")
+        
+        # Get typical abilities for this monster type from our database or template
+        # This helps with monsters that might be missing their standard abilities
+        monster_type = monster_data.get("type", "").lower()
+        
+        # Add type-specific canonical abilities if needed
+        if monster_type == "dragon" or "dragon" in monster_name.lower():
+            dragon_abilities = {"breath weapon", "frightful presence", "multiattack", "bite", "claw", "tail"}
+            canonical_abilities.update(dragon_abilities)
+            logger.info(f"Added dragon-specific abilities to {monster_name}")
+        elif monster_type == "undead" or "skeleton" in monster_name.lower() or "zombie" in monster_name.lower():
+            undead_abilities = {"undead fortitude", "undead nature", "multiattack", "claw", "bone attack"}
+            canonical_abilities.update(undead_abilities)
+            logger.info(f"Added undead-specific abilities to {monster_name}")
+        elif "elemental" in monster_type or "elemental" in monster_name.lower() or "mephit" in monster_name.lower():
+            elemental_abilities = {"elemental nature", "innate spellcasting", "multiattack", "slam", "touch"}
+            # Add element-specific abilities based on name
+            if "fire" in monster_name.lower() or "magma" in monster_name.lower() or "flame" in monster_name.lower():
+                elemental_abilities.update({"fire form", "heated body", "fire breath", "fire bolt", "ignite", "magma form"})
+            elif "water" in monster_name.lower():
+                elemental_abilities.update({"water form", "freeze", "water jet"})
+            elif "air" in monster_name.lower():
+                elemental_abilities.update({"air form", "whirlwind", "lightning strike"})
+            elif "earth" in monster_name.lower():
+                elemental_abilities.update({"earth form", "stone camouflage", "stone grip"})
+            
+            canonical_abilities.update(elemental_abilities)
+            logger.info(f"Added elemental-specific abilities to {monster_name}")
+        
+        # Check and clean actions
+        if "actions" in monster_data:
+            original_actions_count = len(monster_data["actions"]) if isinstance(monster_data["actions"], list) else 0
+            monster_data["actions"] = verify_abilities_match_monster(
+                monster_name, monster_data.get("actions", []), canonical_abilities)
+            new_actions_count = len(monster_data["actions"])
+            
+            if original_actions_count > new_actions_count:
+                logger.warning(f"Removed {original_actions_count - new_actions_count} invalid actions from {monster_name}")
+                
+                # If we removed all actions, add some basic ones
+                if new_actions_count == 0:
+                    logger.warning(f"All actions were invalid! Adding generic actions for {monster_name}")
+                    monster_data["actions"] = [
+                        {
+                            "name": "Basic Attack",
+                            "description": f"Melee Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 7 (1d8 + 3) damage."
+                        }
+                    ]
+        
+        # Check and clean traits
+        if "traits" in monster_data:
+            original_traits_count = len(monster_data["traits"]) if isinstance(monster_data["traits"], list) else 0
+            monster_data["traits"] = verify_abilities_match_monster(
+                monster_name, monster_data.get("traits", []), canonical_abilities)
+            new_traits_count = len(monster_data["traits"])
+            
+            if original_traits_count > new_traits_count:
+                logger.warning(f"Removed {original_traits_count - new_traits_count} invalid traits from {monster_name}")
+                
+                # If we removed all traits, add some basic ones based on monster type
+                if new_traits_count == 0 and monster_type:
+                    logger.warning(f"All traits were invalid! Adding generic traits for {monster_name}")
+                    if "dragon" in monster_type or "dragon" in monster_name.lower():
+                        monster_data["traits"] = [
+                            {
+                                "name": "Draconic Nature",
+                                "description": f"The {monster_name} has advantage on saving throws against frightened."
+                            }
+                        ]
+                    elif "undead" in monster_type or "skeleton" in monster_name.lower():
+                        monster_data["traits"] = [
+                            {
+                                "name": "Undead Nature",
+                                "description": f"The {monster_name} doesn't require air, food, drink, or sleep."
+                            }
+                        ]
+                    elif "elemental" in monster_type or "mephit" in monster_name.lower():
+                        monster_data["traits"] = [
+                            {
+                                "name": "Elemental Nature",
+                                "description": f"The {monster_name} doesn't require air, food, drink, or sleep."
+                            }
+                        ]
+                    else:
+                        monster_data["traits"] = [
+                            {
+                                "name": "Keen Senses",
+                                "description": f"The {monster_name} has advantage on Wisdom (Perception) checks."
+                            }
+                        ]
+        
+        # Check and clean abilities dictionary
+        if "abilities" in monster_data and isinstance(monster_data["abilities"], dict):
+            abilities_dict = monster_data["abilities"]
+            original_abilities_count = len(abilities_dict)
+            cleaned_abilities = {}
+            
+            for name, ability_data in abilities_dict.items():
+                if name.lower() in canonical_abilities:
+                    cleaned_abilities[name] = ability_data
+                else:
+                    logger.warning(f"Removed ability '{name}' that doesn't belong to {monster_name}")
+            
+            # Update the monster data with cleaned abilities
+            monster_data["abilities"] = cleaned_abilities
+            
+            if original_abilities_count > len(cleaned_abilities):
+                logger.warning(f"Removed {original_abilities_count - len(cleaned_abilities)} invalid special abilities from {monster_name}")
+        
+        return monster_data
+
+    def prepare_combat_data(self, combat_state):
+        """
+        Prepare combat data by validating all monsters' abilities before combat starts.
+        
+        Args:
+            combat_state: Dictionary with combat state including combatants
+            
+        Returns:
+            Validated combat state
+        """
+        if not combat_state or not isinstance(combat_state, dict):
+            logger.warning("Cannot prepare invalid combat state")
+            return combat_state
+        
+        # Make a deep copy to avoid modifying the original
+        import copy
+        state_copy = copy.deepcopy(combat_state)
+        
+        # Get combatants
+        combatants = state_copy.get("combatants", [])
+        if not combatants:
+            return state_copy
+        
+        # Validate each monster's abilities
+        cleaned_count = 0
+        for i, combatant in enumerate(combatants):
+            if isinstance(combatant, dict) and combatant.get("type", "").lower() == "monster":
+                # Validate and clean the monster's abilities
+                before_actions = len(combatant.get("actions", []))
+                before_traits = len(combatant.get("traits", []))
+                
+                # Clean the monster abilities
+                combatants[i] = self.validate_monster_abilities(combatant)
+                
+                after_actions = len(combatants[i].get("actions", []))
+                after_traits = len(combatants[i].get("traits", []))
+                
+                if before_actions > after_actions or before_traits > after_traits:
+                    cleaned_count += 1
+        
+        # Log results
+        if cleaned_count > 0:
+            logger.info(f"Cleaned abilities for {cleaned_count} out of {len(combatants)} combatants")
+        
+        # Update the combat state with validated combatants
+        state_copy["combatants"] = combatants
+        return state_copy 
+
+    def _create_decision_prompt(self, combatants, active_idx, round_num):
+        """
+        Create a decision prompt for a combatant's turn with thorough ability validation.
+        
+        This wraps the combat resolver's patched _create_decision_prompt with 
+        additional validation to ensure no ability mixing occurs.
+        
+        Args:
+            combatants: List of all combatants
+            active_idx: Index of active combatant
+            round_num: Current round number
+            
+        Returns:
+            Validated prompt string with no ability mixing
+        """
+        # First, validate the active combatant's abilities
+        active_combatant = combatants[active_idx]
+        if active_combatant.get("type", "").lower() == "monster":
+            combatants[active_idx] = self.validate_monster_abilities(active_combatant)
+            
+        # Use the patched version from the combat resolver to create the basic prompt
+        prompt = self.combat_resolver._create_decision_prompt(combatants, active_idx, round_num)
+        
+        # Clean the prompt to ensure all abilities have proper tags
+        prompt = clean_abilities_in_prompt(prompt)
+        
+        # Double-check for ability mixing
+        is_valid, result = validate_combat_prompt(prompt)
+        
+        if not is_valid:
+            logger.warning(f"Ability mixing detected in improved resolver: {result}")
+            # Apply automatic correction
+            fixed_prompt = fix_mixed_abilities_in_prompt(prompt)
+            
+            # Validate the fixed prompt to ensure it worked
+            fixed_is_valid, fixed_result = validate_combat_prompt(fixed_prompt)
+            
+            if fixed_is_valid:
+                logger.info("Successfully fixed ability mixing in improved resolver!")
+                return fixed_prompt
+            else:
+                logger.warning(f"Failed to fix ability mixing in improved resolver: {fixed_result}")
+                
+                # As a last resort, generate a completely new prompt for this monster
+                monster_name = active_combatant.get("name", "Unknown")
+                logger.info(f"Attempting to generate clean prompt for {monster_name}")
+                
+                # Create a simplified template
+                template = """
+You are the tactical combat AI for a D&D 5e game. You decide actions for {{MONSTER_NAME}}.
+
+# COMBAT SITUATION
+Round: {round_num}
+Active Combatant: {{MONSTER_NAME}}
+
+# {{MONSTER_NAME}} DETAILS
+HP: {hp}/{max_hp}
+AC: {ac}
+Type: monster
+Status: {status}
+
+# SPECIFIC ABILITIES, ACTIONS AND TRAITS
+## Actions:
+{{MONSTER_ACTIONS}}
+
+## Traits:
+{{MONSTER_TRAITS}}
+
+# NEARBY COMBATANTS
+{nearby}
+
+# YOUR TASK
+Decide the most appropriate action for {{MONSTER_NAME}} this turn.
+"""
+                # Fill in template values
+                monster_prompt_template = template.format(
+                    round_num=round_num,
+                    hp=active_combatant.get("hp", 0),
+                    max_hp=active_combatant.get("max_hp", active_combatant.get("hp", 0)),
+                    ac=active_combatant.get("ac", 10),
+                    status=active_combatant.get("status", "OK"),
+                    nearby=self.combat_resolver._format_nearby_combatants(
+                        self.combat_resolver._get_nearby_combatants(active_combatant, combatants)
+                    )
+                )
+                
+                # Generate a monster-specific prompt
+                return generate_monster_specific_prompt(active_combatant, monster_prompt_template)
+        
+        return prompt 

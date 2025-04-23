@@ -1,0 +1,395 @@
+"""
+Monster ability validation module to prevent cross-monster ability mixing.
+
+This utility provides functions to validate that monster abilities are correctly
+assigned to the appropriate monster and prevents mixing of abilities between
+different monster types.
+"""
+
+import logging
+import re
+from typing import Dict, List, Any, Tuple, Set
+
+logger = logging.getLogger(__name__)
+
+# Cache for monster canonical abilities to avoid repeated processing
+_monster_canonical_abilities_cache = {}
+
+def extract_ability_names(monster: Dict[str, Any]) -> Set[str]:
+    """
+    Extract all ability names from a monster to create a canonical set.
+    
+    Args:
+        monster: Monster data dictionary
+        
+    Returns:
+        Set of ability names that belong to this monster
+    """
+    ability_names = set()
+    
+    # Extract action names
+    actions = monster.get("actions", [])
+    if isinstance(actions, list):
+        for action in actions:
+            if isinstance(action, dict) and "name" in action:
+                ability_names.add(action["name"].lower())
+    
+    # Extract trait names
+    traits = monster.get("traits", [])
+    if isinstance(traits, list):
+        for trait in traits:
+            if isinstance(trait, dict) and "name" in trait:
+                ability_names.add(trait["name"].lower())
+    
+    # Extract ability names
+    abilities = monster.get("abilities", {})
+    if isinstance(abilities, dict):
+        for ability_name in abilities:
+            ability_names.add(ability_name.lower())
+    
+    return ability_names
+
+def get_canonical_abilities(monster_name: str, monster_data: Dict[str, Any]) -> Set[str]:
+    """
+    Get the canonical set of ability names for a monster, using cache if available.
+    
+    Args:
+        monster_name: Name of the monster
+        monster_data: Monster data dictionary
+        
+    Returns:
+        Set of ability names that belong to this monster
+    """
+    # Check if we already processed this monster
+    cache_key = f"{monster_name}_{id(monster_data)}"
+    if cache_key in _monster_canonical_abilities_cache:
+        return _monster_canonical_abilities_cache[cache_key]
+    
+    # Extract ability names
+    ability_names = extract_ability_names(monster_data)
+    
+    # Cache the result
+    _monster_canonical_abilities_cache[cache_key] = ability_names
+    
+    return ability_names
+
+def validate_combat_prompt(prompt: str) -> Tuple[bool, str]:
+    """
+    Validate a combat prompt to ensure monster abilities are correctly assigned.
+    
+    This function checks if abilities tagged with [Monster_ID_ability] are being
+    mixed across different monsters.
+    
+    Args:
+        prompt: Combat prompt to validate
+        
+    Returns:
+        Tuple of (is_valid, corrected_prompt_or_error_message)
+    """
+    # Extract all monster ability tags
+    ability_pattern = r'\[([A-Za-z0-9_\s]+)_(\d+)_ability\]'
+    ability_tags = re.finditer(ability_pattern, prompt)
+    
+    monster_abilities = {}
+    
+    # Group abilities by monster
+    for match in ability_tags:
+        monster_name, monster_id = match.groups()
+        full_tag = match.group(0)
+        ability_line = prompt.split(full_tag)[0].split('\n')[-1].strip()
+        
+        # Extract ability name from line
+        ability_name_match = re.match(r'- ([^:]+):', ability_line)
+        if ability_name_match:
+            ability_name = ability_name_match.group(1).strip()
+        else:
+            continue
+            
+        # Group by monster_name, monster_id
+        monster_key = f"{monster_name}_{monster_id}"
+        if monster_key not in monster_abilities:
+            monster_abilities[monster_key] = []
+            
+        monster_abilities[monster_key].append((ability_name, full_tag))
+    
+    # Check for mixed abilities
+    all_monsters = set(monster_abilities.keys())
+    mixed_abilities = []
+    
+    for monster_key, abilities in monster_abilities.items():
+        for ability_name, tag in abilities:
+            # Check if this ability appears with other monsters' tags
+            for other_monster in all_monsters:
+                if other_monster == monster_key:
+                    continue
+                    
+                for other_ability, other_tag in monster_abilities.get(other_monster, []):
+                    if ability_name.lower() == other_ability.lower():
+                        mixed_abilities.append((ability_name, monster_key, other_monster))
+    
+    if mixed_abilities:
+        error_message = "Ability mixing detected:\n"
+        for ability, monster1, monster2 in mixed_abilities:
+            error_message += f"- Ability '{ability}' appears in both {monster1} and {monster2}\n"
+            
+        return False, error_message
+    
+    return True, prompt
+
+def clean_abilities_in_prompt(prompt: str) -> str:
+    """
+    Clean abilities in the prompt by ensuring each ability is properly tagged with the monster ID.
+    
+    Args:
+        prompt: Combat prompt to clean
+        
+    Returns:
+        Cleaned prompt with correct ability tags
+    """
+    lines = prompt.split("\n")
+    current_monster = None
+    monster_id = None
+    cleaned_lines = []
+    
+    # Search for active monster name
+    active_pattern = r"Active Combatant: ([A-Za-z0-9_\s]+)"
+    active_match = re.search(active_pattern, prompt)
+    
+    if active_match:
+        current_monster = active_match.group(1).strip()
+        
+        # Search for monster ID (use index if no ID found)
+        for i, line in enumerate(lines):
+            if f"# {current_monster.upper()} DETAILS" in line:
+                monster_id = "0"  # Default ID if none found
+                break
+    
+    # Process each line
+    for line in lines:
+        # If line is an ability definition but missing a tag
+        if line.strip().startswith("- ") and ":" in line and "[" not in line and current_monster and monster_id:
+            # Add the tag
+            line = f"{line} [{current_monster}_{monster_id}_ability]"
+        
+        cleaned_lines.append(line)
+    
+    return "\n".join(cleaned_lines)
+
+def verify_abilities_match_monster(monster_name: str, abilities: List[Dict[str, str]], 
+                                 canonical_abilities: Set[str]) -> List[Dict[str, str]]:
+    """
+    Verify that abilities match the canonical list for a monster.
+    
+    Args:
+        monster_name: Monster name
+        abilities: List of ability dictionaries
+        canonical_abilities: Set of canonical ability names for this monster
+        
+    Returns:
+        Clean list of abilities that belong to this monster
+    """
+    if not abilities:
+        return []
+        
+    valid_abilities = []
+    removed_abilities = []
+    
+    for ability in abilities:
+        if not isinstance(ability, dict) or "name" not in ability:
+            continue
+            
+        if ability["name"].lower() in canonical_abilities:
+            valid_abilities.append(ability)
+        else:
+            removed_abilities.append(ability["name"])
+    
+    if removed_abilities:
+        logger.warning(f"Removed {len(removed_abilities)} abilities that don't belong to {monster_name}: {removed_abilities}")
+    
+    return valid_abilities
+
+def fix_mixed_abilities_in_prompt(prompt: str) -> str:
+    """
+    Fix mixed abilities in a combat prompt by removing abilities that don't belong
+    to the active monster and replacing them with generic abilities if needed.
+    
+    Args:
+        prompt: Combat prompt to fix
+        
+    Returns:
+        Fixed prompt with correct abilities only
+    """
+    logger.info("Actively fixing mixed abilities in combat prompt")
+    
+    # First, make sure all abilities are properly tagged
+    prompt = clean_abilities_in_prompt(prompt)
+    
+    # Extract active monster name
+    active_pattern = r"Active Combatant: ([A-Za-z0-9_\s]+)"
+    active_match = re.search(active_pattern, prompt)
+    
+    if not active_match:
+        logger.warning("Could not determine active monster from prompt")
+        return prompt
+        
+    active_monster = active_match.group(1).strip()
+    active_monster_key = f"{active_monster}_0"  # Assume ID 0 for active monster
+    
+    # Extract all monster ability tags
+    ability_pattern = r'\[([A-Za-z0-9_\s]+)_(\d+)_ability\]'
+    
+    # Process line by line
+    lines = prompt.split("\n")
+    fixed_lines = []
+    in_abilities_section = False
+    in_actions_section = False
+    in_traits_section = False
+    
+    # Generate generic replacements for different types of abilities
+    generic_actions = [
+        "- Basic Attack: Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit: 8 (1d8 + 4) damage. [%s_ability]",
+        "- Defensive Stance: The creature enters a defensive stance, gaining advantage on its next saving throw. [%s_ability]"
+    ]
+    
+    generic_traits = [
+        "- Natural Armor: The creature's thick hide provides natural protection, increasing its AC. [%s_ability]",
+        "- Keen Senses: The creature has advantage on Wisdom (Perception) checks. [%s_ability]"
+    ]
+    
+    # Count removed abilities to ensure we have enough replacements
+    removed_actions = 0
+    removed_traits = 0
+    
+    for line in lines:
+        if "# SPECIFIC ABILITIES, ACTIONS AND TRAITS" in line:
+            in_abilities_section = True
+            fixed_lines.append(line)
+            continue
+            
+        if in_abilities_section and line.strip().startswith("## Actions:"):
+            in_actions_section = True
+            in_traits_section = False
+            fixed_lines.append(line)
+            continue
+            
+        if in_abilities_section and line.strip().startswith("## Traits:"):
+            in_actions_section = False
+            in_traits_section = True
+            fixed_lines.append(line)
+            continue
+            
+        if in_abilities_section and (line.strip().startswith("## ") or line.strip().startswith("# ")):
+            in_actions_section = False
+            in_traits_section = False
+            in_abilities_section = "## " in line or "# NEARBY" in line
+            fixed_lines.append(line)
+            continue
+        
+        # Check if this line contains an ability
+        if (in_actions_section or in_traits_section) and line.strip().startswith("- ") and ":" in line:
+            # Extract tag if present
+            tag_match = re.search(ability_pattern, line)
+            if tag_match:
+                monster_name, monster_id = tag_match.groups()
+                monster_key = f"{monster_name}_{monster_id}"
+                
+                # If this ability belongs to a different monster, replace it
+                if monster_key != active_monster_key:
+                    logger.info(f"Removing ability that belongs to {monster_key} from {active_monster_key}'s prompt")
+                    
+                    # Skip this line (remove the ability)
+                    if in_actions_section:
+                        removed_actions += 1
+                    elif in_traits_section:
+                        removed_traits += 1
+                    continue
+            
+            # No tag found, but still in abilities section, so keep the line
+            fixed_lines.append(line)
+        else:
+            # Not an ability line, keep it
+            fixed_lines.append(line)
+    
+    # Add generic replacements if needed
+    if removed_actions > 0 or removed_traits > 0:
+        # Find the end of the actions section to add replacements
+        fixed_prompt = "\n".join(fixed_lines)
+        
+        # Add generic actions if needed
+        if removed_actions > 0:
+            actions_section_end = fixed_prompt.find("## Traits:") if "## Traits:" in fixed_prompt else fixed_prompt.find("# NEARBY")
+            if actions_section_end > 0:
+                # Add up to 2 generic actions
+                replacements = []
+                for i in range(min(removed_actions, 2)):
+                    replacements.append(generic_actions[i] % active_monster_key)
+                
+                if replacements:
+                    fixed_prompt = fixed_prompt[:actions_section_end] + "\n" + "\n".join(replacements) + "\n" + fixed_prompt[actions_section_end:]
+        
+        # Add generic traits if needed
+        if removed_traits > 0:
+            traits_section_end = fixed_prompt.find("# NEARBY")
+            if traits_section_end > 0:
+                # Add up to 2 generic traits
+                replacements = []
+                for i in range(min(removed_traits, 2)):
+                    replacements.append(generic_traits[i] % active_monster_key)
+                
+                if replacements:
+                    fixed_prompt = fixed_prompt[:traits_section_end] + "\n" + "\n".join(replacements) + "\n" + fixed_prompt[traits_section_end:]
+        
+        return fixed_prompt
+    
+    return "\n".join(fixed_lines)
+
+def generate_monster_specific_prompt(monster_data: Dict[str, Any], prompt_template: str) -> str:
+    """
+    Generate a combat prompt with abilities that specifically match the given monster.
+    
+    Args:
+        monster_data: Dictionary with monster data
+        prompt_template: Template prompt to fill in
+        
+    Returns:
+        Prompt with correct monster-specific abilities
+    """
+    monster_name = monster_data.get("name", "Unknown Monster")
+    monster_id = monster_data.get("id", 0)
+    monster_key = f"{monster_name}_{monster_id}"
+    
+    # Extract canonical abilities for this monster
+    canonical_abilities = get_canonical_abilities(monster_name, monster_data)
+    
+    # Create ability sections
+    actions_text = "No special actions available."
+    traits_text = "No special traits available."
+    
+    # Format actions
+    actions = monster_data.get("actions", [])
+    if actions and isinstance(actions, list):
+        formatted_actions = []
+        for action in actions:
+            if isinstance(action, dict) and "name" in action and "description" in action:
+                formatted_actions.append(f"- {action['name']}: {action['description']} [{monster_key}_ability]")
+        
+        if formatted_actions:
+            actions_text = "\n".join(formatted_actions)
+    
+    # Format traits
+    traits = monster_data.get("traits", [])
+    if traits and isinstance(traits, list):
+        formatted_traits = []
+        for trait in traits:
+            if isinstance(trait, dict) and "name" in trait and "description" in trait:
+                formatted_traits.append(f"- {trait['name']}: {trait['description']} [{monster_key}_ability]")
+        
+        if formatted_traits:
+            traits_text = "\n".join(formatted_traits)
+    
+    # Replace placeholders in template
+    prompt = prompt_template.replace("{{MONSTER_NAME}}", monster_name)
+    prompt = prompt.replace("{{MONSTER_ACTIONS}}", actions_text)
+    prompt = prompt.replace("{{MONSTER_TRAITS}}", traits_text)
+    
+    return prompt 

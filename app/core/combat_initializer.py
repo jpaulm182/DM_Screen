@@ -106,7 +106,7 @@ def init_stabilized_resolver(llm_service):
         A patched CombatResolver instance
     """
     from app.core.combat_resolver import CombatResolver
-    from app.core.combat_resolver_patch import patch_combat_resolver
+    from app.core.combat_resolver_patch import patch_combat_resolver, combat_resolver_patch
     
     # Track initial memory state
     enhanced_memory_tracking("before_resolver_init")
@@ -202,40 +202,43 @@ def init_stabilized_resolver(llm_service):
         
         def generate_fallback_resolution(combatant, action=None, dice_results=None):
             """Generate a fallback resolution when LLM call fails"""
-            action = action or "take a defensive action"
-            dice_results = dice_results or []
-            
             logger.info(f"Generating fallback resolution for {combatant.get('name', 'Unknown')}")
             
-            narrative = f"{combatant.get('name', 'The combatant')} attempts to {action}. "
-            if dice_results:
-                dice_summary = ", ".join([f"{d.get('purpose', 'roll')}: {d.get('result', '?')}" for d in dice_results])
-                narrative += f"Results: {dice_summary}. "
-            narrative += "No significant effect occurs due to a technical issue."
+            action_text = "takes a cautious action" if not action else action
             
             return {
-                "action": action,
-                "narrative": narrative,
+                "action": action_text,
+                "narrative": f"Technical difficulty occurred - A technical issue occurred during this turn. Combat continues.",
                 "updates": [],
-                "dice": dice_results
+                "dice": dice_results or []
             }
         
-        # Add methods to resolver
+        # Add fallback methods to resolver
         resolver._generate_fallback_decision = generate_fallback_decision
         resolver._generate_fallback_resolution = generate_fallback_resolution
         
-        # Apply additional patches from the dedicated patching module
-        resolver = patch_combat_resolver(resolver)
+        # Apply combat resolver patch with ability mixing prevention
+        logger.info("Applying ability mixing prevention patch to combat resolver")
+        try:
+            # Create a mock app_state object with just the resolver
+            class MockAppState:
+                def __init__(self, resolver):
+                    self.combat_resolver = resolver
+
+            mock_app_state = MockAppState(resolver)
+            
+            # Apply the patch
+            combat_resolver_patch(mock_app_state)
+            
+            logger.info("Successfully applied ability mixing prevention patch")
+        except Exception as e:
+            logger.error(f"Failed to apply ability mixing prevention patch: {e}", exc_info=True)
         
-        # Force garbage collection
-        gc.collect()
-        
-        # Track final memory state
-        enhanced_memory_tracking("after_resolver_init")
-        
-        logger.info("Successfully initialized stabilized combat resolver")
+        # Return the patched resolver
+        logger.info("Initialized stabilized combat resolver")
         return resolver
     except Exception as e:
-        logger.error(f"Error initializing stabilized combat resolver: {e}", exc_info=True)
-        # Fall back to standard resolver
+        logger.error(f"Error initializing stabilized resolver: {e}")
+        traceback.print_exc()
+        logger.warning("Falling back to standard resolver")
         return CombatResolver(llm_service) 
