@@ -4155,9 +4155,15 @@ class CombatTrackerPanel(BasePanel):
                 
                 # Only validate if it's a dictionary (proper format)
                 if isinstance(monster_data, dict):
-                    # Validate monster data
-                    print(f"[CombatTracker] Validating monster data for '{monster_name}'")
-                    validated_monster_data = ImprovedCombatResolver.validate_monster_data(monster_data)
+                    # Check if this monster has already been validated
+                    if "_validation_id" in monster_data:
+                        # Already validated, skip further validation to preserve abilities
+                        print(f"[CombatTracker] Monster {monster_name} already validated with ID {monster_data['_validation_id']}")
+                        validated_monster_data = monster_data
+                    else:
+                        # Validate monster data
+                        print(f"[CombatTracker] Validating monster data for '{monster_name}'")
+                        validated_monster_data = ImprovedCombatResolver.validate_monster_data(monster_data)
                     
                     # Check if validation changed anything
                     actions_before = len(monster_data.get('actions', [])) if 'actions' in monster_data else 0
@@ -4167,10 +4173,19 @@ class CombatTrackerPanel(BasePanel):
                     traits_after = len(validated_monster_data.get('traits', [])) if 'traits' in validated_monster_data else 0
                     
                     if actions_before != actions_after or traits_before != traits_after:
-                        print(f"[CombatTracker] Validation removed {actions_before - actions_after} actions and {traits_before - traits_after} traits from {monster_name}")
+                        print(f"[CombatTracker] Validation modified abilities for {monster_name}")
+                        print(f"[CombatTracker] Actions: {actions_before} -> {actions_after}, Traits: {traits_before} -> {traits_after}")
                         
-                        # Use the validated data
-                        monster_data = validated_monster_data
+                        # If validation retained most abilities, use the validated data
+                        # Otherwise, keep the original to avoid losing legitimate abilities
+                        if actions_after >= actions_before * 0.5 and traits_after >= traits_before * 0.5:
+                            monster_data = validated_monster_data
+                            print(f"[CombatTracker] Using validated monster data (most abilities retained)")
+                        else:
+                            print(f"[CombatTracker] Validation removed too many abilities, keeping original data")
+                            # Still use the validation ID for consistency
+                            if "_validation_id" in validated_monster_data:
+                                monster_data["_validation_id"] = validated_monster_data["_validation_id"]
             except Exception as e:
                 # If validation fails, log the error but continue with the original data
                 print(f"[CombatTracker] Error validating monster data: {e}")

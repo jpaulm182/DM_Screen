@@ -636,7 +636,40 @@ class MonsterPanel(BasePanel):
                     pass
             print(f"[MonsterPanel] Manually converted monster to dictionary with {len(monster_dict)} keys")
         
-        # Validate monster data to prevent ability mixing
+        # FIXED: Improved validation approach to prevent ability mixing
+        # Add a unique ID if not already present to ensure abilities can be properly tracked
+        if "id" not in monster_dict or not monster_dict["id"]:
+            import time
+            import hashlib
+            timestamp = int(time.time())
+            monster_name = monster_dict.get("name", "Unknown")
+            hash_base = f"{monster_name}_{timestamp}"
+            monster_dict["id"] = hashlib.md5(hash_base.encode()).hexdigest()[:8]
+            print(f"[MonsterPanel] Generated unique ID {monster_dict['id']} for {monster_name}")
+        
+        # Further tag all abilities with this monster's name to prevent mixing
+        monster_name = monster_dict.get("name", "Unknown Monster")
+        
+        # Tag actions
+        if "actions" in monster_dict and isinstance(monster_dict["actions"], list):
+            for action in monster_dict["actions"]:
+                if isinstance(action, dict):
+                    action["monster_source"] = monster_name
+                    # If the action name doesn't already include the monster name, prefix it
+                    if "name" in action and monster_name.lower() not in action["name"].lower():
+                        # Store original name in a separate field
+                        action["original_name"] = action["name"]
+        
+        # Tag traits
+        if "traits" in monster_dict and isinstance(monster_dict["traits"], list):
+            for trait in monster_dict["traits"]:
+                if isinstance(trait, dict):
+                    trait["monster_source"] = monster_name
+                    # If the trait name doesn't already include the monster name, store original
+                    if "name" in trait and monster_name.lower() not in trait["name"].lower():
+                        trait["original_name"] = trait["name"]
+        
+        # Now validate if needed
         try:
             # Import the validator
             from app.core.improved_combat_resolver import ImprovedCombatResolver
@@ -653,10 +686,19 @@ class MonsterPanel(BasePanel):
             traits_after = len(validated_monster_dict.get('traits', [])) if 'traits' in validated_monster_dict else 0
             
             if actions_before != actions_after or traits_before != traits_after:
-                print(f"[MonsterPanel] Validation removed {actions_before - actions_after} actions and {traits_before - traits_after} traits from {monster_dict.get('name', 'Unknown')}")
+                print(f"[MonsterPanel] Validation modified abilities for {monster_dict.get('name', 'Unknown')}")
+                print(f"[MonsterPanel] Actions: {actions_before} -> {actions_after}, Traits: {traits_before} -> {traits_after}")
                 
-                # Use the validated data
-                monster_dict = validated_monster_dict
+                # If validation retained most abilities, use the validated data
+                # Otherwise, keep the original to avoid losing legitimate abilities
+                if actions_after >= actions_before * 0.5 and traits_after >= traits_before * 0.5:
+                    monster_dict = validated_monster_dict
+                    print(f"[MonsterPanel] Using validated monster data (most abilities retained)")
+                else:
+                    print(f"[MonsterPanel] Validation removed too many abilities, keeping original data")
+                    # Still use the validation ID for consistency
+                    if "_validation_id" in validated_monster_dict:
+                        monster_dict["_validation_id"] = validated_monster_dict["_validation_id"]
         except Exception as e:
             # If validation fails, log the error but continue with the original data
             print(f"[MonsterPanel] Error validating monster data: {e}")
