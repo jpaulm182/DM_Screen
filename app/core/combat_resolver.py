@@ -1119,11 +1119,17 @@ class CombatResolver(QObject):
         # Add a unique marker for this monster instance to prevent ability mixing
         monster_ability_tag = f"{active_name}_{instance_id}_ability"
         
+        # Initialize ability counters for debugging
+        actions_count = 0
+        abilities_count = 0
+        traits_count = 0
+        
         # Format abilities if present
         if "abilities" in active:
             abilities = active.get("abilities", {})
-            if abilities:
+            if abilities and isinstance(abilities, dict) and len(abilities) > 0:
                 abilities_str = ""
+                abilities_count = len(abilities)
                 for name, ability in abilities.items():
                     # Only filter out abilities explicitly tagged with a different monster's ID
                     ability_instance_id = ability.get("monster_instance_id", None)
@@ -1136,14 +1142,21 @@ class CombatResolver(QObject):
                     desc = ability.get("description", "No description")
                     usage = ability.get("usage", "At will")
                     abilities_str += f"- {name}: {desc} ({usage}) [{monster_ability_tag}]\n"
+            else:
+                # Special case: Ensure Red Dragons have their legendary resistance
+                if "dragon" in active_name.lower() and "red" in active_name.lower() and "abilities" not in active:
+                    print(f"[CombatResolver] Adding default legendary resistance to {active_name}")
+                    abilities_str = f"- Legendary Resistance (3/Day): If the dragon fails a saving throw, it can choose to succeed instead. [{monster_ability_tag}]\n"
+                    abilities_count = 1
         
         # Format actions if present
         if "actions" in active:
             actions_data = active.get("actions", []) # Get actions data, default to empty list
             
             # Check if actions_data is a non-empty list
-            if isinstance(actions_data, list) and actions_data: 
+            if isinstance(actions_data, list) and actions_data:
                 actions_str = ""
+                actions_count = len(actions_data)
                 # Iterate over the list of action dictionaries
                 for action_dict in actions_data: 
                     # Ensure the item in the list is actually a dictionary
@@ -1179,6 +1192,7 @@ class CombatResolver(QObject):
             # Check if traits_data is a non-empty list
             if isinstance(traits_data, list) and traits_data:
                 traits_str = ""
+                traits_count = len(traits_data)
                 # Iterate over the list of trait dictionaries
                 for trait_dict in traits_data:
                     # Ensure the item in the list is a dictionary
@@ -1204,7 +1218,7 @@ class CombatResolver(QObject):
         has_abilities = abilities_str != "No special abilities."
         has_actions = actions_str != "Basic attack only."
         has_traits = traits_str != "No special traits."
-        print(f"[CombatResolver] For {active_name} (ID: {instance_id}): Has abilities: {has_abilities}, Has actions: {has_actions}, Has traits: {has_traits}")
+        print(f"[CombatResolver] For {active_name} (ID: {instance_id}): Has abilities: {has_abilities} ({abilities_count}), Has actions: {has_actions} ({actions_count}), Has traits: {has_traits} ({traits_count})")
 
         # Basic attacks if no actions are defined
         if actions_str == "Basic attack only.":
@@ -1419,11 +1433,17 @@ Status: {active.get('status', 'OK')}
             # Add a unique marker for this monster instance to prevent ability mixing
             monster_ability_tag = f"{active_name}_{instance_id}_ability"
             
+            # Initialize ability counters for debugging
+            actions_count = 0
+            abilities_count = 0
+            traits_count = 0
+            
             # Format abilities if present
             if "abilities" in active:
                 abilities = active.get("abilities", {})
-                if abilities:
+                if abilities and isinstance(abilities, dict) and len(abilities) > 0:
                     abilities_str = ""
+                    abilities_count = len(abilities)
                     for name, ability in abilities.items():
                         # Only filter out abilities explicitly tagged with a different monster's ID
                         ability_instance_id = ability.get("monster_instance_id", None)
@@ -1436,6 +1456,12 @@ Status: {active.get('status', 'OK')}
                         desc = ability.get("description", "No description")
                         usage = ability.get("usage", "At will")
                         abilities_str += f"- {name}: {desc} ({usage}) [{monster_ability_tag}]\n"
+                else:
+                    # Special case: Ensure Red Dragons have their legendary resistance
+                    if "dragon" in active_name.lower() and "red" in active_name.lower() and "abilities" not in active:
+                        print(f"[CombatResolver] Adding default legendary resistance to {active_name}")
+                        abilities_str = f"- Legendary Resistance (3/Day): If the dragon fails a saving throw, it can choose to succeed instead. [{monster_ability_tag}]\n"
+                        abilities_count = 1
             
             # Format actions if present
             if "actions" in active:
@@ -1444,6 +1470,7 @@ Status: {active.get('status', 'OK')}
                 # Check if actions_data is a non-empty list
                 if isinstance(actions_data, list) and actions_data: 
                     actions_str = ""
+                    actions_count = len(actions_data)
                     # Iterate over the list of action dictionaries
                     for action_dict in actions_data: 
                         # Ensure the item in the list is actually a dictionary
@@ -1479,6 +1506,7 @@ Status: {active.get('status', 'OK')}
                 # Check if traits_data is a non-empty list
                 if isinstance(traits_data, list) and traits_data:
                     traits_str = ""
+                    traits_count = len(traits_data)
                     # Iterate over the list of trait dictionaries
                     for trait_dict in traits_data:
                         # Ensure the item in the list is a dictionary
@@ -1504,7 +1532,7 @@ Status: {active.get('status', 'OK')}
             has_abilities = abilities_str != "No special abilities."
             has_actions = actions_str != "Basic attack only."
             has_traits = traits_str != "No special traits."
-            print(f"[CombatResolver] For {active_name} (ID: {instance_id}): Has abilities: {has_abilities}, Has actions: {has_actions}, Has traits: {has_traits}")
+            print(f"[CombatResolver] For {active_name} (ID: {instance_id}): Has abilities: {has_abilities} ({abilities_count}), Has actions: {has_actions} ({actions_count}), Has traits: {has_traits} ({traits_count})")
 
             # --- BEGIN DEBUG LOGGING ---
             logging.debug(f"[CombatResolver] Resolution Prompt - Abilities/Actions/Traits for {active.get('name', 'Unknown')} (Instance ID: {instance_id}):")
@@ -1832,6 +1860,7 @@ Return ONLY the JSON object with no other text.
                 distance = self._get_distance_between(c, active_combatant)
                 
                 if distance <= range_feet:
+                    print(f"[CombatResolver] {c.get('name')} aura '{aura_name}' is in range ({distance}/{range_feet}ft) to affect {active_combatant.get('name')}")
                     effect = aura.get("effect", {})
                     effect_type = effect.get("type", "damage")
                     
@@ -1850,9 +1879,11 @@ Return ONLY the JSON object with no other text.
                                 dice_size = int(dice_match.group(2))
                                 modifier = int(dice_match.group(3) or 0)
                                 damage = sum(random.randint(1, dice_size) for _ in range(num_dice)) + modifier
+                                print(f"[CombatResolver] Rolled aura damage: {damage_expr} = {damage}")
                             else:
                                 # Default to fixed damage if expression parsing fails
                                 damage = int(damage_expr) if damage_expr.isdigit() else 1
+                                print(f"[CombatResolver] Using fixed aura damage: {damage}")
                         except Exception as e:
                             print(f"[CombatResolver] Error rolling aura damage: {str(e)}")
                             damage = 1  # Fallback to minimal damage
@@ -1861,6 +1892,9 @@ Return ONLY the JSON object with no other text.
                         damage_type = effect.get("damage_type", "fire")
                         old_hp = active_combatant.get("hp", 0)
                         active_combatant["hp"] = max(0, old_hp - damage)
+                        
+                        print(f"[CombatResolver] {c.get('name')}'s {aura_name} deals {damage} {damage_type} damage to {active_combatant.get('name')}")
+                        print(f"[CombatResolver] {active_combatant.get('name')} HP: {old_hp} → {active_combatant['hp']}")
                         
                         # Record the update
                         updates.append({
@@ -1893,21 +1927,10 @@ Return ONLY the JSON object with no other text.
                                 "effect": f"Condition: {condition}"
                             })
         
+        if not updates:
+            print(f"[CombatResolver] No aura effects applied to {active_combatant.get('name', 'Unknown')}")
+        
         return updates
-    
-    def _get_distance_between(self, combatant1, combatant2):
-        """Get distance between two combatants in feet"""
-        # Check if distances are explicitly defined in position data
-        if "position" in combatant1 and "distance_to" in combatant1["position"]:
-            target_name = combatant2.get("name", "")
-            if target_name in combatant1["position"]["distance_to"]:
-                return combatant1["position"]["distance_to"][target_name]
-                
-        # Default distance if not explicitly defined
-        # 5ft for melee range, otherwise large distance (effectively out of range)
-        if combatant1.get("type") != combatant2.get("type"):
-            return 5  # Assume enemies are in melee range by default
-        return 1  # Assume allies are very close by default
     
     def _add_auras_from_traits(self, combatant):
         """
@@ -1927,201 +1950,127 @@ Return ONLY the JSON object with no other text.
         if combatant.get("auras_processed", False):
             return combatant
             
-        # Special handling for known monsters with auras
-        name = combatant.get("name", "").lower()
-        
-        # Specific handling for Infernal Tyrant
-        if "infernal tyrant" in name or "demon" in name or "devil" in name:
-            print(f"[CombatResolver] Adding fire aura to {combatant.get('name', 'Unknown')} based on name")
-            combatant["auras"]["fire aura"] = {
-                "range": 10,
-                "effect": {
-                    "type": "damage", 
-                    "expression": "1d6", 
-                    "damage_type": "fire"
-                },
-                "affects": "enemies",
-                "affects_self": False,
-                "source": "infernal_nature"
-            }
+        # Get combatant name for better logging
+        name = combatant.get("name", "Unknown")
+        print(f"[CombatResolver] Checking for auras in {name}'s traits")
             
-        # Special handling for Magma Mephit
-        if "magma" in name or "mephit" in name or "fire elemental" in name:
-            print(f"[CombatResolver] Adding fire aura to {combatant.get('name', 'Unknown')} based on name")
-            combatant["auras"]["heat aura"] = {
-                "range": 5,
-                "effect": {
-                    "type": "damage", 
-                    "expression": "1d4", 
-                    "damage_type": "fire"
-                },
-                "affects": "enemies",
-                "affects_self": False,
-                "source": "elemental_nature"
-            }
-            
-        # Try pattern matching for common aura types
-        traits_data = combatant.get("traits", []) or [] # Get traits data, default to empty list
-        actions = combatant.get("actions", {}) or {}
-        
-        # Ensure traits_data is a list
-        if not isinstance(traits_data, list):
-            logging.warning(f"[CombatResolver] Traits data for {combatant.get('name', 'Unknown')} is not a list: {traits_data}")
-            traits_data = []
-            
-        # Check trait descriptions for aura keywords
-        # Iterate over the list of trait dictionaries
-        for trait_dict in traits_data:
-            # Ensure the item is a dictionary
-            if isinstance(trait_dict, dict):
-                trait_name = trait_dict.get("name", "Unknown Trait")
-                trait_desc = trait_dict.get("description", "")
-                
-                if not trait_desc:
+        # Check for aura-related traits by name and description
+        if "traits" in combatant and isinstance(combatant["traits"], list):
+            for trait in combatant["traits"]:
+                if not isinstance(trait, dict):
                     continue
-                    
-                trait_text = trait_desc.lower() if isinstance(trait_desc, str) else str(trait_desc).lower()
+
+                trait_name = trait.get("name", "")
+                trait_desc = trait.get("description", "")
                 
-                # Check each common aura type
-                for aura_type, aura_info in common_auras.items():
-                    if any(keyword in trait_text for keyword in aura_info["keywords"]):
-                        # Found a matching aura pattern in traits
-                        aura_name_to_add = trait_name # Use the actual trait name
-                        combatant["auras"][aura_name_to_add] = {
-                            "range": aura_info["range"],
-                            "effect": aura_info["effect"],
-                            "affects": aura_info["affects"],
-                            "affects_self": aura_info.get("affects_self", False),
+                # Check if it's an aura by name
+                if "aura" in trait_name.lower():
+                    print(f"[CombatResolver] Found aura trait by name: {trait_name}")
+                    aura_name = trait_name.lower().replace(" ", "_")
+                    aura_range = 10  # Default range
+                    
+                    # Try to extract range from description
+                    import re
+                    range_match = re.search(r'(\d+)[- ]feet?', trait_desc, re.IGNORECASE)
+                    if range_match:
+                        aura_range = int(range_match.group(1))
+                        
+                    # Determine effect type and details from description
+                    effect_type = "damage" if any(x in trait_desc.lower() for x in ["damage", "takes", "hurt"]) else "condition"
+                    
+                    # Create damage effect
+                    if effect_type == "damage":
+                        # Extract damage amount from description
+                        damage_match = re.search(r'(\d+)d(\d+)(?:\s*\+\s*(\d+))?', trait_desc)
+                        damage_expr = "1d6"  # Default damage
+                        damage_type = "fire"  # Default type
+                        
+                        if damage_match:
+                            dice_count = damage_match.group(1)
+                            dice_size = damage_match.group(2)
+                            bonus = damage_match.group(3) or "0"
+                            damage_expr = f"{dice_count}d{dice_size}+{bonus}"
+                            
+                        # Extract damage type if present
+                        type_match = re.search(r'(\w+) damage', trait_desc.lower())
+                        if type_match:
+                            damage_type = type_match.group(1)
+                            
+                        # Create the aura effect
+                        combatant["auras"][aura_name] = {
+                            "range": aura_range,
+                            "effect": {
+                                "type": "damage",
+                                "expression": damage_expr,
+                                "damage_type": damage_type
+                            },
+                            "affects": "enemies",
+                            "affects_self": False,
                             "source": "trait"
                         }
-                        print(f"[CombatResolver] Detected {aura_type} ('{aura_name_to_add}') in {combatant.get('name', 'Unknown')}'s traits")
-            else:
-                logging.warning(f"[CombatResolver] Item in traits list for {combatant.get('name', 'Unknown')} is not a dictionary: {trait_dict}")
+                        
+                        print(f"[CombatResolver] Created {damage_type} damage aura '{aura_name}' with range {aura_range}ft, damage {damage_expr}")
+                    
+                    # Create condition effect
+                    else:
+                        # Extract condition from description
+                        condition_match = re.search(r'(?:becomes?|is) (frightened|poisoned|stunned|blinded|deafened)', trait_desc.lower())
+                        condition = "frightened" if not condition_match else condition_match.group(1)
+                        
+                        # Create the aura effect
+                        combatant["auras"][aura_name] = {
+                            "range": aura_range,
+                            "effect": {
+                                "type": "condition",
+                                "condition": condition,
+                                "duration": 1
+                            },
+                            "affects": "enemies",
+                            "affects_self": False,
+                            "source": "trait"
+                        }
+                        
+                        print(f"[CombatResolver] Created condition aura '{aura_name}' with range {aura_range}ft, condition {condition}")
         
-        # If no auras found through pattern matching, use LLM to detect them
-        if not combatant["auras"]:
-            # Only use LLM detection if enemy has traits but no detected auras
-            if traits or "Monster" in combatant.get("type", ""):
-                combatant = self._detect_auras_with_llm(combatant)
+        # Special handling for known monsters with auras regardless of traits
+        name_lower = name.lower()
+        if "fire" in name_lower or "infernal" in name_lower or "tyrant" in name_lower:
+            print(f"[CombatResolver] Adding fire aura to {name} based on name")
+            
+            # Only add if not already present
+            if "fire_aura" not in combatant["auras"]:
+                combatant["auras"]["fire_aura"] = {
+                    "range": 10,
+                    "effect": {
+                        "type": "damage", 
+                        "expression": "3d6", 
+                        "damage_type": "fire"
+                    },
+                    "affects": "enemies",
+                    "affects_self": False,
+                    "source": "infernal_nature"
+                }
                 
+                print(f"[CombatResolver] Added fire_aura to {name}")
+        
         # Mark as processed to avoid redundant checks
         combatant["auras_processed"] = True
         return combatant
-        
-    def _detect_auras_with_llm(self, combatant, default_range=10):
-        """
-        Use LLM to analyze a combatant's traits and detect potential auras
-        
-        Args:
-            combatant: The combatant to analyze for auras
-            default_range: Default aura range if not specified
-            
-        Returns:
-            Updated combatant with detected auras
-        """
-        # Skip if no LLM service available
-        if not hasattr(self, "llm_service"):
-            return combatant
-            
-        # Prepare information about the combatant for analysis
-        combatant_info = {
-            "name": combatant.get("name", "Unknown"),
-            "type": combatant.get("type", ""),
-            "traits": combatant.get("traits", {}),
-            "actions": combatant.get("actions", {}),
-            "abilities": combatant.get("abilities", {})
-        }
-        
-        # Create an analysis prompt for the LLM
-        prompt = f"""
-You are a D&D 5e rules expert. Analyze this creature's information and identify any aura effects it might have:
-
-{json.dumps(combatant_info, indent=2)}
-
-Only detect auras - magical or supernatural effects that automatically affect creatures near the source.
-Examples include:
-- Fire auras that deal damage to nearby creatures
-- Fear auras that frighten nearby enemies
-- Healing auras that restore hit points to allies
-- Protection auras that provide resistances or bonuses
-
-Respond with a JSON object containing any detected auras in the following format:
-{{
-  "has_auras": true/false,
-  "auras": {{
-    "aura_name": {{
-      "range": 10,
-      "effect": {{
-        "type": "damage/condition/healing/resistance",
-        "expression": "dice expression for damage/healing",
-        "damage_type": "type of damage",
-        "condition": "condition name",
-        "duration": duration in rounds
-      }},
-      "affects": "enemies/allies/all",
-      "affects_self": true/false
-    }}
-  }}
-}}
-
-If no auras are detected, return:
-{{
-  "has_auras": false,
-  "auras": {{}}
-}}
-"""
-
-        try:
-            # Request analysis from LLM
-            available_models = self.llm_service.get_available_models()
-            model_id = available_models[0]["id"] if available_models else None
-            
-            if not model_id:
-                print(f"[CombatResolver] No LLM models available for aura detection")
-                return combatant
+    
+    def _get_distance_between(self, combatant1, combatant2):
+        """Get distance between two combatants in feet"""
+        # Check if distances are explicitly defined in position data
+        if "position" in combatant1 and "distance_to" in combatant1["position"]:
+            target_name = combatant2.get("name", "")
+            if target_name in combatant1["position"]["distance_to"]:
+                return combatant1["position"]["distance_to"][target_name]
                 
-            response = self.llm_service.generate_completion(
-                model=model_id,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=800
-            )
-            
-            # Parse the LLM response
-            if response:
-                # Extract JSON from response
-                json_match = re.search(r'\{[\s\S]*\}', response)
-                if json_match:
-                    result = json.loads(json_match.group(0))
-                    
-                    if result.get("has_auras", False) and result.get("auras"):
-                        # Add detected auras to the combatant
-                        for aura_name, aura_info in result["auras"].items():
-                            if not combatant.get("auras"):
-                                combatant["auras"] = {}
-                            
-                            # Ensure aura has required fields with defaults
-                            if "range" not in aura_info:
-                                aura_info["range"] = default_range
-                            if "affects" not in aura_info:
-                                aura_info["affects"] = "enemies"
-                            if "affects_self" not in aura_info:
-                                aura_info["affects_self"] = False
-                                
-                            # Add source information
-                            aura_info["source"] = "llm_detected"
-                            
-                            # Add to combatant's auras
-                            combatant["auras"][aura_name] = aura_info
-                            print(f"[CombatResolver] LLM detected aura '{aura_name}' for {combatant.get('name', 'Unknown')}")
-        
-        except Exception as e:
-            print(f"[CombatResolver] Error during LLM aura detection: {str(e)}")
-            import traceback
-            traceback.print_exc()
-        
-        return combatant 
-
+        # Default distance if not explicitly defined
+        # 5ft for melee range, otherwise large distance (effectively out of range)
+        if combatant1.get("type") != combatant2.get("type"):
+            return 5  # Assume enemies are in melee range by default
+        return 1  # Assume allies are very close by default
+    
     def _get_active_auras(self, active_combatant, all_combatants):
         """
         Get a list of auras currently affecting a combatant
