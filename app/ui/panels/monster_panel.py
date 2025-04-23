@@ -635,6 +635,32 @@ class MonsterPanel(BasePanel):
                 except:
                     pass
             print(f"[MonsterPanel] Manually converted monster to dictionary with {len(monster_dict)} keys")
+        
+        # Validate monster data to prevent ability mixing
+        try:
+            # Import the validator
+            from app.core.improved_combat_resolver import ImprovedCombatResolver
+            
+            # Validate monster data
+            print(f"[MonsterPanel] Validating monster data for '{monster_dict.get('name', 'Unknown')}'")
+            validated_monster_dict = ImprovedCombatResolver.validate_monster_data(monster_dict)
+            
+            # Check if validation changed anything
+            actions_before = len(monster_dict.get('actions', [])) if 'actions' in monster_dict else 0
+            actions_after = len(validated_monster_dict.get('actions', [])) if 'actions' in validated_monster_dict else 0
+            
+            traits_before = len(monster_dict.get('traits', [])) if 'traits' in monster_dict else 0
+            traits_after = len(validated_monster_dict.get('traits', [])) if 'traits' in validated_monster_dict else 0
+            
+            if actions_before != actions_after or traits_before != traits_after:
+                print(f"[MonsterPanel] Validation removed {actions_before - actions_after} actions and {traits_before - traits_after} traits from {monster_dict.get('name', 'Unknown')}")
+                
+                # Use the validated data
+                monster_dict = validated_monster_dict
+        except Exception as e:
+            # If validation fails, log the error but continue with the original data
+            print(f"[MonsterPanel] Error validating monster data: {e}")
+            # Don't block combat addition due to validation error
                 
         # Emit the signal with the monster data AS A LIST
         print(f"[MonsterPanel] Emitting add_combatant_signal with monster data list, keys: {list(monster_dict.keys())}")

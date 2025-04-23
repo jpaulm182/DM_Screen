@@ -1046,3 +1046,149 @@ Decide the most appropriate action for {{MONSTER_NAME}} this turn.
                 return generate_monster_specific_prompt(active_combatant, monster_prompt_template)
         
         return prompt 
+
+    @staticmethod
+    def validate_monster_data(monster_data):
+        """
+        Static method to validate monster data before it's even added to combat.
+        This prevents ability mixing at the data creation stage.
+        
+        Args:
+            monster_data: Dictionary with monster data
+            
+        Returns:
+            Validated monster data with any invalid abilities removed
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        if not monster_data or not isinstance(monster_data, dict):
+            logger.warning("Cannot validate invalid monster data")
+            return monster_data
+        
+        # Import validation functions in case this is called from another module
+        try:
+            from app.core.utils.monster_ability_validator import (
+                extract_ability_names,
+                get_canonical_abilities,
+                verify_abilities_match_monster
+            )
+        except ImportError:
+            logger.error("Cannot import monster ability validator - skipping validation")
+            return monster_data
+        
+        monster_name = monster_data.get("name", "Unknown Monster")
+        logger.info(f"Validating data for monster: {monster_name}")
+        
+        # Extract canonical abilities for this specific monster type
+        canonical_abilities = get_canonical_abilities(monster_name, monster_data)
+        logger.info(f"Found {len(canonical_abilities)} canonical abilities for {monster_name}")
+        
+        # Get typical abilities for this monster type from our database or template
+        monster_type = monster_data.get("type", "").lower()
+        
+        # Add type-specific canonical abilities if needed
+        if monster_type == "dragon" or "dragon" in monster_name.lower():
+            dragon_abilities = {"breath weapon", "frightful presence", "multiattack", "bite", "claw", "tail"}
+            canonical_abilities.update(dragon_abilities)
+            logger.info(f"Added dragon-specific abilities to {monster_name}")
+        elif monster_type == "undead" or "skeleton" in monster_name.lower() or "zombie" in monster_name.lower():
+            undead_abilities = {"undead fortitude", "undead nature", "multiattack", "claw", "bone attack"}
+            canonical_abilities.update(undead_abilities)
+            logger.info(f"Added undead-specific abilities to {monster_name}")
+        elif "elemental" in monster_type or "elemental" in monster_name.lower() or "mephit" in monster_name.lower():
+            elemental_abilities = {"elemental nature", "innate spellcasting", "multiattack", "slam", "touch"}
+            # Add element-specific abilities based on name
+            if "fire" in monster_name.lower() or "magma" in monster_name.lower() or "flame" in monster_name.lower():
+                elemental_abilities.update({"fire form", "heated body", "fire breath", "fire bolt", "ignite", "magma form"})
+            elif "water" in monster_name.lower():
+                elemental_abilities.update({"water form", "freeze", "water jet"})
+            elif "air" in monster_name.lower():
+                elemental_abilities.update({"air form", "whirlwind", "lightning strike"})
+            elif "earth" in monster_name.lower():
+                elemental_abilities.update({"earth form", "stone camouflage", "stone grip"})
+            
+            canonical_abilities.update(elemental_abilities)
+            logger.info(f"Added elemental-specific abilities to {monster_name}")
+        
+        # Check and clean actions
+        if "actions" in monster_data:
+            original_actions_count = len(monster_data["actions"]) if isinstance(monster_data["actions"], list) else 0
+            monster_data["actions"] = verify_abilities_match_monster(
+                monster_name, monster_data.get("actions", []), canonical_abilities)
+            new_actions_count = len(monster_data["actions"])
+            
+            if original_actions_count > new_actions_count:
+                logger.warning(f"Removed {original_actions_count - new_actions_count} invalid actions from {monster_name}")
+                
+                # If we removed all actions, add some basic ones
+                if new_actions_count == 0:
+                    logger.warning(f"All actions were invalid! Adding generic actions for {monster_name}")
+                    monster_data["actions"] = [
+                        {
+                            "name": "Basic Attack",
+                            "description": f"Melee Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 7 (1d8 + 3) damage."
+                        }
+                    ]
+        
+        # Check and clean traits
+        if "traits" in monster_data:
+            original_traits_count = len(monster_data["traits"]) if isinstance(monster_data["traits"], list) else 0
+            monster_data["traits"] = verify_abilities_match_monster(
+                monster_name, monster_data.get("traits", []), canonical_abilities)
+            new_traits_count = len(monster_data["traits"])
+            
+            if original_traits_count > new_traits_count:
+                logger.warning(f"Removed {original_traits_count - new_traits_count} invalid traits from {monster_name}")
+                
+                # If we removed all traits, add some basic ones based on monster type
+                if new_traits_count == 0 and monster_type:
+                    logger.warning(f"All traits were invalid! Adding generic traits for {monster_name}")
+                    if "dragon" in monster_type or "dragon" in monster_name.lower():
+                        monster_data["traits"] = [
+                            {
+                                "name": "Draconic Nature",
+                                "description": f"The {monster_name} has advantage on saving throws against frightened."
+                            }
+                        ]
+                    elif "undead" in monster_type or "skeleton" in monster_name.lower():
+                        monster_data["traits"] = [
+                            {
+                                "name": "Undead Nature",
+                                "description": f"The {monster_name} doesn't require air, food, drink, or sleep."
+                            }
+                        ]
+                    elif "elemental" in monster_type or "mephit" in monster_name.lower():
+                        monster_data["traits"] = [
+                            {
+                                "name": "Elemental Nature",
+                                "description": f"The {monster_name} doesn't require air, food, drink, or sleep."
+                            }
+                        ]
+                    else:
+                        monster_data["traits"] = [
+                            {
+                                "name": "Keen Senses",
+                                "description": f"The {monster_name} has advantage on Wisdom (Perception) checks."
+                            }
+                        ]
+        
+        # Check and clean abilities dictionary
+        if "abilities" in monster_data and isinstance(monster_data["abilities"], dict):
+            abilities_dict = monster_data["abilities"]
+            original_abilities_count = len(abilities_dict)
+            cleaned_abilities = {}
+            
+            for name, ability_data in abilities_dict.items():
+                if name.lower() in canonical_abilities:
+                    cleaned_abilities[name] = ability_data
+                else:
+                    logger.warning(f"Removed ability '{name}' that doesn't belong to {monster_name}")
+            
+            # Update the monster data with cleaned abilities
+            monster_data["abilities"] = cleaned_abilities
+            
+            if original_abilities_count > len(cleaned_abilities):
+                logger.warning(f"Removed {original_abilities_count - len(cleaned_abilities)} invalid special abilities from {monster_name}")
+        
+        return monster_data 

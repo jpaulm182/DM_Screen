@@ -4148,6 +4148,34 @@ class CombatTrackerPanel(BasePanel):
                 
             print(f"[CombatTracker] Adding monster '{monster_name}' (type: {type(monster_data)})")
             
+            # Validate monster data to prevent ability mixing
+            try:
+                # Import the validator
+                from app.core.improved_combat_resolver import ImprovedCombatResolver
+                
+                # Only validate if it's a dictionary (proper format)
+                if isinstance(monster_data, dict):
+                    # Validate monster data
+                    print(f"[CombatTracker] Validating monster data for '{monster_name}'")
+                    validated_monster_data = ImprovedCombatResolver.validate_monster_data(monster_data)
+                    
+                    # Check if validation changed anything
+                    actions_before = len(monster_data.get('actions', [])) if 'actions' in monster_data else 0
+                    actions_after = len(validated_monster_data.get('actions', [])) if 'actions' in validated_monster_data else 0
+                    
+                    traits_before = len(monster_data.get('traits', [])) if 'traits' in monster_data else 0
+                    traits_after = len(validated_monster_data.get('traits', [])) if 'traits' in validated_monster_data else 0
+                    
+                    if actions_before != actions_after or traits_before != traits_after:
+                        print(f"[CombatTracker] Validation removed {actions_before - actions_after} actions and {traits_before - traits_after} traits from {monster_name}")
+                        
+                        # Use the validated data
+                        monster_data = validated_monster_data
+            except Exception as e:
+                # If validation fails, log the error but continue with the original data
+                print(f"[CombatTracker] Error validating monster data: {e}")
+                # Don't block combat addition due to validation error
+            
             # Helper function to get attribute from either dict or object
             def get_attr(obj, attr, default=None, alt_attrs=None):
                 """Get attribute from object or dict, trying alternate attribute names if specified"""

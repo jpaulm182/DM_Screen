@@ -394,6 +394,40 @@ class DatabaseManager:
         
         monster_data = monster.to_dict() # Get dict representation
         
+        # Validate monster abilities to prevent ability mixing before saving
+        try:
+            # Import validator
+            try:
+                # This import might fail if the module is not available
+                from app.core.improved_combat_resolver import ImprovedCombatResolver
+                
+                # Validate the monster data
+                print(f"DEBUG: Validating monster data for '{monster.name}' before saving")
+                validated_data = ImprovedCombatResolver.validate_monster_data(monster_data)
+                
+                # Check if validation changed anything
+                actions_before = len(monster_data.get('actions', [])) if 'actions' in monster_data else 0
+                actions_after = len(validated_data.get('actions', [])) if 'actions' in validated_data else 0
+                
+                traits_before = len(monster_data.get('traits', [])) if 'traits' in monster_data else 0
+                traits_after = len(validated_data.get('traits', [])) if 'traits' in validated_data else 0
+                
+                if actions_before != actions_after or traits_before != traits_after:
+                    print(f"DEBUG: Validation removed {actions_before - actions_after} actions and {traits_before - traits_after} traits from {monster.name}")
+                    
+                    # Update the monster object with validated data
+                    monster_data = validated_data
+                    
+                    # If we have an actual Monster object, update its attributes too
+                    if hasattr(monster, 'actions'):
+                        monster.actions = validated_data.get('actions', [])
+                    if hasattr(monster, 'traits'):
+                        monster.traits = validated_data.get('traits', [])
+            except ImportError:
+                print("WARNING: ImprovedCombatResolver not available for monster validation")
+        except Exception as e:
+            print(f"WARNING: Error validating monster before save: {e}")
+        
         # Debug logging to check dict conversion
         print(f"DEBUG: Monster to_dict() result has {len(monster_data)} keys")
         
