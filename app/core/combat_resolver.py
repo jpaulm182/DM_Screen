@@ -42,10 +42,12 @@ class CombatResolver(QObject):
             update_ui_callback: Function called after each turn to update UI (optional)
         """
         logging.debug("--- ENTERING resolve_combat_turn_by_turn ---") # TEST LOG
-        # NOTE: The 'callback' argument is now effectively unused, relying on the signal instead.
-        # We keep it for now to avoid breaking the calling signature immediately, but it should be removed later.
         import copy
         import threading
+        
+        # --- NEW: Track previous turn results for LLM context ---
+        # We'll keep a list of previous turn summaries
+        previous_turn_summaries = []
         
         # Make a deep copy to avoid mutating the original
         # Ensure combat_state is a dictionary before copying
@@ -76,7 +78,7 @@ class CombatResolver(QObject):
             # Emit signal with error
             self.resolution_complete.emit(None, "No combatants in the combat state.")
             return
-            
+        
         # Validate that we have at least one monster and one character
         monsters = [c for c in combatants if c.get("type", "").lower() == "monster" and c.get("hp", 0) > 0]
         characters = [c for c in combatants if c.get("type", "").lower() != "monster" and c.get("name", "") != "Add your party here!"]
@@ -90,53 +92,31 @@ class CombatResolver(QObject):
                 c["max_hp"] = c.get("max_hp", c["hp"])
                 print("[CombatResolver] Converted placeholder to Player Character")
                 # Add to characters list
-                characters.append(c)
         
-        if not monsters:
-            # Emit signal with error
-            self.resolution_complete.emit(None, "No monsters in the combat. Add at least one monster from the monster panel.")
-            return
-            
-        print(f"[CombatResolver] Combat validation passed: {len(monsters)} monsters and {len(characters)} characters")
+        # --- NEW: Inner function to build LLM messages with previous turn context ---
+        def build_llm_messages(current_prompt):
+            messages = []
+            # Add each previous turn summary as a system message
+            for summary in previous_turn_summaries:
+                messages.append({"role": "system", "content": summary})
+            # Add the new prompt as user message
+            messages.append({"role": "user", "content": current_prompt})
+            return messages
         
         def run_resolution():
             logging.debug("--- ENTERING run_resolution thread ---") # TEST LOG
             try:
-                # Use state_copy from outer scope
                 state = state_copy
-                
-                # Ensure state is a dictionary, not a string or other type
                 if not isinstance(state, dict):
                     print(f"[CombatResolver] Error: state is not a dictionary in run_resolution, type: {type(state)}")
-                    # Emit signal with error
                     self.resolution_complete.emit(None, f"Invalid combat state: {type(state)}")
                     return
-                
-                # Extract combat state - defensively get values with defaults
                 round_num = state.get("round", 1)
-                if not isinstance(round_num, int):
-                    try:
-                        round_num = int(round_num)
-                    except (ValueError, TypeError):
-                        round_num = 1
-                    
                 combatants = state.get("combatants", [])
-                if not isinstance(combatants, list):
-                    print(f"[CombatResolver] Error: combatants is not a list, type: {type(combatants)}")
-                    combatants = []
-                
-                # Sort active combatants by initiative (safely)
-                try:
-                    active_combatants = sorted(range(len(combatants)), 
-                                            key=lambda i: -int(combatants[i].get("initiative", 0)))
-                except Exception as e:
-                    print(f"[CombatResolver] Error sorting combatants: {e}")
-                    active_combatants = list(range(len(combatants)))
-                
-                max_rounds = 50  # Failsafe to prevent infinite loops
+                turn_idx = state.get("current_turn_index", 0)
                 
                 # Main combat loop - continue until only one type of combatant remains or max rounds reached
-                while round_num <= max_rounds:
+                while round_num <= 50:
                     print(f"[CombatResolver] Starting round {round_num}")
                     
                     # Check if combat should end
@@ -160,14 +140,13 @@ class CombatResolver(QObject):
                         # Only characters left, combat ends
                         combat_should_end = True
                         print("[CombatResolver] Combat ending: Only characters left.")
-                    # Removed the check for failed death saves here, handled within loop
-
+                    
                     # End combat if necessary
                     if combat_should_end:
                         break
                     
                     # Process each combatant's turn in initiative order
-                    for idx in active_combatants:
+                    for idx in sorted(range(len(combatants)), key=lambda i: -int(combatants[i].get("initiative", 0))):
                         if idx >= len(combatants):
                             print(f"[CombatResolver] Error: combatant index {idx} out of range")
                             continue
@@ -243,7 +222,7 @@ class CombatResolver(QObject):
                             original_hp_values = {c["name"]: c.get("hp", 0) for c in combatants if "name" in c}
                             
                             # Log original HP values before any changes
-                            print(f"[CombatResolver] ORIGINAL HP VALUES BEFORE UPDATES:")
+                            print(f"\n[CombatResolver] ORIGINAL HP VALUES BEFORE UPDATES:")
                             for name, hp in original_hp_values.items():
                                 print(f"[CombatResolver] {name}: {hp}")
                             
@@ -534,7 +513,7 @@ class CombatResolver(QObject):
                     "rounds": round_num-1
                 }
                 
-                if round_num > max_rounds:
+                if round_num > 50:
                     summary["narrative"] += " (Stopped due to round limit; possible LLM error)"
                     
                 # Emit signal with summary result and no error
@@ -870,6 +849,7 @@ class CombatResolver(QObject):
                         model_id = m["id"]
                         break
                 if not model_id:
+                    # Fallback: use first available model
                     model_id = available_models[0]["id"]
                 # --- END FIX ---
                 # Include aura updates in the resolution context
@@ -1002,8 +982,8 @@ class CombatResolver(QObject):
                                                 result["narrative"] = f"{active_combatant.get('name')} attacks {target} but misses ({attack_value} vs AC {target_ac})."
                                     except (ValueError, TypeError):
                                         print(f"[CombatResolver] Could not parse attack roll when salvaging outcome")
-                            except (ValueError, TypeError):
-                                print(f"[CombatResolver] Could not parse damage roll when salvaging outcome")
+                        except (ValueError, TypeError):
+                            print(f"[CombatResolver] Could not parse damage roll when salvaging outcome")
                     
                     print(f"[CombatResolver] Returning salvaged result: {result}")
                     return result
@@ -1122,10 +1102,11 @@ class CombatResolver(QObject):
                                     if damage_dice:
                                         try:
                                             damage_amount = int(damage_dice[0].get("result", 0))
-                                            print(f"[CombatResolver] Using damage amount from dice: {damage_amount}")
+                                            # Create or update damage value for target
                                             resolution["damage_dealt"] = {potential_target: damage_amount}
+                                            print(f"[CombatResolver] Created damage_dealt with {damage_amount} to {potential_target}")
                                         except (ValueError, TypeError):
-                                            print(f"[CombatResolver] Could not convert dice result to damage amount")
+                                            print(f"[CombatResolver] Could not extract damage value from dice")
                 # --- ENSURE resolution is a dict ---
                 if not isinstance(resolution, dict):
                     print(f"[CombatResolver] LLM resolution is not a dict, using fallback.")
@@ -1257,7 +1238,7 @@ class CombatResolver(QObject):
                         if target:
                             new_hp = max(0, target.get("hp", 0) - int(dmg))
                             updates.append({"name": target_name, "hp": new_hp})
-                            print(f"[CombatResolver] Applying {dmg} damage to {target_name}: HP {target.get('hp', 0)} -> {new_hp}")
+                            print(f"[CombatResolver] Applying {dmg} damage to {target_name}: HP {target.get('hp', 0)} → {new_hp}")
 
                     # Handle healing (increase HP up to max)
                     for target_name, heal in resolution.get("healing", {}).items():
@@ -1285,7 +1266,7 @@ class CombatResolver(QObject):
                             max_hp = target.get("max_hp", target.get("hp", 0))
                             new_hp = min(max_hp, target.get("hp", 0) + int(heal))
                             updates.append({"name": target_name, "hp": new_hp})
-                            print(f"[CombatResolver] Applying {heal} healing to {target_name}: HP {target.get('hp', 0)} -> {new_hp}")
+                            print(f"[CombatResolver] Applying {heal} healing to {target_name}: HP {target.get('hp', 0)} → {new_hp}")
                     
                     # Apply conditions if specified
                     for target_name, conditions in resolution.get("conditions_applied", {}).items():
@@ -2544,7 +2525,7 @@ CONDITIONS_APPLIED: A mapping of target names to lists of conditions applied
 CONDITIONS_REMOVED: A mapping of target names to lists of conditions removed
 RECHARGE_ABILITY_USED: If a recharge ability was used, set this to the name of the ability (e.g. "Fire Breath")
 
-IMPORTANT: If the action involves using a recharge ability that is not available, adjust your narration to describe how the creature attempted to use that ability but found it wasn't ready, and then chose an alternative action instead.
+IMPORTANT: If the action involves using a recharge ability that is not available, adjust your narration to describe how the creature attempted to use that ability but couldn't, and then chose an alternative action instead.
 """
         return prompt
 
