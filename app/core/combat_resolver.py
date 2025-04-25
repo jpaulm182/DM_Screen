@@ -678,7 +678,7 @@ class CombatResolver(QObject):
                             print(f"[CombatResolver] Extracted JSON from ```json block: {json_content[:100]}...")
                             try:
                                 parsed_decision = json.loads(json_content)
-                                print(f"[CombatResolver] Successfully parsed JSON from code block")
+                                print(f"[CombatResolver] Successfully parsed JSON from ```json block")
                                 decision_response = parsed_decision
                             except Exception as e:
                                 print(f"[CombatResolver] Error parsing JSON from ```json block: {e}")
@@ -773,7 +773,7 @@ class CombatResolver(QObject):
                                     except (ValueError, TypeError):
                                         print(f"[CombatResolver] Could not parse attack roll when salvaging outcome")
                             except (ValueError, TypeError):
-                                print(f"[CombatResolver] Could not parse damage roll when salvaging outcome")
+                                    print(f"[CombatResolver] Could not parse damage roll when salvaging outcome")
                     
                 print(f"[CombatResolver] Returning salvaged result: {result}")
                 return result
@@ -984,7 +984,8 @@ class CombatResolver(QObject):
                     for target_name, dmg in resolution.get("damage_dealt", {}).items():
                         if not isinstance(dmg, (int, float)):
                             try:
-                                dmg = int(dmg)  # Try to convert to int
+                                # Attempt to convert to int
+                                dmg = int(dmg)
                             except (ValueError, TypeError):
                                 print(f"[CombatResolver] Invalid damage value: {dmg} for target {target_name}")
                                 # Try to extract any damage from dice results
@@ -1034,7 +1035,8 @@ class CombatResolver(QObject):
                     for target_name, heal in resolution.get("healing", {}).items():
                         if not isinstance(heal, (int, float)):
                             try:
-                                heal = int(heal)  # Try to convert to int
+                                # Attempt to convert to int
+                                heal = int(heal)
                             except (ValueError, TypeError):
                                 print(f"[CombatResolver] Invalid healing value: {heal} for target {target_name}")
                                 # Try to extract healing from dice results
@@ -1100,7 +1102,7 @@ class CombatResolver(QObject):
                     print(f"[CombatResolver] Using explicit updates from resolution: {updates}")
 
                 turn_result = {
-                    "action": action,
+                    "action": resolution.get("action", "Unknown action"),
                     "narrative": narrative_text,
                     "dice": dice_results,
                     "updates": updates,
@@ -1115,7 +1117,7 @@ class CombatResolver(QObject):
                 
                 # Even in case of error, return a valid turn result
                 fallback_result = {
-                    "action": action,
+                    "action": resolution.get("action", "Unknown action"),
                     "narrative": f"The {active_combatant.get('name', 'combatant')} acted, but a technical issue prevented recording the outcome.",
                     "dice": dice_results,
                     "updates": []
