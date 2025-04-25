@@ -947,6 +947,55 @@ class CombatResolver(QObject):
                         "narrative": str(resolution),
                         "updates": []
                     }
+
+                # ------------------------------------------------------------------
+                # NEW: Build and RETURN the turn_result so the caller can log it
+                # ------------------------------------------------------------------
+                # Extract a narrative/description in a tolerant manner
+                narrative_text = (
+                    resolution.get("description")
+                    or resolution.get("narrative")
+                    or "The action is resolved."
+                )
+
+                # Build updates list based on damage/healing information if provided
+                updates = []
+
+                try:
+                    # Handle damage dealt (reduce HP for targets)
+                    for target_name, dmg in resolution.get("damage_dealt", {}).items():
+                        if not isinstance(dmg, (int, float)):
+                            continue  # Skip unexpected formats
+                        target = next((c for c in combatants if c.get("name") == target_name), None)
+                        if target:
+                            new_hp = max(0, target.get("hp", 0) - int(dmg))
+                            updates.append({"name": target_name, "hp": new_hp})
+
+                    # Handle healing (increase HP up to max)
+                    for target_name, heal in resolution.get("healing", {}).items():
+                        if not isinstance(heal, (int, float)):
+                            continue
+                        target = next((c for c in combatants if c.get("name") == target_name), None)
+                        if target:
+                            max_hp = target.get("max_hp", target.get("hp", 0))
+                            new_hp = min(max_hp, target.get("hp", 0) + int(heal))
+                            updates.append({"name": target_name, "hp": new_hp})
+                except Exception as e:
+                    # Defensive: Never let update generation crash the turn
+                    print(f"[CombatResolver] WARNING: Error translating resolution to updates: {e}")
+
+                # Fall back to any explicit updates provided by the LLM
+                if not updates and isinstance(resolution.get("updates"), list):
+                    updates = resolution["updates"]
+
+                turn_result = {
+                    "action": action,
+                    "narrative": narrative_text,
+                    "dice": dice_results,
+                    "updates": updates,
+                }
+
+                return turn_result
             except Exception as e:
                 print(f"[CombatResolver] Error processing turn resolution: {str(e)}")
                 import traceback
