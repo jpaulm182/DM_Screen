@@ -668,6 +668,26 @@ class CombatResolver(QObject):
                 )
                 print(f"[CombatResolver] Received LLM decision for {active_combatant.get('name', 'Unknown')}")
                 print(f"[CombatResolver] Raw decision response: {decision_response!r}")
+                # --- FIX: Parse JSON if needed (strip code block markers first) ---
+                import json
+                if isinstance(decision_response, str):
+                    cleaned = decision_response.strip()
+                    if cleaned.startswith('```json'):
+                        cleaned = cleaned[7:]
+                    if cleaned.startswith('```'):
+                        cleaned = cleaned[3:]
+                    if cleaned.endswith('```'):
+                        cleaned = cleaned[:-3]
+                    cleaned = cleaned.strip()
+                    print(f"[CombatResolver] Cleaned LLM decision for JSON parsing: {cleaned!r}")
+                    try:
+                        parsed_decision = json.loads(cleaned)
+                        print(f"[CombatResolver] Parsed LLM decision as JSON: {parsed_decision}")
+                        decision_response = parsed_decision
+                    except Exception as e:
+                        print(f"[CombatResolver] Failed to parse LLM decision as JSON: {e}")
+                        # Continue with original string, fallback logic will handle it
+                # --- END FIX ---
             except Exception as e:
                 print(f"[CombatResolver] Error getting LLM decision: {str(e)}")
                 import traceback
@@ -676,58 +696,58 @@ class CombatResolver(QObject):
             # 3. Parse the LLM's decision
             try:
                 print(f"[CombatResolver] Parsing LLM decision response: {decision_response!r}")
-                # Clean the LLM response to extract JSON properly
-                decision_text = decision_response
-                
-                # Fix 1: Strip code block markers if they exist
-                decision_text = re.sub(r'```(?:json)?\s*', '', decision_text)
-                decision_text = re.sub(r'```\s*$', '', decision_text)
-                
-                # Fix 2: Try to extract JSON even if there's other text around it
-                json_match = re.search(r'\{[\s\S]*\}', decision_text)
-                if not json_match:
-                    print(f"[CombatResolver] Could not find JSON in LLM decision response")
-                    # Try a fallback approach to create a minimal valid decision
-                    print(f"[CombatResolver] Trying to create a fallback decision")
-                    action_match = re.search(r'action["\s:]+([^"]+)"', decision_text)
-                    fallback_action = "The combatant makes a basic attack." if not action_match else action_match.group(1)
-                    
-                    # Create a minimal valid decision
-                    decision = {
-                        "action": fallback_action,
-                        "target": "none",
-                        "reasoning": "No reasoning provided.",
-                        "dice_requests": [
-                            {"expression": "1d20", "purpose": "Basic attack roll"},
-                            {"expression": "1d6", "purpose": "Basic damage roll"}
-                        ],
-                        "action_type": "action"  # Default action type
-                    }
+                # If already a dict, use it directly
+                if isinstance(decision_response, dict):
+                    decision = decision_response
                 else:
-                    json_str = json_match.group(0)
-                    try:
-                        decision = _json.loads(json_str)
-                    except _json.JSONDecodeError as e:
-                        print(f"[CombatResolver] JSON decode error: {e}")
-                        # Try to clean up the JSON string further
-                        cleaned_json = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas
-                        cleaned_json = re.sub(r',\s*]', ']', cleaned_json)  # Remove trailing commas in arrays
+                    # Clean the LLM response to extract JSON properly
+                    decision_text = decision_response
+                    # Fix 1: Strip code block markers if they exist
+                    decision_text = re.sub(r'```(?:json)?\s*', '', decision_text)
+                    decision_text = re.sub(r'```\s*$', '', decision_text)
+                    # Fix 2: Try to extract JSON even if there's other text around it
+                    json_match = re.search(r'\{[\s\S]*\}', decision_text)
+                    if not json_match:
+                        print(f"[CombatResolver] Could not find JSON in LLM decision response")
+                        # Try a fallback approach to create a minimal valid decision
+                        print(f"[CombatResolver] Trying to create a fallback decision")
+                        action_match = re.search(r'action["\s:]+([^"]+)"', decision_text)
+                        fallback_action = "The combatant makes a basic attack." if not action_match else action_match.group(1)
+                        # Create a minimal valid decision
+                        decision = {
+                            "action": fallback_action,
+                            "target": "none",
+                            "reasoning": "No reasoning provided.",
+                            "dice_requests": [
+                                {"expression": "1d20", "purpose": "Basic attack roll"},
+                                {"expression": "1d6", "purpose": "Basic damage roll"}
+                            ],
+                            "action_type": "action"  # Default action type
+                        }
+                    else:
+                        json_str = json_match.group(0)
                         try:
-                            decision = _json.loads(cleaned_json)
-                        except _json.JSONDecodeError:
-                            print(f"[CombatResolver] Failed to parse JSON even after cleanup, creating fallback")
-                            # Create fallback decision
-                            decision = {
-                                "action": "The combatant makes a basic attack after a parsing error.",
-                                "target": "none",
-                                "reasoning": "No reasoning provided.",
-                                "dice_requests": [
-                                    {"expression": "1d20", "purpose": "Basic attack roll"},
-                                    {"expression": "1d6", "purpose": "Basic damage roll"}
-                                ],
-                                "action_type": "action"  # Default action type
-                            }
-                    # End of except for JSONDecodeError
+                            decision = _json.loads(json_str)
+                        except _json.JSONDecodeError as e:
+                            print(f"[CombatResolver] JSON decode error: {e}")
+                            # Try to clean up the JSON string further
+                            cleaned_json = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas
+                            cleaned_json = re.sub(r',\s*]', ']', cleaned_json)  # Remove trailing commas in arrays
+                            try:
+                                decision = _json.loads(cleaned_json)
+                            except _json.JSONDecodeError:
+                                print(f"[CombatResolver] Failed to parse JSON even after cleanup, creating fallback")
+                                # Create fallback decision
+                                decision = {
+                                    "action": "The combatant makes a basic attack after a parsing error.",
+                                    "target": "none",
+                                    "reasoning": "No reasoning provided.",
+                                    "dice_requests": [
+                                        {"expression": "1d20", "purpose": "Basic attack roll"},
+                                        {"expression": "1d6", "purpose": "Basic damage roll"}
+                                    ],
+                                    "action_type": "action"  # Default action type
+                                }
                 # Ensure decision is a dictionary
                 if not isinstance(decision, dict):
                     print(f"[CombatResolver] LLM decision is not a dict, creating fallback.")
@@ -815,30 +835,59 @@ class CombatResolver(QObject):
 
             # 5. Send dice results to LLM for resolution
             try:
+                # --- FIX: Ensure model_id is defined for the resolution LLM call ---
+                available_models = self.llm_service.get_available_models()
+                model_id = None
+                for m in available_models:
+                    if m["id"] == ModelInfo.OPENAI_GPT4O_MINI:
+                        model_id = m["id"]
+                        break
+                if not model_id:
+                    model_id = available_models[0]["id"]
+                # --- END FIX ---
                 # Include aura updates in the resolution context
                 resolution_prompt = self._create_resolution_prompt(
-                    combatants, active_idx, action, dice_results, round_num)
-                
+                    combatants, active_idx, decision, dice_results, round_num)
                 print(f"[CombatResolver] Requesting resolution from LLM for {active_combatant.get('name', 'Unknown')}")
-                resolution_response = self.llm_service.generate_completion(
-                    model=model_id,
-                    messages=[{"role": "user", "content": resolution_prompt}],
-                    temperature=0.7,
-                    max_tokens=800
-                )
-                print(f"[CombatResolver] Received LLM resolution for {active_combatant.get('name', 'Unknown')}")
-                print(f"[CombatResolver] Raw resolution response: {resolution_response!r}")
-                # --- FIX: Ensure resolution_response is a dict ---
-                import json
-                if isinstance(resolution_response, str):
-                    try:
-                        parsed = _json.loads(resolution_response)
-                        if isinstance(parsed, dict):
-                            resolution_response = parsed
-                    except Exception as e:
-                        print(f"[CombatResolver] Failed to parse resolution_response as JSON: {e}")
-                else:
-                    resolution = resolution_response
+                try:
+                    resolution_response = self.llm_service.generate_completion(
+                        model=model_id,
+                        messages=[{"role": "user", "content": resolution_prompt}],
+                        temperature=0.7,
+                        max_tokens=800
+                    )
+                    print(f"[CombatResolver] Received LLM resolution for {active_combatant.get('name', 'Unknown')}")
+                    print(f"[CombatResolver] Raw resolution response: {resolution_response!r}")
+                    # --- FIX: Parse JSON if needed (strip code block markers first) ---
+                    if isinstance(resolution_response, str):
+                        cleaned = resolution_response.strip()
+                        if cleaned.startswith('```json'):
+                            cleaned = cleaned[7:]
+                        if cleaned.startswith('```'):
+                            cleaned = cleaned[3:]
+                        if cleaned.endswith('```'):
+                            cleaned = cleaned[:-3]
+                        cleaned = cleaned.strip()
+                        print(f"[CombatResolver] Cleaned LLM resolution for JSON parsing: {cleaned!r}")
+                        try:
+                            parsed_resolution = _json.loads(cleaned)
+                            print(f"[CombatResolver] Parsed LLM resolution as JSON: {parsed_resolution}")
+                            resolution_response = parsed_resolution
+                        except Exception as e:
+                            print(f"[CombatResolver] Failed to parse LLM resolution as JSON: {e}")
+                            # Continue with original string, fallback logic will handle it
+                    # --- END FIX ---
+                except Exception as e:
+                    import traceback
+                    print(f"[CombatResolver] Error getting LLM resolution: {str(e)}")
+                    traceback.print_exc()
+                    # Create a minimal valid result instead of returning None
+                    return {
+                        "action": action,
+                        "narrative": f"The {active_combatant.get('name', 'combatant')} acted, but a technical issue prevented recording the outcome.",
+                        "updates": [],
+                        "dice": dice_results
+                    }
             except Exception as e:
                 print(f"[CombatResolver] Error getting LLM resolution: {str(e)}")
                 # Create a minimal valid result instead of returning None
@@ -851,238 +900,58 @@ class CombatResolver(QObject):
             # 6. Parse the resolution 
             try:
                 # Parse the LLM's resolution 
+                print(f"[CombatResolver] About to parse LLM resolution: {resolution_response!r}")
                 resolution_text = resolution_response
-                
-                # Strip code block markers if they exist
-                resolution_text = re.sub(r'```(?:json)?\s*', '', resolution_text)
-                resolution_text = re.sub(r'```\s*$', '', resolution_text)
-                
-                # Try to extract JSON
-                json_match = re.search(r'\{[\s\S]*\}', resolution_text)
-                if not json_match:
-                    print(f"[CombatResolver] Could not find JSON in LLM resolution response")
-                    # Create a minimal valid resolution if JSON extraction fails
+                # If already a dict, use it directly
+                if isinstance(resolution_text, dict):
+                    resolution = resolution_text
+                    print(f"[CombatResolver] Using parsed LLM resolution as dict: {resolution}")
+                else:
+                    # Strip code block markers if they exist
+                    import re
+                    resolution_text = re.sub(r'```(?:json)?\s*', '', resolution_text)
+                    resolution_text = re.sub(r'```\s*$', '', resolution_text)
+                    # Try to extract JSON
+                    json_match = re.search(r'\{[\s\S]*\}', resolution_text)
+                    if not json_match:
+                        print(f"[CombatResolver] Could not find JSON in LLM resolution response")
+                        # Create a minimal valid resolution if JSON extraction fails
+                        resolution = {
+                            "narrative": resolution_text if resolution_text else "The action is completed.",
+                            "updates": []
+                        }
+                    else:
+                        json_str = json_match.group(0)
+                        try:
+                            import json as _json
+                            resolution = _json.loads(json_str)
+                            print(f"[CombatResolver] Parsed LLM resolution as JSON (from string): {resolution}")
+                        except _json.JSONDecodeError as e:
+                            print(f"[CombatResolver] JSON decode error in resolution: {e}")
+                            # Try to clean up the JSON string further
+                            cleaned_json = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas
+                            cleaned_json = re.sub(r',\s*]', ']', cleaned_json)  # Remove trailing commas in arrays
+                            try:
+                                resolution = _json.loads(cleaned_json)
+                                print(f"[CombatResolver] Parsed cleaned LLM resolution as JSON: {resolution}")
+                            except _json.JSONDecodeError:
+                                print(f"[CombatResolver] Failed to parse JSON resolution even after cleanup")
+                                resolution = {
+                                    "narrative": "The action resolves with technical difficulties.",
+                                    "updates": []
+                                }
+                # --- ENSURE resolution is a dict ---
+                if not isinstance(resolution, dict):
+                    print(f"[CombatResolver] LLM resolution is not a dict, using fallback.")
                     resolution = {
-                        "narrative": resolution_text if resolution_text else "The action is completed.",
+                        "narrative": str(resolution),
                         "updates": []
                     }
-                else:
-                    json_str = json_match.group(0)
-                    
-                    try:
-                        resolution = _json.loads(json_str)
-                    except _json.JSONDecodeError as e:
-                        print(f"[CombatResolver] JSON decode error in resolution: {e}")
-                        # Try to clean up the JSON string further
-                        cleaned_json = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas
-                        cleaned_json = re.sub(r',\s*]', ']', cleaned_json)  # Remove trailing commas in arrays
-                        
-                        try:
-                            resolution = _json.loads(cleaned_json)
-                        except _json.JSONDecodeError:
-                            print(f"[CombatResolver] Failed to parse JSON resolution even after cleanup")
-                            resolution = {
-                                "narrative": "The action resolves with technical difficulties.",
-                                "updates": []
-                            }
-                
-                # Apply updates from the resolution
-                for update in resolution.get("updates", []):
-                    # Safety checks
-                    if not isinstance(update, dict) or "name" not in update:
-                        print(f"[CombatResolver] Invalid update format: {update}")
-                        continue
-                    
-                    # Find the target combatant
-                    target_name = update.get("name", "")
-                    target_idx = None
-                    
-                    for i, c in enumerate(combatants):
-                        if c.get("name", "") == target_name:
-                            target_idx = i
-                            break
-                    
-                    if target_idx is None:
-                        print(f"[CombatResolver] Could not find target combatant: {target_name}")
-                        
-                        # Try to find a similar combatant name (fuzzy matching)
-                        best_match = None
-                        best_score = 0
-                        
-                        # Try to find the closest name match
-                        for i, c in enumerate(combatants):
-                            c_name = c.get("name", "")
-                            
-                            # Check if either name contains the other
-                            if target_name in c_name or c_name in target_name:
-                                similarity = min(len(target_name), len(c_name)) / max(len(target_name), len(c_name))
-                                if similarity > best_score:
-                                    best_score = similarity
-                                    best_match = i
-                            
-                            # Check if they share common words
-                            target_words = set(target_name.lower().split())
-                            name_words = set(c_name.lower().split())
-                            common_words = target_words.intersection(name_words)
-                            
-                            if common_words and len(common_words) / min(len(target_words), len(name_words)) > best_score:
-                                best_score = len(common_words) / min(len(target_words), len(name_words))
-                                best_match = i
-                        
-                        # If we found a good enough match, use it
-                        if best_match is not None and best_score > 0.3:
-                            target_idx = best_match
-                            old_name = target_name
-                            new_name = combatants[target_idx].get("name", "")
-                            print(f"[CombatResolver] Using similar combatant {new_name} instead of {old_name}")
-                            
-                            # Also update the narrative to use the correct name
-                            if "narrative" in resolution:
-                                resolution["narrative"] = resolution["narrative"].replace(old_name, new_name)
-                        else:
-                            # If the target is the active combatant's type or an enemy, apply to a random enemy
-                            active_type = active_combatant.get("type", "unknown")
-                            target_is_enemy = True  # Default assumption if target doesn't exist
-                            
-                            # Check if target name matches common enemy classes
-                            enemy_classes = ["goblin", "orc", "warrior", "monster", "enemy", "creature", 
-                                            "demon", "dragon", "undead", "zombie", "skeleton", "fighter"]
-                            
-                            if any(ec in target_name.lower() for ec in enemy_classes):
-                                # Look for a valid enemy of the active combatant
-                                for i, c in enumerate(combatants):
-                                    if c.get("type", "") != active_type:
-                                        target_idx = i
-                                        old_name = target_name
-                                        new_name = combatants[target_idx].get("name", "")
-                                        print(f"[CombatResolver] Using enemy {new_name} instead of non-existent {old_name}")
-                                        
-                                        # Update the narrative to use the correct name
-                                        if "narrative" in resolution:
-                                            resolution["narrative"] = resolution["narrative"].replace(old_name, new_name)
-                                        break
-                            else:
-                                # If common ally classes, apply to an ally
-                                ally_classes = ["ally", "friend", "companion", "paladin", "cleric", "wizard", "ally"]
-                                if any(ac in target_name.lower() for ac in ally_classes):
-                                    # Look for a valid ally of the active combatant
-                                    for i, c in enumerate(combatants):
-                                        if c.get("type", "") == active_type and i != active_idx:
-                                            target_idx = i
-                                            old_name = target_name
-                                            new_name = combatants[target_idx].get("name", "")
-                                            print(f"[CombatResolver] Using ally {new_name} instead of non-existent {old_name}")
-                                            
-                                            # Update the narrative to use the correct name
-                                            if "narrative" in resolution:
-                                                resolution["narrative"] = resolution["narrative"].replace(old_name, new_name)
-                                            break
-                            
-                        # If still no valid target, use the active combatant as a last resort
-                        if target_idx is None:
-                            # Apply the update to the active combatant as a fallback
-                            target_idx = active_idx
-                            old_name = target_name
-                            new_name = combatants[target_idx].get("name", "")
-                            print(f"[CombatResolver] Falling back to active combatant {new_name} instead of {old_name}")
-                            
-                            # Update the narrative to use the correct name
-                            if "narrative" in resolution:
-                                resolution["narrative"] = resolution["narrative"].replace(old_name, new_name)
-                    
-                    # Update HP if present, ensuring it's an integer
-                    if "hp" in update:
-                        hp_update = update["hp"]
-                        current_hp = combatants[target_idx].get("hp", 0)
-                        
-                        # Process the HP update to ensure it's valid
-                        new_hp = self._process_hp_update(combatants[target_idx].get("name", ""), hp_update, current_hp)
-                        combatants[target_idx]["hp"] = new_hp
-                    
-                    # Update status if present
-                    if "status" in update:
-                        combatants[target_idx]["status"] = update["status"]
-                    
-                    # Update other fields if present
-                    for field in ["limited_use", "spell_slots", "conditions", "death_saves"]:
-                        if field in update:
-                            combatants[target_idx][field] = update[field]
-                
-                # Format the result
-                result = {
-                    "action": action,
-                    "narrative": resolution.get("narrative", "The action is resolved."),
-                    "updates": resolution.get("updates", []),
-                    "dice": dice_results
-                }
-                
-                # If there were aura updates, add them to the result
-                if aura_updates and len(aura_updates) > 0:
-                    # Add aura information to the result
-                    result["aura_updates"] = aura_updates
-                    
-                    # Ensure the narrative mentions aura effects if they aren't already mentioned
-                    aura_narrative = ""
-                    for update in aura_updates:
-                        source = update.get("source", "Unknown")
-                        target = update.get("target", "Unknown")
-                        effect = update.get("effect", "Unknown effect")
-                        aura_name = update.get("aura", "unnamed aura")
-                        
-                        # Create a brief description if not already in narrative
-                        if source not in result["narrative"] or aura_name not in result["narrative"]:
-                            aura_narrative += f"{source}'s {aura_name} affects {target}, causing {effect}. "
-                    
-                    # Only prepend aura narrative if it's not already mentioned
-                    if aura_narrative and "aura" not in result["narrative"].lower():
-                        result["narrative"] = f"{aura_narrative}\n\n{result['narrative']}"
-                
-                # 7. Update action economy based on the decision
-                if "action_type" in decision:
-                    action_type = decision["action_type"]
-                    action_decision = {
-                        "action_type": action_type
-                    }
-                    
-                    # Add movement cost if available
-                    if "movement_cost" in decision and action_type == "movement":
-                        action_decision["movement_cost"] = decision["movement_cost"]
-                    
-                    # Add legendary action cost if applicable
-                    if "legendary_action_cost" in decision and action_type == "legendary_action":
-                        action_decision["legendary_action_cost"] = decision["legendary_action_cost"]
-                    
-                    # Apply the action economy usage
-                    active_combatant, success, reason = ActionEconomyManager.process_action_decision(
-                        active_combatant, action_decision
-                    )
-                    
-                    # Update the combatant in the list
-                    combatants[active_idx] = active_combatant
-                    
-                    # Add action economy information to the result
-                    result_action_economy = {
-                        "action_type": action_type,
-                        "success": success,
-                        "reason": reason if not success else "",
-                        "available_actions": ActionEconomyManager.check_available_actions(active_combatant)
-                    }
-                    
-                    if "movement_cost" in decision:
-                        result_action_economy["movement_cost"] = decision["movement_cost"]
-                        
-                    if "legendary_action_cost" in decision:
-                        result_action_economy["legendary_action_cost"] = decision["legendary_action_cost"]
-                
-                    # Add action economy info to the result
-                    result["action_economy"] = result_action_economy
-                
-                return result
             except Exception as e:
                 print(f"[CombatResolver] Error processing turn resolution: {str(e)}")
                 import traceback
                 traceback.print_exc()
-                
+                print(f"[CombatResolver] Exception occurred with resolution_response: {resolution_response!r}")
                 # Return a minimal valid result
                 return {
                     "action": action,
@@ -2262,3 +2131,36 @@ RECHARGE_ABILITY_USED: If a recharge ability was used, set this to the name of t
 IMPORTANT: If the action involves using a recharge ability that is not available, adjust your narration to describe how the creature attempted to use that ability but found it wasn't ready, and then chose an alternative action instead.
 """
         return prompt
+
+    # ---------------------------------------------------------------------
+    # NEW: Helper to format dice results for the resolution prompt
+    # ---------------------------------------------------------------------
+    def _format_dice_results(self, dice_results):
+        """Return dice results in a concise, readable string for the LLM prompt.
+
+        Args:
+            dice_results: List of dicts with keys `expression`, `result`, and optional `purpose`.
+
+        Returns:
+            A newline-separated string summarizing each dice roll. If no dice were rolled,
+            returns a friendly placeholder message.
+        """
+        # If nothing was rolled, keep the prompt clean and explicit
+        if not dice_results:
+            return "No dice were rolled this turn."
+
+        # Build a line for each result: "1d20 => 17 (Attack roll)"
+        formatted_lines = []
+        for roll in dice_results:
+            # Safely fetch each field with sensible fallbacks
+            expr = str(roll.get("expression", "?"))
+            res = str(roll.get("result", "?"))
+            purpose = roll.get("purpose", "")
+
+            # Add purpose in parentheses only when provided
+            if purpose:
+                formatted_lines.append(f"{expr} ⇒ {res} ({purpose})")
+            else:
+                formatted_lines.append(f"{expr} ⇒ {res}")
+
+        return "\n".join(formatted_lines)

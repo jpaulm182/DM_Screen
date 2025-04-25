@@ -215,6 +215,7 @@ class LLMPanel(BasePanel):
         
         # Get services
         self.llm_service = app_state.llm_service
+        print(f"[DEBUG] LLMPanel using LLMService instance: {id(self.llm_service)}")
         self.llm_data_manager = app_state.llm_data_manager
         
         # Initialize UI
@@ -305,9 +306,9 @@ class LLMPanel(BasePanel):
         """Connect signals to slots"""
         # Connect chat area message signal
         self.chat_area.message_sent.connect(self.handle_user_message)
-        
         # Connect LLM service signals
-        self.llm_service.completion_ready.connect(self.handle_llm_response)
+        self.llm_service.completion_ready.connect(self.handle_llm_completion)
+        print("[DEBUG] Connected completion_ready signal to handle_llm_completion")
         self.llm_service.completion_error.connect(self.handle_llm_error)
     
     def _load_available_models(self):
@@ -371,16 +372,12 @@ class LLMPanel(BasePanel):
         if not model_id:
             self.chat_area.add_message("system", "Please configure an API key for an LLM provider first.")
             return
-        
         # Add user message to chat
         self.chat_area.add_message("user", message)
-        
         # Show loading indicator
         self.chat_area.add_message("system", "Generating response...")
-        
         # Get the system prompt
         system_prompt = self.system_prompt_input.text()
-        
         # Create a new conversation if needed
         if not self.current_conversation_id:
             try:
@@ -394,19 +391,16 @@ class LLMPanel(BasePanel):
             except Exception as e:
                 self.chat_area.add_message("system", f"Error creating conversation: {str(e)}")
                 return
-        
         # Save message to database
         try:
             self.llm_data_manager.add_message(self.current_conversation_id, "user", message)
         except Exception as e:
             self.chat_area.add_message("system", f"Error saving message: {str(e)}")
             # Continue anyway - we can still try to get a response
-        
         # Get the complete conversation history
         try:
             messages = []
             conversation_messages = self.llm_data_manager.get_conversation_messages(self.current_conversation_id)
-            
             # Format messages for API
             for msg in conversation_messages:
                 messages.append({
@@ -417,23 +411,22 @@ class LLMPanel(BasePanel):
             # Fall back to just the current message if there's an error
             self.chat_area.add_message("system", f"Warning: Couldn't retrieve conversation history. Starting fresh.")
             messages = [{"role": "user", "content": message}]
-        
         # Get model settings
         temperature = self.settings_widget.get_temperature()
         max_tokens = self.settings_widget.get_max_tokens()
-        
-        # Send to LLM service
+        # Send to LLM service (no callback)
         self.llm_service.generate_completion_async(
             model_id,
             messages,
-            self.handle_llm_completion,
             system_prompt=system_prompt,
             temperature=temperature,
             max_tokens=max_tokens
         )
-    
-    def handle_llm_completion(self, response, error):
-        """Handle completion from the LLM service"""
+
+    def handle_llm_completion(self, response, request_id):
+        """Handle completion from the LLM service (signal-based)"""
+        # DEBUG: Print response and request_id to console for debugging callback
+        print(f"[DEBUG] handle_llm_completion called with response: {repr(response)}, request_id: {repr(request_id)}")
         # Remove loading message (last message)
         cursor = self.chat_area.chat_display.textCursor()
         cursor.movePosition(QTextCursor.End)
@@ -441,31 +434,26 @@ class LLMPanel(BasePanel):
         cursor.movePosition(QTextCursor.PreviousBlock, QTextCursor.KeepAnchor)
         cursor.movePosition(QTextCursor.PreviousBlock, QTextCursor.KeepAnchor)
         cursor.removeSelectedText()
-        
-        if error:
+        if response is None:
             # Show error
-            self.chat_area.add_message("system", f"Error: {error}")
+            self.chat_area.add_message("system", f"Error: No response from LLM.")
             return
-        
         # Add response to chat
         self.chat_area.add_message("assistant", response)
-        
+        # --- DEBUG: Show raw LLM response in chat area ---
+        # This is for debugging purposes. Remove or comment out when not needed.
+        self.chat_area.add_message("system", f"DEBUG: Raw LLM response: {repr(response)}")
+        # --- END DEBUG ---
         # Enable save to notes button
         self.save_to_notes_button.setEnabled(True)
-        
         # Save to database, but handle errors
         if self.current_conversation_id:
             try:
                 self.llm_data_manager.add_message(self.current_conversation_id, "assistant", response)
             except Exception as e:
                 self.chat_area.add_message("system", f"Error saving response: {str(e)}")
-                # This is non-fatal as the user already has the response in the UI
-    
-    def handle_llm_response(self, response, request_id):
-        """Handle response from LLM service"""
-        # If this is handled by the async method, we can ignore this signal
-        pass
-    
+                # This is non-fatal as the user already has the response in the UI)
+
     def handle_llm_error(self, error, request_id):
         """Handle error from LLM service"""
         # If this is handled by the async method, we can ignore this signal

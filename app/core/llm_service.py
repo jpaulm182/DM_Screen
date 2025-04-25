@@ -65,75 +65,39 @@ class ModelInfo:
 class LLMWorker(QRunnable):
     """Worker for running LLM API calls in a background thread"""
     
-    def __init__(self, service, model, messages, callback, system_prompt=None, temperature=0.7, max_tokens=1000):
+    def __init__(self, service, model, messages, system_prompt=None, temperature=0.7, max_tokens=1000, request_id=None):
         """Initialize the worker"""
         super().__init__()
         self.service = service
         self.model = model
         self.messages = messages
-        self.callback = callback
         self.system_prompt = system_prompt
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.request_id = request_id
     
     @Slot()
     def run(self):
         """Run the API call in a background thread"""
         try:
-            response = self.service.generate_completion(
-                self.model, 
-                self.messages, 
-                system_prompt=self.system_prompt,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens
-            )
-            
-            # Log the successful response
-            logging.info(f"LLM generation completed. Response length: {len(response) if response else 0}")
-            
-            # Debug log the actual response content
-            logging.debug(f"Full response content: {response}")
-            
-            # Use try/except to safely call the callback
             try:
-                # Verify the callback is still valid and callable
-                if self.callback is None:
-                    logging.error("Callback is None, can't call it")
-                    return
-                    
-                # Log what we're about to call back with
-                logging.debug(f"Calling callback with response (first 100 chars): '{response[:100]}...'")
-                
-                # Make sure we're not passing an empty object instead of the actual response
-                if response == "{}":
-                    logging.warning("Response is an empty JSON object. This might cause issues.")
-                
-                # Call the callback with the response - wrapped in try/except to catch deleted widget issues
-                try:
-                    self.callback(response, None)
-                    logging.info("Callback completed successfully")
-                except RuntimeError as rt_err:
-                    if "already deleted" in str(rt_err):
-                        logging.warning(f"Widget was deleted before callback could complete: {rt_err}")
-                    else:
-                        # Re-raise other runtime errors
-                        raise
-            except Exception as callback_err:
-                logging.error(f"Error in callback handler: {str(callback_err)}", exc_info=True)
-        except Exception as e:
-            logging.error(f"LLM API error: {str(e)}", exc_info=True)
-            # Safely call callback with error
-            try:
-                if self.callback is not None:
-                    try:
-                        self.callback(None, str(e))
-                    except RuntimeError as rt_err:
-                        if "already deleted" in str(rt_err):
-                            logging.warning(f"Widget was deleted before error callback could complete: {rt_err}")
-                        else:
-                            raise
-            except Exception as callback_err:
-                logging.error(f"Error in error callback handler: {str(callback_err)}", exc_info=True)
+                response = self.service.generate_completion(
+                    self.model, 
+                    self.messages, 
+                    system_prompt=self.system_prompt,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens
+                )
+                logging.info(f"LLM generation completed. Response length: {len(response) if response else 0}")
+                logging.debug(f"Full response content: {response}")
+                print(f"[DEBUG] Emitting completion_ready with response: {repr(response)} from LLMService id: {id(self.service)}", flush=True)
+                self.service.completion_ready.emit(response, self.request_id)
+            except Exception as e:
+                logging.error(f"LLM API error: {str(e)}", exc_info=True)
+                print(f"[DEBUG] Exception in LLMWorker.run: {e}", flush=True)
+                self.service.completion_error.emit(str(e), self.request_id)
+        except Exception as outer_e:
+            print(f"[DEBUG] Outer exception in LLMWorker.run: {outer_e}", flush=True)
 
 
 class LLMService(QObject):
@@ -151,6 +115,7 @@ class LLMService(QObject):
     def __init__(self, app_state):
         """Initialize the LLM service"""
         super().__init__()
+        print(f"[DEBUG] LLMService instance created: {id(self)}", flush=True)
         self.app_state = app_state
         self.openai_client = None
         self.anthropic_client = None
@@ -234,17 +199,22 @@ class LLMService(QObject):
         Returns:
             Generated text response
         """
+        print(f"[DEBUG] generate_completion called on LLMService id: {id(self)} with model: {model}", flush=True)
         provider = ModelInfo.get_provider_for_model(model)
-        
         if provider == ModelProvider.OPENAI:
-            return self._generate_openai_completion(model, messages, system_prompt, temperature, max_tokens)
+            result = self._generate_openai_completion(model, messages, system_prompt, temperature, max_tokens)
+            print(f"[DEBUG] generate_completion returning from _generate_openai_completion: {repr(result)}", flush=True)
+            return result
         elif provider == ModelProvider.ANTHROPIC:
-            return self._generate_anthropic_completion(model, messages, system_prompt, temperature, max_tokens)
+            result = self._generate_anthropic_completion(model, messages, system_prompt, temperature, max_tokens)
+            print(f"[DEBUG] generate_completion returning from _generate_anthropic_completion: {repr(result)}", flush=True)
+            return result
         else:
             raise ValueError(f"Unsupported model: {model}")
     
     def _generate_openai_completion(self, model, messages, system_prompt, temperature, max_tokens):
         """Generate a completion using OpenAI"""
+        print(f"[DEBUG] _generate_openai_completion called with model: {model}", flush=True)
         if not self.openai_client:
             raise ValueError("OpenAI client not initialized. Please set an API key.")
         
@@ -284,17 +254,21 @@ class LLMService(QObject):
             # Check if content is empty or None
             if not content:
                 self.logger.warning("Received empty content from OpenAI API")
+                print(f"[DEBUG] _generate_openai_completion got empty content", flush=True)
                 return ""  # Return empty string instead of None
                 
             self.logger.info(f"Received valid response from OpenAI. Content length: {len(content)}")
+            print(f"[DEBUG] _generate_openai_completion returning content: {repr(content)}", flush=True)
             return content
             
         except Exception as e:
             self.logger.error(f"Error calling OpenAI API: {str(e)}", exc_info=True)
+            print(f"[DEBUG] Exception in _generate_openai_completion: {e}", flush=True)
             raise
     
     def _generate_anthropic_completion(self, model, messages, system_prompt, temperature, max_tokens):
         """Generate a completion using Anthropic"""
+        print(f"[DEBUG] _generate_anthropic_completion called with model: {model}", flush=True)
         if not self.anthropic_client:
             raise ValueError("Anthropic client not initialized. Please set an API key.")
         
@@ -315,23 +289,25 @@ class LLMService(QObject):
             max_tokens=max_tokens
         )
         
-        return response.content[0].text
+        result = response.content[0].text
+        print(f"[DEBUG] _generate_anthropic_completion returning content: {repr(result)}", flush=True)
+        return result
     
-    def generate_completion_async(self, model, messages, callback, system_prompt=None, temperature=0.7, max_tokens=1000):
+    def generate_completion_async(self, model, messages, system_prompt=None, temperature=0.7, max_tokens=1000):
         """
         Generate a completion asynchronously
         
         Args:
             model: Model ID string
             messages: List of message dictionaries (role, content)
-            callback: Function to call with result
             system_prompt: Optional system prompt
             temperature: Temperature for generation
             max_tokens: Maximum tokens to generate
         """
         worker = LLMWorker(
-            self, model, messages, callback, system_prompt, temperature, max_tokens
+            self, model, messages, system_prompt, temperature, max_tokens
         )
+        print(f"[DEBUG] generate_completion_async called on LLMService id: {id(self)}, starting worker id: {id(worker)}", flush=True)
         self.thread_pool.start(worker)
     
     def is_provider_available(self, provider):
