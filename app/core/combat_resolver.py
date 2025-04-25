@@ -563,6 +563,9 @@ class CombatResolver(QObject):
             Dictionary with turn results or None if error
         """
         logging.debug(f"--- ENTERING _process_turn for index {active_idx}, round {round_num} ---") # TEST LOG
+        import json  # Import json at the function level to ensure it's available
+        import re
+        
         try:
             active_combatant = combatants[active_idx]
             print(f"[CombatResolver] Processing turn for {active_combatant.get('name', 'Unknown')} (round {round_num})")
@@ -669,7 +672,6 @@ class CombatResolver(QObject):
                 print(f"[CombatResolver] Received LLM decision for {active_combatant.get('name', 'Unknown')}")
                 print(f"[CombatResolver] Raw decision response: {decision_response!r}")
                 # --- FIX: Parse JSON if needed (strip code block markers first) ---
-                import json
                 if isinstance(decision_response, str):
                     cleaned = decision_response.strip()
                     if cleaned.startswith('```json'):
@@ -798,6 +800,31 @@ class CombatResolver(QObject):
             # 4. Roll dice as requested
             dice_results = []
             try:
+                # Always add at least basic dice rolls if none were requested
+                if not dice_requests or len(dice_requests) == 0:
+                    print(f"[CombatResolver] No dice requested for {active_combatant.get('name')}, adding default attack rolls")
+                    # Add default attack and damage dice for attacks
+                    if "attack" in action.lower() or "multiattack" in action.lower() or "strike" in action.lower():
+                        dice_requests = [
+                            {"expression": "1d20+8", "purpose": "Attack roll"},
+                            {"expression": "2d6+5", "purpose": "Damage roll"}
+                        ]
+                        if "multiattack" in action.lower():
+                            # Add additional roll for multiattack
+                            dice_requests.append({"expression": "1d20+8", "purpose": "Second attack roll"})
+                            dice_requests.append({"expression": "2d6+5", "purpose": "Second damage roll"})
+                    # Add default rolls for spells
+                    elif "spell" in action.lower() or "cast" in action.lower() or "magic" in action.lower():
+                        dice_requests = [
+                            {"expression": "1d20+7", "purpose": "Spell attack roll"},
+                            {"expression": "3d8", "purpose": "Spell damage roll"}
+                        ]
+                    # Add a generic roll for other actions
+                    else:
+                        dice_requests = [
+                            {"expression": "1d20", "purpose": "Action check"}
+                        ]
+                
                 for req in dice_requests:
                     if not isinstance(req, dict):
                         print(f"[CombatResolver] Invalid dice request format: {req}")
@@ -859,49 +886,173 @@ class CombatResolver(QObject):
                     print(f"[CombatResolver] Received LLM resolution for {active_combatant.get('name', 'Unknown')}")
                     print(f"[CombatResolver] Raw resolution response TYPE: {type(resolution_response).__name__}")
                     print(f"[CombatResolver] Raw resolution response VALUE: {resolution_response!r}")
+                    
+                    # Extended debugging to understand resolution response
+                    print(f"[CombatResolver] *** RESOLUTION DEBUG ***")
+                    print(f"[CombatResolver] Resolution type: {type(resolution_response).__name__}")
+                    if isinstance(resolution_response, str):
+                        print(f"[CombatResolver] First 100 chars: {resolution_response[:100]}...")
+                        if "```json" in resolution_response or "```" in resolution_response:
+                            print(f"[CombatResolver] Contains code block markers")
+                    
                     # --- FIX: Parse JSON if needed (strip code block markers first) ---
                     if isinstance(resolution_response, str):
                         cleaned = resolution_response.strip()
-                        if cleaned.startswith('```json'):
-                            cleaned = cleaned[7:]
-                        if cleaned.startswith('```'):
-                            cleaned = cleaned[3:]
-                        if cleaned.endswith('```'):
-                            cleaned = cleaned[:-3]
-                        cleaned = cleaned.strip()
-                        print(f"[CombatResolver] Cleaned LLM resolution for JSON parsing: {cleaned!r}")
-                        try:
-                            parsed_resolution = _json.loads(cleaned)
-                            print(f"[CombatResolver] Parsed LLM resolution as JSON: {parsed_resolution}")
-                            resolution_response = parsed_resolution
-                        except Exception as e:
-                            print(f"[CombatResolver] Failed to parse LLM resolution as JSON: {e}")
-                            # Add more specific error information to help diagnose parsing issues
-                            import traceback
-                            traceback.print_exc()
-                            print(f"[CombatResolver] JSON parsing error details for string: {cleaned[:100]}...")
-                            # Continue with original string, fallback logic will handle it
-                    # --- END FIX ---
+                        # Multiple cleanup attempts in sequence, from most specific to general
+                        
+                        # 1. Try to extract JSON specifically marked with ```json
+                        if "```json" in cleaned:
+                            json_parts = cleaned.split("```json")
+                            if len(json_parts) > 1:
+                                json_content = json_parts[1].split("```")[0].strip()
+                                print(f"[CombatResolver] Extracted JSON from ```json block: {json_content[:100]}...")
+                                try:
+                                    parsed_resolution = json.loads(json_content)
+                                    print(f"[CombatResolver] Successfully parsed JSON from code block")
+                                    resolution_response = parsed_resolution
+                                except Exception as e:
+                                    print(f"[CombatResolver] Error parsing JSON from ```json block: {e}")
+                                    # Continue to next cleanup approach
+                        
+                        # 2. Try to extract content from any ``` code block
+                        if isinstance(resolution_response, str) and "```" in cleaned:
+                            # Get content between first ``` and last ```
+                            parts = cleaned.split("```")
+                            if len(parts) >= 3:  # At least one complete code block
+                                # Take the first complete code block (parts[1])
+                                code_content = parts[1].strip()
+                                print(f"[CombatResolver] Extracted from generic code block: {code_content[:100]}...")
+                                try:
+                                    parsed_resolution = json.loads(code_content)
+                                    print(f"[CombatResolver] Successfully parsed JSON from generic code block")
+                                    resolution_response = parsed_resolution
+                                except Exception as e:
+                                    print(f"[CombatResolver] Error parsing content from generic code block: {e}")
+                                    # Continue to next cleanup approach
+                        
+                        # 3. Try standard cleanup (removing all code markers)
+                        if isinstance(resolution_response, str):
+                            cleaned = re.sub(r'```(?:json)?\s*', '', cleaned)
+                            cleaned = re.sub(r'```\s*$', '', cleaned)
+                            cleaned = cleaned.strip()
+                            print(f"[CombatResolver] Standard cleanup result: {cleaned[:100]}...")
+                            try:
+                                parsed_resolution = json.loads(cleaned)
+                                print(f"[CombatResolver] Successfully parsed JSON after standard cleanup")
+                                resolution_response = parsed_resolution
+                            except Exception as e:
+                                print(f"[CombatResolver] Failed to parse JSON after standard cleanup: {e}")
+                                
+                                # 4. Try to find JSON object pattern anywhere in the string
+                                json_match = re.search(r'\{[\s\S]*\}', cleaned)
+                                if json_match:
+                                    json_str = json_match.group(0)
+                                    print(f"[CombatResolver] Found JSON-like pattern: {json_str[:100]}...")
+                                    try:
+                                        parsed_resolution = json.loads(json_str)
+                                        print(f"[CombatResolver] Successfully parsed JSON from pattern match")
+                                        resolution_response = parsed_resolution
+                                    except Exception as e:
+                                        print(f"[CombatResolver] Error parsing JSON pattern: {e}")
+                
+                    # If still a string after all attempts, log this clearly
+                    if isinstance(resolution_response, str):
+                        print(f"[CombatResolver] WARNING: All JSON parsing attempts failed. Using string as fallback.")
+                    else:
+                        print(f"[CombatResolver] Successfully converted LLM resolution to dictionary")
+                    
+                    # ---END FIX ---
                 except Exception as e:
                     import traceback
                     print(f"[CombatResolver] Error getting LLM resolution: {str(e)}")
                     traceback.print_exc()
                     # Create a minimal valid result instead of returning None
-                    return {
+                    result = {
                         "action": action,
                         "narrative": f"The {active_combatant.get('name', 'combatant')} acted, but a technical issue prevented recording the outcome.",
                         "updates": [],
                         "dice": dice_results
                     }
+                    
+                    # Try to salvage some outcome based on the dice that were rolled
+                    if dice_results and target and target.lower() != "none":
+                        damage_dice = [d for d in dice_results if "damage" in d.get("purpose", "").lower()]
+                        attack_rolls = [d for d in dice_results if "attack" in d.get("purpose", "").lower()]
+                        
+                        if damage_dice:
+                            try:
+                                damage_amount = int(damage_dice[0].get("result", 0))
+                                # If we have attack rolls and a target with AC, check if it hit
+                                if attack_rolls:
+                                    try:
+                                        attack_value = int(attack_rolls[0].get("result", 0))
+                                        target_obj = next((c for c in combatants if c.get("name") == target), None)
+                                        if target_obj:
+                                            target_ac = target_obj.get("ac", 15)
+                                            if attack_value >= target_ac:
+                                                # Attack hit, apply damage
+                                                current_hp = target_obj.get("hp", 0)
+                                                new_hp = max(0, current_hp - damage_amount)
+                                                print(f"[CombatResolver] Salvaging outcome: {attack_value} hits AC {target_ac}, applying {damage_amount} damage")
+                                                result["updates"] = [{"name": target, "hp": new_hp}]
+                                                result["narrative"] = f"{active_combatant.get('name')} attacks {target} and hits ({attack_value} vs AC {target_ac}), dealing {damage_amount} damage."
+                                            else:
+                                                # Attack missed
+                                                print(f"[CombatResolver] Salvaging outcome: {attack_value} misses AC {target_ac}")
+                                                result["narrative"] = f"{active_combatant.get('name')} attacks {target} but misses ({attack_value} vs AC {target_ac})."
+                                    except (ValueError, TypeError):
+                                        print(f"[CombatResolver] Could not parse attack roll when salvaging outcome")
+                            except (ValueError, TypeError):
+                                print(f"[CombatResolver] Could not parse damage roll when salvaging outcome")
+                    
+                    print(f"[CombatResolver] Returning salvaged result: {result}")
+                    return result
             except Exception as e:
                 print(f"[CombatResolver] Error getting LLM resolution: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                
                 # Create a minimal valid result instead of returning None
-                return {
+                result = {
                     "action": action,
                     "narrative": f"The {active_combatant.get('name', 'combatant')} acted, but a technical issue prevented recording the outcome.",
                     "updates": [],
                     "dice": dice_results
                 }
+                
+                # Try to salvage some outcome based on the dice that were rolled
+                if dice_results and target and target.lower() != "none":
+                    damage_dice = [d for d in dice_results if "damage" in d.get("purpose", "").lower()]
+                    attack_rolls = [d for d in dice_results if "attack" in d.get("purpose", "").lower()]
+                    
+                    if damage_dice:
+                        try:
+                            damage_amount = int(damage_dice[0].get("result", 0))
+                            # If we have attack rolls and a target with AC, check if it hit
+                            if attack_rolls:
+                                try:
+                                    attack_value = int(attack_rolls[0].get("result", 0))
+                                    target_obj = next((c for c in combatants if c.get("name") == target), None)
+                                    if target_obj:
+                                        target_ac = target_obj.get("ac", 15)
+                                        if attack_value >= target_ac:
+                                            # Attack hit, apply damage
+                                            current_hp = target_obj.get("hp", 0)
+                                            new_hp = max(0, current_hp - damage_amount)
+                                            print(f"[CombatResolver] Salvaging outcome in fallback: {attack_value} hits AC {target_ac}, applying {damage_amount} damage")
+                                            result["updates"] = [{"name": target, "hp": new_hp}]
+                                            result["narrative"] = f"{active_combatant.get('name')} attacks {target} and hits ({attack_value} vs AC {target_ac}), dealing {damage_amount} damage."
+                                        else:
+                                            # Attack missed
+                                            print(f"[CombatResolver] Salvaging outcome in fallback: {attack_value} misses AC {target_ac}")
+                                            result["narrative"] = f"{active_combatant.get('name')} attacks {target} but misses ({attack_value} vs AC {target_ac})."
+                                except (ValueError, TypeError):
+                                    print(f"[CombatResolver] Could not parse attack roll when salvaging outcome in fallback")
+                        except (ValueError, TypeError):
+                            print(f"[CombatResolver] Could not parse damage roll when salvaging outcome in fallback")
+                
+                print(f"[CombatResolver] Returning salvaged fallback result: {result}")
+                return result
             # 6. Parse the resolution 
             try:
                 # Parse the LLM's resolution 
@@ -912,38 +1063,42 @@ class CombatResolver(QObject):
                     resolution = resolution_text
                     print(f"[CombatResolver] Using parsed LLM resolution as dict: {resolution}")
                 else:
-                    # Strip code block markers if they exist
-                    import re
-                    resolution_text = re.sub(r'```(?:json)?\s*', '', resolution_text)
-                    resolution_text = re.sub(r'```\s*$', '', resolution_text)
-                    # Try to extract JSON
-                    print(f"[CombatResolver] Looking for JSON in: {resolution_text[:150]}...")
+                    # One more attempt to handle string responses robustly
+                    print(f"[CombatResolver] Last attempt to parse string resolution: {resolution_text[:150]}...")
+                    
+                    # Try to extract JSON object
                     json_match = re.search(r'\{[\s\S]*\}', resolution_text)
                     if not json_match:
                         print(f"[CombatResolver] Could not find JSON in LLM resolution response")
-                        # Create a minimal valid resolution if JSON extraction fails
+                        # Create a minimal valid resolution with the full text as description
                         resolution = {
-                            "description": resolution_text if resolution_text else "The action is completed.",
-                            "narrative": resolution_text if resolution_text else "The action is completed.",
+                            "description": resolution_text,
+                            "narrative": resolution_text,
                             "updates": []
                         }
+                        
+                        # Try to extract damage information from plain text
+                        damage_match = re.search(r'(\d+)\s*damage', resolution_text)
+                        if damage_match and target and target.lower() != "none":
+                            damage_amount = int(damage_match.group(1))
+                            print(f"[CombatResolver] Extracted damage amount from text: {damage_amount}")
+                            resolution["damage_dealt"] = {target: damage_amount}
                     else:
                         json_str = json_match.group(0)
                         print(f"[CombatResolver] Found JSON string: {json_str[:100]}...")
                         try:
-                            import json as _json
-                            resolution = _json.loads(json_str)
+                            resolution = json.loads(json_str)
                             print(f"[CombatResolver] Parsed LLM resolution as JSON (from string): {resolution}")
-                        except _json.JSONDecodeError as e:
+                        except json.JSONDecodeError as e:  # Use json instead of _json
                             print(f"[CombatResolver] JSON decode error in resolution: {e}")
                             # Try to clean up the JSON string further
                             cleaned_json = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas
                             cleaned_json = re.sub(r',\s*]', ']', cleaned_json)  # Remove trailing commas in arrays
                             print(f"[CombatResolver] Cleaned JSON: {cleaned_json[:100]}...")
                             try:
-                                resolution = _json.loads(cleaned_json)
+                                resolution = json.loads(cleaned_json)  # Use json instead of _json
                                 print(f"[CombatResolver] Parsed cleaned LLM resolution as JSON: {resolution}")
-                            except _json.JSONDecodeError as e2:
+                            except json.JSONDecodeError as e2:  # Use json instead of _json
                                 print(f"[CombatResolver] Failed to parse JSON resolution even after cleanup: {e2}")
                                 # Use a simpler approach - construct a minimal resolution with description field
                                 resolution = {
@@ -951,6 +1106,26 @@ class CombatResolver(QObject):
                                     "narrative": "The action resolves with technical difficulties.",
                                     "updates": []
                                 }
+                                
+                                # Try to extract potential targets and damage from dice results
+                                potential_target = target if target and target.lower() != "none" else None
+                                if not potential_target:
+                                    # Find first enemy
+                                    for c in combatants:
+                                        if c.get("name") != active_combatant.get("name"):
+                                            potential_target = c.get("name")
+                                            break
+                                
+                                if potential_target and dice_results:
+                                    # Look for damage dice
+                                    damage_dice = [d for d in dice_results if "damage" in d.get("purpose", "").lower()]
+                                    if damage_dice:
+                                        try:
+                                            damage_amount = int(damage_dice[0].get("result", 0))
+                                            print(f"[CombatResolver] Using damage amount from dice: {damage_amount}")
+                                            resolution["damage_dealt"] = {potential_target: damage_amount}
+                                        except (ValueError, TypeError):
+                                            print(f"[CombatResolver] Could not convert dice result to damage amount")
                 # --- ENSURE resolution is a dict ---
                 if not isinstance(resolution, dict):
                     print(f"[CombatResolver] LLM resolution is not a dict, using fallback.")
@@ -983,6 +1158,57 @@ class CombatResolver(QObject):
                         narrative_text = action if action else "The action is resolved."
                         print(f"[CombatResolver] Using fallback narrative: {narrative_text}")
 
+                    # Auto-detect targets if no damage_dealt is specified but there's a narrative
+                    if (not resolution.get("damage_dealt") or len(resolution.get("damage_dealt", {})) == 0) and narrative_text:
+                        print(f"[CombatResolver] No damage specified in resolution, attempting to extract from narrative")
+                        # Find potential targets mentioned in the narrative
+                        potential_targets = []
+                        for c in combatants:
+                            if c.get("name") != active_combatant.get("name") and c.get("name") in narrative_text:
+                                potential_targets.append(c.get("name"))
+                        
+                        if potential_targets:
+                            print(f"[CombatResolver] Found potential targets in narrative: {potential_targets}")
+                            # Add the first found target to damage_dealt
+                            if "damage_dealt" not in resolution:
+                                resolution["damage_dealt"] = {}
+                            
+                            # Check if attack/damage dice were rolled
+                            damage_dice = [d for d in dice_results if "damage" in d.get("purpose", "").lower()]
+                            if damage_dice:
+                                try:
+                                    damage_value = int(damage_dice[0].get("result", 0))
+                                    # Create or update damage value for target
+                                    resolution["damage_dealt"][potential_targets[0]] = damage_value
+                                    print(f"[CombatResolver] Auto-assigned {damage_value} damage to {potential_targets[0]}")
+                                except (ValueError, TypeError):
+                                    print(f"[CombatResolver] Could not extract damage value from dice")
+                    
+                    # If there are damage dice but no damage_dealt section at all, create one
+                    if not resolution.get("damage_dealt") and dice_results:
+                        damage_dice = [d for d in dice_results if "damage" in d.get("purpose", "").lower()]
+                        if damage_dice:
+                            # Try to find the most likely target
+                            if target and target != "none" and target != "None":
+                                # Target was specified in the decision
+                                try:
+                                    damage_value = int(damage_dice[0].get("result", 0))
+                                    resolution["damage_dealt"] = {target: damage_value}
+                                    print(f"[CombatResolver] Created damage_dealt with {damage_value} to {target}")
+                                except (ValueError, TypeError):
+                                    print(f"[CombatResolver] Could not extract damage value from dice")
+                            else:
+                                # Try to find enemy targets
+                                enemies = [c.get("name") for c in combatants 
+                                          if c.get("name") != active_combatant.get("name")]
+                                if enemies:
+                                    try:
+                                        damage_value = int(damage_dice[0].get("result", 0))
+                                        resolution["damage_dealt"] = {enemies[0]: damage_value}
+                                        print(f"[CombatResolver] Created damage_dealt with {damage_value} to {enemies[0]}")
+                                    except (ValueError, TypeError):
+                                        print(f"[CombatResolver] Could not extract damage value from dice")
+
                     # Handle damage dealt (reduce HP for targets)
                     for target_name, dmg in resolution.get("damage_dealt", {}).items():
                         if not isinstance(dmg, (int, float)):
@@ -990,7 +1216,43 @@ class CombatResolver(QObject):
                                 dmg = int(dmg)  # Try to convert to int
                             except (ValueError, TypeError):
                                 print(f"[CombatResolver] Invalid damage value: {dmg} for target {target_name}")
-                                continue  # Skip if conversion fails
+                                # Try to extract any damage from dice results
+                                damage_dice = [d for d in dice_results if "damage" in d.get("purpose", "").lower()]
+                                if damage_dice:
+                                    # Use the first damage roll result
+                                    try:
+                                        dmg = int(damage_dice[0].get("result", 0))
+                                        print(f"[CombatResolver] Using damage from dice result: {dmg}")
+                                    except (ValueError, TypeError):
+                                        dmg = 0
+                                        print(f"[CombatResolver] Could not use dice damage value")
+                                else:
+                                    dmg = 0
+                        
+                        # Ensure there's at least some damage if dice were rolled
+                        if dmg == 0 and dice_results:
+                            damage_dice = [d for d in dice_results if "damage" in d.get("purpose", "").lower()]
+                            attack_rolls = [d for d in dice_results if "attack" in d.get("purpose", "").lower()]
+                            
+                            # If damage dice were rolled and attack rolls were successful, use the damage
+                            if damage_dice and attack_rolls:
+                                try:
+                                    attack_value = int(attack_rolls[0].get("result", 0))
+                                    # Find the target's AC
+                                    target = next((c for c in combatants if c.get("name") == target_name), None)
+                                    target_ac = target.get("ac", 15) if target else 15
+                                    
+                                    # If the attack hit, apply damage
+                                    if attack_value >= target_ac:
+                                        try:
+                                            dmg = int(damage_dice[0].get("result", 0))
+                                            print(f"[CombatResolver] Attack roll {attack_value} >= AC {target_ac}, applying damage {dmg}")
+                                        except (ValueError, TypeError):
+                                            dmg = 0
+                                            print(f"[CombatResolver] Could not parse damage dice result")
+                                except (ValueError, TypeError):
+                                    print(f"[CombatResolver] Could not parse attack roll")
+                        
                         target = next((c for c in combatants if c.get("name") == target_name), None)
                         if target:
                             new_hp = max(0, target.get("hp", 0) - int(dmg))
@@ -1004,13 +1266,57 @@ class CombatResolver(QObject):
                                 heal = int(heal)  # Try to convert to int
                             except (ValueError, TypeError):
                                 print(f"[CombatResolver] Invalid healing value: {heal} for target {target_name}")
-                                continue  # Skip if conversion fails
+                                # Try to extract healing from dice results
+                                healing_dice = [d for d in dice_results if "heal" in d.get("purpose", "").lower()]
+                                if healing_dice:
+                                    try:
+                                        heal = int(healing_dice[0].get("result", 0))
+                                        print(f"[CombatResolver] Using healing from dice result: {heal}")
+                                    except (ValueError, TypeError):
+                                        heal = 0
+                                        print(f"[CombatResolver] Could not use dice healing value")
+                                else:
+                                    # Default healing amount
+                                    heal = 10
+                                    print(f"[CombatResolver] Using default healing amount of {heal}")
+                                    
                         target = next((c for c in combatants if c.get("name") == target_name), None)
                         if target:
                             max_hp = target.get("max_hp", target.get("hp", 0))
                             new_hp = min(max_hp, target.get("hp", 0) + int(heal))
                             updates.append({"name": target_name, "hp": new_hp})
                             print(f"[CombatResolver] Applying {heal} healing to {target_name}: HP {target.get('hp', 0)} -> {new_hp}")
+                    
+                    # Apply conditions if specified
+                    for target_name, conditions in resolution.get("conditions_applied", {}).items():
+                        target = next((c for c in combatants if c.get("name") == target_name), None)
+                        if target and isinstance(conditions, list):
+                            if "conditions" not in target:
+                                target["conditions"] = {}
+                            
+                            # Add each condition
+                            for condition in conditions:
+                                if isinstance(condition, str):
+                                    target["conditions"][condition.lower()] = {"source": active_combatant.get("name", "Unknown")}
+                                    print(f"[CombatResolver] Applied condition '{condition}' to {target_name}")
+                                    
+                            # Add condition update to updates list
+                            condition_update = {"name": target_name, "conditions": target["conditions"]}
+                            updates.append(condition_update)
+                            
+                    # Remove conditions if specified
+                    for target_name, conditions in resolution.get("conditions_removed", {}).items():
+                        target = next((c for c in combatants if c.get("name") == target_name), None)
+                        if target and "conditions" in target and isinstance(conditions, list):
+                            # Remove each condition
+                            for condition in conditions:
+                                if isinstance(condition, str) and condition.lower() in target["conditions"]:
+                                    del target["conditions"][condition.lower()]
+                                    print(f"[CombatResolver] Removed condition '{condition}' from {target_name}")
+                            
+                            # Add condition update to updates list
+                            condition_update = {"name": target_name, "conditions": target["conditions"]}
+                            updates.append(condition_update)
                 except Exception as e:
                     # Defensive: Never let update generation crash the turn
                     print(f"[CombatResolver] WARNING: Error translating resolution to updates: {e}")
@@ -1412,11 +1718,28 @@ class CombatResolver(QObject):
         prompt += "3. Consider the positioning of allies and enemies\n"
         prompt += "4. If you have low HP, consider defensive actions or targeting dangerous opponents first\n\n"
         
+        # Add explicit targeting guidance
+        prompt += "IMPORTANT TARGETING RULES:\n"
+        prompt += "- NEVER target yourself with attacks or harmful abilities\n"
+        prompt += "- Target enemies, not allies (unless using a beneficial ability like healing)\n"
+        prompt += "- Vary your actions when possible for dynamic combat\n"
+        prompt += "- For area effects like breath weapons, target clusters of enemies\n\n"
+        
         if available_recharge_abilities:
             prompt += f"IMPORTANT: You have {len(available_recharge_abilities)} recharged special abilities available now! Consider using them!\n\n"
         
         prompt += "Reply with a single JSON object in this format:\n"
-        prompt += '{\n  "action": "[action name]",\n  "target": "[target name or none]",\n  "reasoning": "[brief tactical reasoning for this choice]"\n}\n'
+        prompt += '{\n  "action": "[action name]",\n  "target": "[target name or none]",\n  "reasoning": "[brief tactical reasoning for this choice]",\n'
+        
+        # Add details about requesting dice rolls
+        prompt += '  "dice_requests": [\n    {"expression": "1d20+5", "purpose": "Attack roll"},\n    {"expression": "2d6+3", "purpose": "Damage roll"}\n  ]\n}\n\n'
+        
+        prompt += "IMPORTANT GUIDELINES:\n"
+        prompt += "- For 'action', specify a clear action like 'Multiattack', 'Cast Fireball', etc.\n"
+        prompt += "- For 'target', provide a specific name if you're targeting someone\n"
+        prompt += "- Always include 'dice_requests' for any checks, attacks, or damage needed\n"
+        prompt += "- For attacks, include both attack and damage dice\n"
+        prompt += "- For spells with saving throws, include the save DC and effect dice\n"
         
         return prompt
 
@@ -2193,7 +2516,7 @@ Action Type: {action_type}
 4. Apply any conditions that result from the action.
 5. Note any resource usage (spell slots, limited use abilities, etc.).
 
-Your response should be a JSON object containing:
+Your response MUST be a JSON object containing:
 {{
   "description": "A vivid narration of what happens when the action is taken and its immediate effects",
   "damage_dealt": {{"target_name": damage_amount, ...}},
@@ -2203,6 +2526,15 @@ Your response should be a JSON object containing:
   "conditions_removed": {{"target_name": ["condition1", "condition2", ...], ...}},
   "recharge_ability_used": ""
 }}
+
+IMPORTANT GUIDELINES:
+- Provide a detailed, vivid description of the action's outcome
+- In "damage_dealt", use specific target names and numerical damage values
+- Use dice results to determine hits/misses and damage amounts
+- If attack rolls beat the target's AC, apply appropriate damage
+- Apply appropriate conditions based on the attack type and narrative
+- For healing effects, specify the target and amount in the "healing" field
+- ALWAYS format your response as a proper JSON object
 
 DESCRIPTION: A detailed narrative of what happens
 DAMAGE_DEALT: A mapping of target names to damage amounts
