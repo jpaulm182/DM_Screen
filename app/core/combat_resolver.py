@@ -533,6 +533,34 @@ class CombatResolver(QObject):
         # Run in a background thread
         threading.Thread(target=run_resolution).start()
 
+    def _process_recharge_abilities(self, combatant, dice_roller):
+        """Process recharge abilities: roll d6 to recharge limited-use abilities based on recharge_text."""
+        import re
+        # Iterate through each limited-use ability and attempt recharge if not already available
+        for name, info in combatant.get("recharge_abilities", {}).items():
+            if not info.get("available", False):
+                recharge_text = info.get("recharge_text", "")
+                # Determine recharge range e.g. '5-6'
+                match = re.search(r'(\d+)\s*-\s*(\d+)', recharge_text)
+                if match:
+                    low, high = int(match.group(1)), int(match.group(2))
+                else:
+                    low, high = 6, 6
+                # Roll a d6 to check for recharge
+                try:
+                    roll = dice_roller("1d6")
+                except Exception as e:
+                    print(f"[CombatResolver] Error rolling recharge d6 for {combatant.get('name')}'s {name}: {e}")
+                    continue
+                # Check roll outcome
+                if isinstance(roll, int) and low <= roll <= high:
+                    info["available"] = True
+                    print(f"[CombatResolver] {combatant.get('name')} recharge roll for '{name}': {roll} (in {low}-{high}), now AVAILABLE")
+                else:
+                    print(f"[CombatResolver] {combatant.get('name')} recharge roll for '{name}': {roll} (not in {low}-{high}), still unavailable")
+        # Return combatant with updated availability flags
+        return combatant
+
     def _process_turn(self, combatants, active_idx, round_num, dice_roller):
         """
         Process a single combatant's turn with LLM.
@@ -550,6 +578,8 @@ class CombatResolver(QObject):
         import json  # Import json at the function level to ensure it's available
         import re
         
+        # Ensure dice_results is always defined to prevent NameError in error/fallback cases
+        dice_results = []
         try:
             active_combatant = combatants[active_idx]
             print(f"[CombatResolver] Processing turn for {active_combatant.get('name', 'Unknown')} (round {round_num})")
@@ -736,6 +766,7 @@ class CombatResolver(QObject):
                 import traceback
                 print(f"[CombatResolver] Error getting LLM decision: {str(e)}")
                 traceback.print_exc()
+                
                 # Create a minimal valid result instead of returning None
                 result = {
                     "action": "The combatant takes a defensive stance.",
@@ -750,6 +781,28 @@ class CombatResolver(QObject):
                         attack_rolls = [d for d in dice_results if "attack" in d.get("purpose", "").lower()]
                         
                         if damage_dice:
+                            damage_amount = int(damage_dice[0].get("result", 0))
+                                # If we have attack rolls and a target with AC, check if it hit
+                            if attack_rolls:
+                                try:
+                                    attack_value = int(attack_rolls[0].get("result", 0))
+                                    target_obj = next((c for c in combatants if c.get("name") == target), None)
+                                    if target_obj:
+                                        target_ac = target_obj.get("ac", 15)
+                                        if attack_value >= target_ac:
+                                            # Attack hit, apply damage
+                                            current_hp = target_obj.get("hp", 0)
+                                            new_hp = max(0, current_hp - damage_amount)
+                                            print(f"[CombatResolver] Salvaging outcome: {attack_value} hits AC {target_ac}, applying {damage_amount} damage")
+                                            result["updates"] = [{"name": target, "hp": new_hp}]
+                                            result["narrative"] = f"{active_combatant.get('name')} attacks {target} and hits ({attack_value} vs AC {target_ac}), dealing {damage_amount} damage."
+                                        else:
+                                            # Attack missed
+                                            print(f"[CombatResolver] Salvaging outcome: {attack_value} misses AC {target_ac}")
+                                            result["narrative"] = f"{active_combatant.get('name')} attacks {target} but misses ({attack_value} vs AC {target_ac})."
+                                except (ValueError, TypeError):
+                                    print(f"[CombatResolver] Could not parse attack roll when salvaging outcome")
+                        if damage_dice:
                             try:
                                 damage_amount = int(damage_dice[0].get("result", 0))
                                 # If we have attack rolls and a target with AC, check if it hit
@@ -763,18 +816,18 @@ class CombatResolver(QObject):
                                                 # Attack hit, apply damage
                                                 current_hp = target_obj.get("hp", 0)
                                                 new_hp = max(0, current_hp - damage_amount)
-                                                print(f"[CombatResolver] Salvaging outcome: {attack_value} hits AC {target_ac}, applying {damage_amount} damage")
+                                                print(f"[CombatResolver] Salvaging outcome in fallback: {attack_value} hits AC {target_ac}, applying {damage_amount} damage")
                                                 result["updates"] = [{"name": target, "hp": new_hp}]
                                                 result["narrative"] = f"{active_combatant.get('name')} attacks {target} and hits ({attack_value} vs AC {target_ac}), dealing {damage_amount} damage."
                                             else:
                                                 # Attack missed
-                                                print(f"[CombatResolver] Salvaging outcome: {attack_value} misses AC {target_ac}")
+                                                print(f"[CombatResolver] Salvaging outcome in fallback: {attack_value} misses AC {target_ac}")
                                                 result["narrative"] = f"{active_combatant.get('name')} attacks {target} but misses ({attack_value} vs AC {target_ac})."
                                     except (ValueError, TypeError):
-                                        print(f"[CombatResolver] Could not parse attack roll when salvaging outcome")
+                                        print(f"[CombatResolver] Could not parse attack roll when salvaging outcome in fallback")
                             except (ValueError, TypeError):
-                                    print(f"[CombatResolver] Could not parse damage roll when salvaging outcome")
-                    
+                                print(f"[CombatResolver] Could not parse damage roll when salvaging outcome in fallback")
+                
                 print(f"[CombatResolver] Returning salvaged result: {result}")
                 return result
             except Exception as e:
@@ -851,8 +904,9 @@ class CombatResolver(QObject):
                         damage_match = re.search(r'(\d+)\s*damage', resolution_text)
                         if damage_match and 'target' in locals() and target and target.lower() != "none":
                             damage_amount = int(damage_match.group(1))
-                            print(f"[CombatResolver] Extracted damage amount from text: {damage_amount}")
+                            # Create or update damage value for target
                             resolution["damage_dealt"] = {target: damage_amount}
+                            print(f"[CombatResolver] Extracted damage amount from text: {damage_amount}")
                     else:
                         json_str = json_match.group(0)
                         print(f"[CombatResolver] Found JSON string: {json_str[:100]}...")
@@ -906,6 +960,31 @@ class CombatResolver(QObject):
                         "updates": []
                     }
 
+                # DEBUG: Print raw LLM output for troubleshooting
+                if 'raw_llm_output' in locals():
+                    print(f"[CombatResolver] RAW LLM OUTPUT (first 500 chars): {str(raw_llm_output)[:500]}")
+
+                # --- DICE ROLLING PHASE ---
+                dice_results = []
+                # Check for dice_requests in the LLM response
+                dice_requests = resolution.get('dice_requests', [])
+                for req in dice_requests:
+                    expr = req.get('expression')
+                    purpose = req.get('purpose', '')
+                    if expr:
+                        try:
+                            result = dice_roller(expr)
+                        except Exception as e:
+                            print(f"[CombatResolver] Dice roll error for '{expr}': {e}")
+                            result = 'error'
+                        dice_results.append({
+                            'expression': expr,
+                            'result': result,
+                            'purpose': purpose
+                        })
+                # Attach dice_results to locals for downstream logic
+                # (the rest of the function already tries to use dice_results)
+
                 # ------------------------------------------------------------------
                 # NEW: Build and RETURN the turn_result so the caller can log it
                 # ------------------------------------------------------------------
@@ -916,17 +995,15 @@ class CombatResolver(QObject):
                 try:
                     # Extract a narrative/description in a tolerant manner
                     narrative_text = None
-                    
-                    # Try various fields in priority order
-                    for field in ["description", "narrative", "action", "result"]:
+                    # Prefer 'reasoning', then 'description', then 'narrative', then 'action', then 'result' for the combat log
+                    for field in ["reasoning", "description", "narrative", "action", "result"]:
                         if field in resolution and resolution[field]:
                             narrative_text = resolution[field]
                             print(f"[CombatResolver] Found narrative in field '{field}': {narrative_text[:50]}...")
                             break
-                    
                     # If no appropriate field was found, use a default
                     if not narrative_text:
-                        narrative_text = action if action else "The action is resolved."
+                        narrative_text = "The action resolves with technical difficulties."
                         print(f"[CombatResolver] Using fallback narrative: {narrative_text}")
 
                     # Auto-detect targets if no damage_dealt is specified but there's a narrative
@@ -1136,149 +1213,6 @@ class CombatResolver(QObject):
                 "updates": []
             }
 
-    def _process_recharge_abilities(self, combatant, dice_roller):
-        """
-        Process recharge abilities for a combatant's turn.
-        
-        This method:
-        1. Checks for any abilities that need to recharge
-        2. Rolls appropriate dice for recharge
-        3. Updates the combatant's state with freshly recharged abilities
-        
-        Args:
-            combatant: The combatant data object
-            dice_roller: Function for rolling dice
-            
-        Returns:
-            Updated combatant data
-        """
-        if combatant.get("type", "").lower() != "monster":
-            return combatant
-            
-        combatant_name = combatant.get("name", "Unknown")
-        print(f"[CombatResolver] Processing recharge abilities for {combatant_name}")
-        
-        # Initialize recharge abilities tracking if not present
-        if "recharge_abilities" not in combatant:
-            combatant["recharge_abilities"] = {}
-            
-        # Handle special case for dragons - detect breath weapons and add them as recharge abilities
-        if "dragon" in combatant_name.lower() and combatant.get("actions"):
-            is_first_turn = "turn_count" not in combatant or combatant["turn_count"] == 0
-            
-            # Look for breath weapon in actions
-            for action in combatant["actions"]:
-                if isinstance(action, dict):
-                    action_name = action.get("name", "")
-                    description = action.get("description", "")
-                    
-                    # Check if this is a breath weapon with recharge
-                    is_breath = "breath" in action_name.lower()
-                    recharge_match = re.search(r"recharge (\d+)(?:-(\d+))?", description, re.IGNORECASE)
-                    
-                    if is_breath and recharge_match:
-                        # Extract recharge range
-                        recharge_min = int(recharge_match.group(1))
-                        recharge_max = int(recharge_match.group(2)) if recharge_match.group(2) else recharge_min
-                        
-                        # Add to tracked recharge abilities if not already there
-                        if action_name not in combatant["recharge_abilities"]:
-                            print(f"[CombatResolver] Detected breath weapon: {action_name} with recharge {recharge_min}-{recharge_max}")
-                            combatant["recharge_abilities"][action_name] = {
-                                "available": is_first_turn,  # Available on first turn
-                                "recharge_range": (recharge_min, recharge_max),
-                                "recharge_text": f"Recharge {recharge_min}-{recharge_max}"
-                            }
-        
-        # Special case for adult red dragons - ensure Fire Breath is tracked
-        if "red" in combatant_name.lower() and "dragon" in combatant_name.lower() and "adult" in combatant_name.lower():
-            has_fire_breath = False
-            
-            # Check if Fire Breath is already in recharge abilities
-            if "Fire Breath" in combatant["recharge_abilities"]:
-                has_fire_breath = True
-            else:
-                # Look for Fire Breath in actions
-                for action in combatant.get("actions", []):
-                    if isinstance(action, dict) and action.get("name") == "Fire Breath":
-                        has_fire_breath = True
-                        break
-            
-            # If no Fire Breath is found, add it manually
-            if not has_fire_breath:
-                is_first_turn = "turn_count" not in combatant or combatant["turn_count"] == 0
-                print(f"[CombatResolver] Adding standard Fire Breath to Adult Red Dragon {combatant_name}")
-                combatant["recharge_abilities"]["Fire Breath"] = {
-                    "available": is_first_turn,
-                    "recharge_range": (5, 6),
-                    "recharge_text": "Recharge 5-6"
-                }
-                
-                # If actions array doesn't exist or is empty, create it and add Fire Breath
-                if not combatant.get("actions"):
-                    combatant["actions"] = []
-                
-                # Check if Fire Breath already exists in actions
-                fire_breath_exists = False
-                for action in combatant.get("actions", []):
-                    if isinstance(action, dict) and action.get("name") == "Fire Breath":
-                        fire_breath_exists = True
-                        break
-                
-                # Add Fire Breath action if it doesn't exist
-                if not fire_breath_exists:
-                    combatant["actions"].append({
-                        "name": "Fire Breath",
-                        "description": "The dragon exhales fire in a 60-foot cone. Each creature in that area must make a DC 21 Dexterity saving throw, taking 63 (18d6) fire damage on a failed save, or half as much damage on a successful one. (Recharge 5-6)",
-                        "attack_bonus": "",
-                        "damage": "18d6"
-                    })
-                    
-        # Attempt to recharge abilities
-        recharge_results = []
-        
-        # Make a copy to avoid modification during iteration
-        for name, ability in list(combatant["recharge_abilities"].items()):
-            if not ability.get("available", False):
-                # Get recharge range
-                recharge_range = ability.get("recharge_range", (6, 6))  # Default to 6 only
-                
-                # Roll d6 for recharge
-                roll_result = dice_roller("1d6")
-                did_recharge = roll_result >= recharge_range[0] and roll_result <= recharge_range[1]
-                
-                # Update ability status
-                ability["available"] = did_recharge
-                
-                # Log result
-                recharge_text = ability.get("recharge_text", f"Recharge {recharge_range[0]}-{recharge_range[1]}")
-                result_str = "recharged" if did_recharge else "did not recharge"
-                print(f"[CombatResolver] {name} ({recharge_text}) rolled {roll_result}: {result_str}")
-                
-                # Add to results for reporting
-                recharge_results.append({
-                    "name": name,
-                    "roll": roll_result,
-                    "recharged": did_recharge,
-                    "range": recharge_range
-                })
-        
-        # Log a summary
-        if recharge_results:
-            success_count = sum(1 for r in recharge_results if r["recharged"])
-            print(f"[CombatResolver] Recharge results for {combatant_name}: {success_count}/{len(recharge_results)} abilities recharged")
-            
-            # List all available abilities
-            available_abilities = [name for name, ability in combatant["recharge_abilities"].items() if ability.get("available", False)]
-            if available_abilities:
-                print(f"[CombatResolver] Available recharge abilities: {', '.join(available_abilities)}")
-            else:
-                print(f"[CombatResolver] No recharge abilities currently available for {combatant_name}")
-        else:
-            print(f"[CombatResolver] No recharge abilities to process for {combatant_name}")
-            
-        return combatant
-
     def _create_decision_prompt(self, combat_state, turn_combatant):
         """Create a prompt for the LLM to decide a combatant's action."""
         prompt = "You are playing the role of a combatant in a D&D 5e battle. Make a tactical decision for your next action.\n\n"
@@ -1311,7 +1245,11 @@ class CombatResolver(QObject):
         # Describe the combat situation
         prompt += "# Combat Situation\n"
         prompt += f"You are playing as: {active_combatant.get('name')} (Type: {active_combatant.get('type')})\n"
-        prompt += f"Current HP: {active_combatant.get('current_hp', 0)}/{active_combatant.get('max_hp', 0)}\n"
+        # Use 'hp' as the canonical current HP field (fixes bug where HP was always 0)
+        # Fallback to 'current_hp' only if 'hp' is missing, for robustness
+        current_hp = active_combatant.get('hp', active_combatant.get('current_hp', 0))
+        max_hp = active_combatant.get('max_hp', 0)
+        prompt += f"Current HP: {current_hp}/{max_hp}\n"
         prompt += f"AC: {active_combatant.get('ac', 0)}\n"
         
         # Add status effects if any
@@ -1330,29 +1268,12 @@ class CombatResolver(QObject):
         # Add information about all combatants
         prompt += "\n# Combatants\n"
         for c in combat_state.get("combatants", []):
-            if c.get("id") == active_combatant.get("id"):
-                continue  # Skip active combatant as we've already described them
-                
-            prompt += f"## {c.get('name')} ({c.get('type')})\n"
-            prompt += f"HP: {c.get('current_hp', 0)}/{c.get('max_hp', 0)}\n"
-            prompt += f"AC: {c.get('ac', 0)}\n"
-            
-            # Add status effects if any
-            status = c.get("status_effects", [])
-            if status:
-                prompt += f"Status Effects: {', '.join(status)}\n"
-                
-            # Add distance information if available
-            distance = c.get("distance_to_active", "Unknown")
-            if distance != "Unknown":
-                prompt += f"Distance from you: {distance} ft\n"
-                
-            # Add potential threat level
-            if c.get("type", "").lower() == "pc" and active_combatant.get("type", "").lower() == "monster":
-                prompt += "This is a player character (potential threat).\n"
-            elif c.get("type", "").lower() == "monster" and active_combatant.get("type", "").lower() == "pc":
-                prompt += "This is a monster (potential threat).\n"
-            prompt += "\n"
+            name = c.get("name", "Unknown")
+            ctype = c.get("type", "unknown")
+            c_current_hp = c.get('hp', c.get('current_hp', 0))
+            c_max_hp = c.get('max_hp', c_current_hp)
+            status = c.get("status", "Healthy")
+            prompt += f"- {name} (Type: {ctype}, HP: {c_current_hp}/{c_max_hp}, Status: {status})\n"
         
         # Recharge abilities status
         if available_recharge_abilities or unavailable_recharge_abilities:
@@ -2137,6 +2058,96 @@ Return ONLY the JSON object with no other text.
             conditions.append("Unconscious: Grants advantage on attacks, auto-crits if attacker within 5 feet")
         
         return "\n".join(conditions) if conditions else "No conditions affecting the combatant."
+
+    def _get_active_auras(self, active_combatant, all_combatants):
+        """
+        Get a list of auras currently affecting a combatant
+        
+        Args:
+            active_combatant: The combatant to check for affecting auras
+            all_combatants: List of all combatants in the encounter
+            
+        Returns:
+            List of aura objects affecting the combatant
+        """
+        active_auras = []
+        
+        # Ensure auras have been detected on all combatants
+        for combatant in all_combatants:
+            if "auras" not in combatant:
+                self._add_auras_from_traits(combatant)
+        
+        # Check each combatant's auras
+        for c in all_combatants:
+            if "auras" not in c or not c.get("auras"):
+                continue
+                
+            for aura_name, aura in c.get("auras", {}).items():
+                # Skip self-auras that don't affect self
+                if c.get("name") == active_combatant.get("name") and not aura.get("affects_self", False):
+                    continue
+                    
+                # Skip auras that don't affect allies/enemies appropriately
+                if aura.get("affects", "enemies") == "enemies" and c.get("type") == active_combatant.get("type"):
+                    continue
+                if aura.get("affects", "enemies") == "allies" and c.get("type") != active_combatant.get("type"):
+                    continue
+                
+                # Check if this combatant is within the aura's range
+                range_feet = aura.get("range", 10)  # Default 10 ft range
+                distance = self._get_distance_between(c, active_combatant)
+                
+                if distance <= range_feet:
+                    active_auras.append({
+                        "name": aura_name,
+                        "source": c.get("name", "Unknown"),
+                        "range": range_feet,
+                        "effect": aura.get("effect", {}),
+                        "distance": distance
+                    })
+        
+        return active_auras
+    
+    def _format_active_auras(self, auras):
+        """
+        Format a list of active auras into a readable string
+        
+        Args:
+            auras: List of aura objects affecting a combatant
+            
+        Returns:
+            Formatted string describing the auras
+        """
+        if not auras:
+            return "None"
+            
+        aura_strings = []
+        for aura in auras:
+            effect = aura.get("effect", {})
+            effect_type = effect.get("type", "unknown")
+            source = aura.get("source", "Unknown")
+            name = aura.get("name", "unnamed aura")
+            distance = aura.get("distance", 0)
+            
+            effect_desc = ""
+            if effect_type == "damage":
+                damage_expr = effect.get("expression", "")
+                damage_type = effect.get("damage_type", "unspecified")
+                effect_desc = f"{damage_expr} {damage_type} damage"
+            elif effect_type == "condition":
+                condition = effect.get("condition", "")
+                effect_desc = f"applies {condition} condition"
+            elif effect_type == "healing":
+                healing_expr = effect.get("expression", "")
+                effect_desc = f"heals {healing_expr} per turn"
+            elif effect_type == "resistance":
+                damage_types = effect.get("damage_types", [])
+                types_str = ", ".join(damage_types)
+                effect_desc = f"grants resistance to {types_str}"
+                
+            aura_strings.append(f"{source}'s {name} ({distance}ft away) - {effect_desc}")
+            
+        return "\n".join(aura_strings)
 
     def _create_resolution_prompt(self, combatants, active_idx, combatant_decision, dice_results, round_num):
         """
