@@ -5713,15 +5713,10 @@ class CombatTrackerPanel(BasePanel):
                 for casualty in casualties:
                     summary_content += f"<li>{casualty}</li>\n"
                 summary_content += "</ul>\n"
-            
-            # Now update the combat log with our final content
-            if final_log:
-                # Append to existing log
-                self.combat_log_text.setHtml(final_log)
-                self.combat_log_text.append(summary_content)
-            else:
-                # Start fresh with summary only
-                self.combat_log_text.setHtml(summary_content)
+        
+            # Always append full summary, keeping prior log intact
+            self.combat_log_text.append("<hr><h3 style='color:#000088;'>Combat Concluded</h3>")
+            self.combat_log_text.append(summary_content)
             
             # Explicitly set cursor to end and scroll to bottom
             cursor = self.combat_log_text.textCursor()
