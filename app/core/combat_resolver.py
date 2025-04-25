@@ -857,7 +857,8 @@ class CombatResolver(QObject):
                         max_tokens=800
                     )
                     print(f"[CombatResolver] Received LLM resolution for {active_combatant.get('name', 'Unknown')}")
-                    print(f"[CombatResolver] Raw resolution response: {resolution_response!r}")
+                    print(f"[CombatResolver] Raw resolution response TYPE: {type(resolution_response).__name__}")
+                    print(f"[CombatResolver] Raw resolution response VALUE: {resolution_response!r}")
                     # --- FIX: Parse JSON if needed (strip code block markers first) ---
                     if isinstance(resolution_response, str):
                         cleaned = resolution_response.strip()
@@ -875,6 +876,10 @@ class CombatResolver(QObject):
                             resolution_response = parsed_resolution
                         except Exception as e:
                             print(f"[CombatResolver] Failed to parse LLM resolution as JSON: {e}")
+                            # Add more specific error information to help diagnose parsing issues
+                            import traceback
+                            traceback.print_exc()
+                            print(f"[CombatResolver] JSON parsing error details for string: {cleaned[:100]}...")
                             # Continue with original string, fallback logic will handle it
                     # --- END FIX ---
                 except Exception as e:
@@ -912,16 +917,19 @@ class CombatResolver(QObject):
                     resolution_text = re.sub(r'```(?:json)?\s*', '', resolution_text)
                     resolution_text = re.sub(r'```\s*$', '', resolution_text)
                     # Try to extract JSON
+                    print(f"[CombatResolver] Looking for JSON in: {resolution_text[:150]}...")
                     json_match = re.search(r'\{[\s\S]*\}', resolution_text)
                     if not json_match:
                         print(f"[CombatResolver] Could not find JSON in LLM resolution response")
                         # Create a minimal valid resolution if JSON extraction fails
                         resolution = {
+                            "description": resolution_text if resolution_text else "The action is completed.",
                             "narrative": resolution_text if resolution_text else "The action is completed.",
                             "updates": []
                         }
                     else:
                         json_str = json_match.group(0)
+                        print(f"[CombatResolver] Found JSON string: {json_str[:100]}...")
                         try:
                             import json as _json
                             resolution = _json.loads(json_str)
@@ -931,12 +939,15 @@ class CombatResolver(QObject):
                             # Try to clean up the JSON string further
                             cleaned_json = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas
                             cleaned_json = re.sub(r',\s*]', ']', cleaned_json)  # Remove trailing commas in arrays
+                            print(f"[CombatResolver] Cleaned JSON: {cleaned_json[:100]}...")
                             try:
                                 resolution = _json.loads(cleaned_json)
                                 print(f"[CombatResolver] Parsed cleaned LLM resolution as JSON: {resolution}")
-                            except _json.JSONDecodeError:
-                                print(f"[CombatResolver] Failed to parse JSON resolution even after cleanup")
+                            except _json.JSONDecodeError as e2:
+                                print(f"[CombatResolver] Failed to parse JSON resolution even after cleanup: {e2}")
+                                # Use a simpler approach - construct a minimal resolution with description field
                                 resolution = {
+                                    "description": "The action resolves with technical difficulties.",
                                     "narrative": "The action resolves with technical difficulties.",
                                     "updates": []
                                 }
@@ -944,6 +955,7 @@ class CombatResolver(QObject):
                 if not isinstance(resolution, dict):
                     print(f"[CombatResolver] LLM resolution is not a dict, using fallback.")
                     resolution = {
+                        "description": str(resolution),
                         "narrative": str(resolution),
                         "updates": []
                     }
@@ -951,42 +963,64 @@ class CombatResolver(QObject):
                 # ------------------------------------------------------------------
                 # NEW: Build and RETURN the turn_result so the caller can log it
                 # ------------------------------------------------------------------
-                # Extract a narrative/description in a tolerant manner
-                narrative_text = (
-                    resolution.get("description")
-                    or resolution.get("narrative")
-                    or "The action is resolved."
-                )
-
+                
                 # Build updates list based on damage/healing information if provided
                 updates = []
 
                 try:
+                    # Extract a narrative/description in a tolerant manner
+                    narrative_text = None
+                    
+                    # Try various fields in priority order
+                    for field in ["description", "narrative", "action", "result"]:
+                        if field in resolution and resolution[field]:
+                            narrative_text = resolution[field]
+                            print(f"[CombatResolver] Found narrative in field '{field}': {narrative_text[:50]}...")
+                            break
+                    
+                    # If no appropriate field was found, use a default
+                    if not narrative_text:
+                        narrative_text = action if action else "The action is resolved."
+                        print(f"[CombatResolver] Using fallback narrative: {narrative_text}")
+
                     # Handle damage dealt (reduce HP for targets)
                     for target_name, dmg in resolution.get("damage_dealt", {}).items():
                         if not isinstance(dmg, (int, float)):
-                            continue  # Skip unexpected formats
+                            try:
+                                dmg = int(dmg)  # Try to convert to int
+                            except (ValueError, TypeError):
+                                print(f"[CombatResolver] Invalid damage value: {dmg} for target {target_name}")
+                                continue  # Skip if conversion fails
                         target = next((c for c in combatants if c.get("name") == target_name), None)
                         if target:
                             new_hp = max(0, target.get("hp", 0) - int(dmg))
                             updates.append({"name": target_name, "hp": new_hp})
+                            print(f"[CombatResolver] Applying {dmg} damage to {target_name}: HP {target.get('hp', 0)} -> {new_hp}")
 
                     # Handle healing (increase HP up to max)
                     for target_name, heal in resolution.get("healing", {}).items():
                         if not isinstance(heal, (int, float)):
-                            continue
+                            try:
+                                heal = int(heal)  # Try to convert to int
+                            except (ValueError, TypeError):
+                                print(f"[CombatResolver] Invalid healing value: {heal} for target {target_name}")
+                                continue  # Skip if conversion fails
                         target = next((c for c in combatants if c.get("name") == target_name), None)
                         if target:
                             max_hp = target.get("max_hp", target.get("hp", 0))
                             new_hp = min(max_hp, target.get("hp", 0) + int(heal))
                             updates.append({"name": target_name, "hp": new_hp})
+                            print(f"[CombatResolver] Applying {heal} healing to {target_name}: HP {target.get('hp', 0)} -> {new_hp}")
                 except Exception as e:
                     # Defensive: Never let update generation crash the turn
                     print(f"[CombatResolver] WARNING: Error translating resolution to updates: {e}")
+                    import traceback
+                    traceback.print_exc()
 
                 # Fall back to any explicit updates provided by the LLM
                 if not updates and isinstance(resolution.get("updates"), list):
                     updates = resolution["updates"]
+                    print(f"[CombatResolver] Using explicit updates from resolution: {updates}")
 
                 turn_result = {
                     "action": action,
@@ -995,31 +1029,32 @@ class CombatResolver(QObject):
                     "updates": updates,
                 }
 
+                print(f"[CombatResolver] Final turn result: {turn_result}")
                 return turn_result
             except Exception as e:
                 print(f"[CombatResolver] Error processing turn resolution: {str(e)}")
                 import traceback
                 traceback.print_exc()
-                print(f"[CombatResolver] Exception occurred with resolution_response: {resolution_response!r}")
-                # Return a minimal valid result
-                return {
-                    "action": action,
-                    "narrative": f"The {active_combatant.get('name', 'combatant')} takes an action, but a technical issue occurs.",
-                    "updates": [],
-                    "dice": dice_results
-                }
                 
+                # Even in case of error, return a valid turn result
+                fallback_result = {
+                    "action": action,
+                    "narrative": f"The {active_combatant.get('name', 'combatant')} acted, but a technical issue prevented recording the outcome.",
+                    "dice": dice_results,
+                    "updates": []
+                }
+                print(f"[CombatResolver] Using fallback turn result due to error: {fallback_result}")
+                return fallback_result
         except Exception as e:
+            # Final fallback - this should never be reached, but just in case
             print(f"[CombatResolver] Critical error in _process_turn: {str(e)}")
             import traceback
             traceback.print_exc()
-            
-            # Return a safe, minimal result rather than None
             return {
-                "action": "Technical difficulty occurred",
-                "narrative": "A technical issue occurred during this turn. Combat continues.",
-                "updates": [],
-                "dice": []
+                "action": "Unknown action",
+                "narrative": f"The {active_combatant.get('name', 'Unknown')} attempted to act, but a critical error occurred.",
+                "dice": [],
+                "updates": []
             }
 
     def _process_recharge_abilities(self, combatant, dice_roller):
