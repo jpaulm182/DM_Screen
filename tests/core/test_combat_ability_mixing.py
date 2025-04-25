@@ -231,8 +231,8 @@ def test_fix_mixed_abilities_in_prompt():
     assert "Heat Metal" in fixed_prompt
     
     # Verify that the prompt is still valid
-    validation_result = validate_combat_prompt(fixed_prompt)
-    assert validation_result["success"] == True
+    is_valid, _ = validate_combat_prompt(fixed_prompt)
+    assert is_valid
 
 def test_patched_decision_prompt_automatic_correction():
     """Test that the patched create_decision_prompt function automatically corrects mixed abilities."""
@@ -274,8 +274,15 @@ def test_patched_decision_prompt_automatic_correction():
         ]
     }
     
+    # Create a simple mock LLM service for the resolver
+    class DummyLLMService:
+        def get_available_models(self):
+            return [{"id": "dummy-model"}]
+        def generate_completion(self, model, messages, temperature=None, max_tokens=None):
+            return ""
+    
     # Create a simple combat resolver object to use the patched function
-    resolver = ImprovedCombatResolver()
+    resolver = ImprovedCombatResolver(llm_service=DummyLLMService())
     
     # Use the patched function to create a decision prompt
     prompt = patched_create_decision_prompt(combat_state, resolver)
@@ -288,8 +295,8 @@ def test_patched_decision_prompt_automatic_correction():
     assert "Magma Breath" in prompt
     
     # Validation should pass for the prompt
-    validation_result = validate_combat_prompt(prompt)
-    assert validation_result["success"] == True
+    is_valid, _ = validate_combat_prompt(prompt)
+    assert is_valid
 
 def test_improved_resolver_combat_preparation():
     """Test that the ImprovedCombatResolver properly prepares combat data by fixing mixed abilities."""
@@ -320,8 +327,15 @@ def test_improved_resolver_combat_preparation():
         "active_combatant_index": 0
     }
     
-    # Create the resolver
-    resolver = ImprovedCombatResolver()
+    # Create a simple mock LLM service for the resolver
+    class DummyLLMService:
+        def get_available_models(self):
+            return [{"id": "dummy-model"}]
+        def generate_completion(self, model, messages, temperature=None, max_tokens=None):
+            return ""
+    
+    # Create the resolver with the dummy LLM service
+    resolver = ImprovedCombatResolver(llm_service=DummyLLMService())
     
     # Prepare the combat data
     cleaned_state = resolver.prepare_combat_data(combat_state)

@@ -711,10 +711,10 @@ def combat_resolver_patch(app_state):
     original_create_decision_prompt = app_state.combat_resolver._create_decision_prompt
     
     @functools.wraps(original_create_decision_prompt)
-    def patched_create_decision_prompt(combatants, active_idx, round_num):
+    def patched_create_decision_prompt(combat_state, turn_combatant):
         """Add monster ability validation to the decision prompt with automatic correction."""
         # Call original method
-        prompt = original_create_decision_prompt(combatants, active_idx, round_num)
+        prompt = original_create_decision_prompt(combat_state, turn_combatant)
         
         # Clean the prompt to ensure all abilities have proper tags
         prompt = clean_abilities_in_prompt(prompt)
@@ -759,4 +759,50 @@ def combat_resolver_patch(app_state):
     app_state.combat_resolver._patched = True
     
     logger.info("Combat resolver successfully patched")
-    return True 
+    return True
+
+# Expose patched_create_decision_prompt for import in tests and patching
+__all__ = [
+    'patch_process_turn',
+    'patch_combat_resolver',
+    'patch_dice_rolling',
+    'patch_multi_attack_resolution',
+    'patch_json_parsing',
+    'patch_resolution_timeout',
+    'combat_resolver_patch',
+    'patched_create_decision_prompt',
+]
+
+# --- Module-level export for testability and patching ---
+# This function is used in tests and for patching the combat resolver.
+def patched_create_decision_prompt(combat_state, turn_combatant):
+    """Add monster ability validation to the decision prompt with automatic correction."""
+    # The implementation is copied from the function inside combat_resolver_patch
+    # Call original method
+    prompt = app_state.combat_resolver._create_decision_prompt(combat_state, turn_combatant)
+    # Clean the prompt to ensure all abilities have proper tags
+    prompt = clean_abilities_in_prompt(prompt)
+    # Validate the prompt to check for ability mixing
+    is_valid, result = validate_combat_prompt(prompt)
+    if not is_valid:
+        # Log the validation failure
+        logger.warning(f"Ability mixing detected in prompt: {result}")
+        # Extract the active monster name for further logging
+        import re
+        active_monster = "Unknown"
+        active_match = re.search(r"Active Combatant: ([A-Za-z0-9_\s]+)", prompt)
+        if active_match:
+            active_monster = active_match.group(1).strip()
+        logger.warning(f"Ability mixing affects monster: {active_monster}")
+        # Apply automatic correction to fix the ability mixing
+        logger.info(f"Attempting to automatically correct mixed abilities for {active_monster}")
+        fixed_prompt = fix_mixed_abilities_in_prompt(prompt)
+        # Validate the fixed prompt to ensure it worked
+        fixed_is_valid, fixed_result = validate_combat_prompt(fixed_prompt)
+        if fixed_is_valid:
+            logger.info("Successfully fixed ability mixing!")
+            return fixed_prompt
+        else:
+            logger.warning(f"Failed to fix ability mixing: {fixed_result}")
+            # Continue with best effort
+    return prompt 

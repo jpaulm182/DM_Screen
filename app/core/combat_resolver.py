@@ -7,7 +7,7 @@ properly reflected in the UI.
 """
 
 from app.core.llm_service import LLMService, ModelInfo
-import json
+import json as _json
 import re
 import time
 import logging
@@ -62,8 +62,7 @@ class CombatResolver(QObject):
             # If it's a string, try to parse as JSON
             if isinstance(combat_state, str):
                 try:
-                    import json
-                    parsed = json.loads(combat_state)
+                    parsed = _json.loads(combat_state)
                     if isinstance(parsed, dict):
                         state_copy = parsed
                 except Exception as e:
@@ -641,7 +640,10 @@ class CombatResolver(QObject):
                 }
             
             # 1. Create a prompt for the LLM to decide the action
-            prompt = self._create_decision_prompt(combatants, active_idx, round_num)
+            # Prepare combat_state and turn_combatant for prompt creation
+            combat_state = {"combatants": combatants, "turn_number": round_num}
+            turn_combatant = combatants[active_idx]
+            prompt = self._create_decision_prompt(combat_state, turn_combatant)
             
             # 2. Get action decision from LLM
             print(f"[CombatResolver] Requesting action decision from LLM for {active_combatant.get('name', 'Unknown')}")
@@ -657,6 +659,7 @@ class CombatResolver(QObject):
                     # Fallback: use first available model
                     model_id = available_models[0]["id"]
                 # Now use model_id for LLM calls
+                print(f"[CombatResolver] Sending prompt to LLM:\n{prompt}\n---END PROMPT---")
                 decision_response = self.llm_service.generate_completion(
                     model=model_id,
                     messages=[{"role": "user", "content": prompt}],
@@ -667,10 +670,12 @@ class CombatResolver(QObject):
                 print(f"[CombatResolver] Raw decision response: {decision_response!r}")
             except Exception as e:
                 print(f"[CombatResolver] Error getting LLM decision: {str(e)}")
+                import traceback
+                traceback.print_exc()
                 return None
-                
             # 3. Parse the LLM's decision
             try:
+                print(f"[CombatResolver] Parsing LLM decision response: {decision_response!r}")
                 # Clean the LLM response to extract JSON properly
                 decision_text = decision_response
                 
@@ -690,6 +695,8 @@ class CombatResolver(QObject):
                     # Create a minimal valid decision
                     decision = {
                         "action": fallback_action,
+                        "target": "none",
+                        "reasoning": "No reasoning provided.",
                         "dice_requests": [
                             {"expression": "1d20", "purpose": "Basic attack roll"},
                             {"expression": "1d6", "purpose": "Basic damage roll"}
@@ -699,47 +706,60 @@ class CombatResolver(QObject):
                 else:
                     json_str = json_match.group(0)
                     try:
-                        decision = json.loads(json_str)
-                    except json.JSONDecodeError as e:
+                        decision = _json.loads(json_str)
+                    except _json.JSONDecodeError as e:
                         print(f"[CombatResolver] JSON decode error: {e}")
                         # Try to clean up the JSON string further
                         cleaned_json = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas
                         cleaned_json = re.sub(r',\s*]', ']', cleaned_json)  # Remove trailing commas in arrays
                         try:
-                            decision = json.loads(cleaned_json)
-                        except json.JSONDecodeError:
+                            decision = _json.loads(cleaned_json)
+                        except _json.JSONDecodeError:
                             print(f"[CombatResolver] Failed to parse JSON even after cleanup, creating fallback")
                             # Create fallback decision
                             decision = {
                                 "action": "The combatant makes a basic attack after a parsing error.",
+                                "target": "none",
+                                "reasoning": "No reasoning provided.",
                                 "dice_requests": [
                                     {"expression": "1d20", "purpose": "Basic attack roll"},
                                     {"expression": "1d6", "purpose": "Basic damage roll"}
                                 ],
                                 "action_type": "action"  # Default action type
                             }
-                
+                    # End of except for JSONDecodeError
+                # Ensure decision is a dictionary
+                if not isinstance(decision, dict):
+                    print(f"[CombatResolver] LLM decision is not a dict, creating fallback.")
+                    decision = {
+                        "action": str(decision),
+                        "target": "none",
+                        "reasoning": "No reasoning provided.",
+                        "dice_requests": [
+                            {"expression": "1d20", "purpose": "Basic attack roll"},
+                            {"expression": "1d6", "purpose": "Basic damage roll"}
+                        ],
+                        "action_type": "action"
+                    }
                 # Validate required fields and provide defaults if missing
                 if "action" not in decision:
                     print(f"[CombatResolver] Missing 'action' field in decision, adding default")
                     decision["action"] = "The combatant takes a defensive stance."
-                    
+                if "target" not in decision:
+                    decision["target"] = "none"
+                if "reasoning" not in decision:
+                    decision["reasoning"] = "No reasoning provided."
                 if "dice_requests" not in decision:
                     print(f"[CombatResolver] Missing 'dice_requests' field in decision, adding default")
                     decision["dice_requests"] = []
-                
-                # Set default action type if not provided
                 if "action_type" not in decision:
                     decision["action_type"] = "action"
-                    
                 action = decision["action"]
                 dice_requests = decision.get("dice_requests", [])
-                
                 # Extra safety check to ensure dice_requests is a list
                 if not isinstance(dice_requests, list):
                     print(f"[CombatResolver] 'dice_requests' is not a list, fixing")
                     dice_requests = []
-                    
             except Exception as e:
                 print(f"[CombatResolver] Error parsing LLM decision: {str(e)}")
                 # Create a very simple fallback
@@ -749,10 +769,12 @@ class CombatResolver(QObject):
                 ]
                 decision = {
                     "action": action,
+                    "target": "none",
+                    "reasoning": "No reasoning provided.",
                     "dice_requests": dice_requests,
                     "action_type": "action"
                 }
-            
+                
             # 4. Roll dice as requested
             dice_results = []
             try:
@@ -796,7 +818,7 @@ class CombatResolver(QObject):
                 # Include aura updates in the resolution context
                 resolution_prompt = self._create_resolution_prompt(
                     combatants, active_idx, action, dice_results, round_num)
-                    
+                
                 print(f"[CombatResolver] Requesting resolution from LLM for {active_combatant.get('name', 'Unknown')}")
                 resolution_response = self.llm_service.generate_completion(
                     model=model_id,
@@ -806,6 +828,17 @@ class CombatResolver(QObject):
                 )
                 print(f"[CombatResolver] Received LLM resolution for {active_combatant.get('name', 'Unknown')}")
                 print(f"[CombatResolver] Raw resolution response: {resolution_response!r}")
+                # --- FIX: Ensure resolution_response is a dict ---
+                import json
+                if isinstance(resolution_response, str):
+                    try:
+                        parsed = _json.loads(resolution_response)
+                        if isinstance(parsed, dict):
+                            resolution_response = parsed
+                    except Exception as e:
+                        print(f"[CombatResolver] Failed to parse resolution_response as JSON: {e}")
+                else:
+                    resolution = resolution_response
             except Exception as e:
                 print(f"[CombatResolver] Error getting LLM resolution: {str(e)}")
                 # Create a minimal valid result instead of returning None
@@ -815,7 +848,6 @@ class CombatResolver(QObject):
                     "updates": [],
                     "dice": dice_results
                 }
-                
             # 6. Parse the resolution 
             try:
                 # Parse the LLM's resolution 
@@ -838,16 +870,16 @@ class CombatResolver(QObject):
                     json_str = json_match.group(0)
                     
                     try:
-                        resolution = json.loads(json_str)
-                    except json.JSONDecodeError as e:
+                        resolution = _json.loads(json_str)
+                    except _json.JSONDecodeError as e:
                         print(f"[CombatResolver] JSON decode error in resolution: {e}")
                         # Try to clean up the JSON string further
                         cleaned_json = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas
                         cleaned_json = re.sub(r',\s*]', ']', cleaned_json)  # Remove trailing commas in arrays
                         
                         try:
-                            resolution = json.loads(cleaned_json)
-                        except json.JSONDecodeError:
+                            resolution = _json.loads(cleaned_json)
+                        except _json.JSONDecodeError:
                             print(f"[CombatResolver] Failed to parse JSON resolution even after cleanup")
                             resolution = {
                                 "narrative": "The action resolves with technical difficulties.",
@@ -1430,10 +1462,8 @@ class CombatResolver(QObject):
         if available_recharge_abilities:
             prompt += f"IMPORTANT: You have {len(available_recharge_abilities)} recharged special abilities available now! Consider using them!\n\n"
         
-        prompt += "Reply with a single action in this format:\n"
-        prompt += "ACTION: [action name]\n"
-        prompt += "TARGET: [target name or 'none' if no target]\n"
-        prompt += "REASONING: [brief tactical reasoning for this choice]\n"
+        prompt += "Reply with a single JSON object in this format:\n"
+        prompt += '{\n  "action": "[action name]",\n  "target": "[target name or none]",\n  "reasoning": "[brief tactical reasoning for this choice]"\n}\n'
         
         return prompt
 
@@ -1556,7 +1586,7 @@ Return ONLY the JSON object with no other text.
             json_match = re.search(r'\{[\s\S]*\}', response)
             if json_match:
                 json_str = json_match.group(0)
-                result = json.loads(json_str)
+                result = _json.loads(json_str)
                 callback(result, None)
             else:
                 callback(None, f"Could not find JSON in LLM response: {response}")
