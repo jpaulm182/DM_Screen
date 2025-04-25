@@ -105,7 +105,7 @@ class ImprovedCombatResolver(QObject):
         Args:
             state: Enhanced combat state with initiative information
             dice_roller: Function to roll dice
-            update_ui_callback: Function to update the UI between turns
+            update_ui_callback: Function to update the UI
         """
         import time
         
@@ -954,6 +954,21 @@ class ImprovedCombatResolver(QObject):
         
         # Update the combat state with validated combatants
         state_copy["combatants"] = combatants
+        
+        # Initialize spell slot tracking for monsters by parsing their Spellcasting trait
+        for combatant in state_copy["combatants"]:
+            if isinstance(combatant, dict) and combatant.get("type", "").lower() == "monster":
+                for trait in combatant.get("traits", []):
+                    if isinstance(trait, dict) and trait.get("name", "").lower() == "spellcasting":
+                        desc = trait.get("description", "")
+                        # Extract patterns like '1st level (4 slots)'
+                        slots_found = re.findall(r"(\d+)(?:st|nd|rd|th)[ -]level\s*\((\d+)\s*slots?\)", desc, flags=re.IGNORECASE)
+                        if slots_found:
+                            slot_dict = {int(lvl): int(cnt) for lvl, cnt in slots_found}
+                            combatant["spell_slots_max"] = slot_dict.copy()
+                            combatant["spell_slots"] = slot_dict.copy()
+                        break
+
         return state_copy 
 
     def _create_decision_prompt(self, combatants, active_idx, round_num):
