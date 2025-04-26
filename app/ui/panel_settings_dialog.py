@@ -2,18 +2,22 @@
 """
 Dialog for configuring panel layout settings
 
-This dialog allows users to customize how panels are displayed and organized.
+This dialog allows users to customize how panels are displayed and organized,
+and configure other application settings like the preferred LLM.
 """
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, 
     QCheckBox, QSpinBox, QPushButton, QGroupBox, QFormLayout,
-    QSlider
+    QSlider, QComboBox
 )
 from PySide6.QtCore import Qt
 
+# Import necessary LLM components
+from app.core.llm_service import ModelInfo, ModelProvider 
+
 class PanelSettingsDialog(QDialog):
-    """Dialog for configuring panel layout settings"""
+    """Dialog for configuring panel layout and other application settings"""
     
     def __init__(self, parent=None, app_state=None):
         """Initialize the panel settings dialog
@@ -26,9 +30,9 @@ class PanelSettingsDialog(QDialog):
         
         self.app_state = app_state
         
-        self.setWindowTitle("Panel Display Settings")
+        self.setWindowTitle("Application Settings")
         self.setMinimumWidth(450)
-        self.setMinimumHeight(400)
+        self.setMinimumHeight(500)
         
         self._setup_ui()
         self._load_settings()
@@ -121,7 +125,32 @@ class PanelSettingsDialog(QDialog):
         
         layout.addWidget(size_group)
         
+        # LLM Settings Group
+        llm_group = QGroupBox("LLM Settings")
+        llm_layout = QFormLayout(llm_group)
+
+        self.llm_preference_combo = QComboBox()
+        
+        # Populate with available OpenAI models
+        if self.app_state and self.app_state.llm_service:
+            all_models = self.app_state.llm_service.get_available_models()
+            openai_models = [m for m in all_models if ModelInfo.get_provider_for_model(m['id']) == ModelProvider.OPENAI]
+            
+            # Add default/automatic option
+            self.llm_preference_combo.addItem("Automatic (Prefer Mini)", None) 
+            
+            # Add specific OpenAI models
+            for model in openai_models:
+                 # Only add the two models we care about for this toggle
+                if model['id'] in [ModelInfo.OPENAI_GPT4O_MINI, ModelInfo.OPENAI_GPT4O]:
+                    self.llm_preference_combo.addItem(model['name'], model['id'])
+
+        llm_layout.addRow("Preferred LLM:", self.llm_preference_combo)
+        layout.addWidget(llm_group)
+        
         # Buttons
+        layout.addStretch(1)
+
         button_layout = QHBoxLayout()
         
         self.reset_button = QPushButton("Reset to Defaults")
@@ -171,6 +200,15 @@ class PanelSettingsDialog(QDialog):
         self.panel_border_intensity.setValue(
             self.app_state.get_panel_layout_setting("panel_border_intensity", 3)
         )
+
+        # Load LLM preference
+        preferred_model_id = self.app_state.get_setting("preferred_llm_model", None)
+        index = self.llm_preference_combo.findData(preferred_model_id)
+        if index != -1:
+            self.llm_preference_combo.setCurrentIndex(index)
+        else:
+             # Default to "Automatic" if preference not set or not found
+            self.llm_preference_combo.setCurrentIndex(0)
     
     def _save_settings(self):
         """Save settings to app_state"""
@@ -203,12 +241,16 @@ class PanelSettingsDialog(QDialog):
         self.app_state.update_panel_layout_setting(
             "panel_border_intensity", self.panel_border_intensity.value()
         )
+
+        # Save LLM preference
+        selected_model_id = self.llm_preference_combo.currentData()
+        self.app_state.set_setting("preferred_llm_model", selected_model_id)
         
         self.accept()
     
     def _reset_to_defaults(self):
         """Reset settings to defaults"""
-        # Reset to default values
+        # Reset panel layout settings
         self.tab_threshold_slider.setValue(4)
         self.always_tab_reference.setChecked(True)
         self.always_tab_campaign.setChecked(True)
@@ -216,4 +258,8 @@ class PanelSettingsDialog(QDialog):
         self.min_panel_width.setValue(350)
         self.min_panel_height.setValue(250)
         self.use_percentage_sizing.setChecked(True)
-        self.panel_border_intensity.setValue(3) 
+        self.panel_border_intensity.setValue(3)
+
+        # Reset LLM preference
+        # Set to "Automatic" (index 0)
+        self.llm_preference_combo.setCurrentIndex(0) 

@@ -1,8 +1,8 @@
 # Main dependencies
-PySide6>=6.3.0
+PySide6>=6.6.0
 Pillow>=10.0.0  # For image handling
 python-dotenv>=1.0.0  # For environment variables
 pytest>=7.0.0
-openai>=1.3.0  # For OpenAI GPT-4.1 integration
-anthropic>=0.8.0  # For Anthropic Claude integration
+openai>=1.3.0  # For OpenAI GPT-4.1 Mini integration (preferred)
+anthropic>=0.20.0 # For Anthropic Claude integration
 psutil>=5.9.0  # For memory monitoring in debug mode

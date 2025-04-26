@@ -2,7 +2,7 @@
 """
 LLM Service module for DM Screen
 
-Provides API integrations for OpenAI GPT-4.1 and Anthropic Claude models.
+Provides API integrations for OpenAI GPT-4.1-mini (preferred) and Anthropic Claude models.
 """
 
 import os
@@ -106,7 +106,7 @@ class LLMService(QObject):
     Service for interacting with LLM APIs
     
     Handles authentication, API calls, and response processing for
-    OpenAI GPT-4.1 and Anthropic Claude models.
+    OpenAI GPT-4.1-mini (preferred) and Anthropic Claude models.
     """
     
     # Signals
@@ -346,7 +346,7 @@ class LLMService(QObject):
         
         Args:
             prompt (str): The prompt text
-            model (str, optional): Model to use. If None, uses the default model.
+            model (str, optional): Model to use. If None, uses the default model logic.
             system_prompt (str, optional): System prompt to use.
             temperature (float, optional): Temperature for generation.
             max_tokens (int, optional): Maximum tokens to generate.
@@ -354,55 +354,50 @@ class LLMService(QObject):
         Returns:
             str: Generated text
         """
-        # Use the default model if none specified
-        if model is None:
+        # If a specific model is requested, use it
+        if model:
+            self.logger.info(f"Using explicitly requested model: {model}")
+            target_model = model
+        else:
+            # Check for user preference
+            preferred_model = self.app_state.get_setting("preferred_llm_model")
             available_models = self.get_available_models()
-            if not available_models:
-                raise ValueError("No LLM models available. Please set up API keys.")
-            
-            # Prefer OpenAI GPT-4.1 Mini if available, otherwise use the first available model
-            default_model = None
-            for m in available_models:
-                # Prefer GPT-4.1 Mini as the default
-                if m["id"] == ModelInfo.OPENAI_GPT4O_MINI:
-                    default_model = m["id"]
-                    break
-                # Fallbacks for Anthropic or other OpenAI models
-                elif m["id"] == ModelInfo.ANTHROPIC_CLAUDE_3_SONNET:
-                    default_model = m["id"]
-                    break
-                elif m["id"] == ModelInfo.OPENAI_GPT4O:
-                    default_model = m["id"]
-                    break
-            
-            # If no preferred model found, use the first available
-            if default_model is None and available_models:
-                default_model = available_models[0]["id"]
-            
-            # Set the model to the selected default
-            model = default_model
-        
+            available_model_ids = [m["id"] for m in available_models]
+
+            if preferred_model and preferred_model in available_model_ids:
+                self.logger.info(f"Using preferred model from settings: {preferred_model}")
+                target_model = preferred_model
+            else:
+                # Default logic: Prefer Mini, then fallback
+                if not available_models:
+                    self.logger.error("No LLM models available. Please set up API keys.")
+                    raise ValueError("No LLM models available. Please set up API keys.")
+                
+                # Prefer OpenAI GPT-4.1 Mini if available
+                if ModelInfo.OPENAI_GPT4O_MINI in available_model_ids:
+                    target_model = ModelInfo.OPENAI_GPT4O_MINI
+                    self.logger.info(f"Using default model: {target_model}")
+                # Fallback to GPT-4.1 if Mini isn't available but GPT-4.1 is
+                elif ModelInfo.OPENAI_GPT4O in available_model_ids:
+                     target_model = ModelInfo.OPENAI_GPT4O
+                     self.logger.info(f"Using fallback default model (GPT-4.1): {target_model}")
+                # Fallback to Anthropic Sonnet if available
+                elif ModelInfo.ANTHROPIC_CLAUDE_3_SONNET in available_model_ids:
+                     target_model = ModelInfo.ANTHROPIC_CLAUDE_3_SONNET
+                     self.logger.info(f"Using fallback default model (Sonnet): {target_model}")
+                # Finally, use the first available model
+                else:
+                     target_model = available_model_ids[0]
+                     self.logger.info(f"Using first available model as default: {target_model}")
+
         # Create a simple message array with the prompt as user input
         messages = [{"role": "user", "content": prompt}]
         
-        # Generate the completion
-        return self.generate_completion(model, messages, system_prompt, temperature, max_tokens)
+        # Generate the completion using the determined target model
+        return self.generate_completion(target_model, messages, system_prompt, temperature, max_tokens)
 
     def generate_image(self, prompt, output_path=None, monster_id=None, size="1024x1024"):
-        """
-        Generate an image using OpenAI DALL-E through GPT-4.1
-        
-        Args:
-            prompt (str): The image generation prompt
-            output_path (str or Path, optional): Path to save the image to.
-                If None, a default path in the monster_images directory will be used.
-            monster_id (int, optional): ID of the monster for naming the file.
-            size (str, optional): Image size. One of "1024x1024", "1024x1792", "1792x1024".
-                Default: "1024x1024".
-                
-        Returns:
-            str: Path to the saved image file, or None if generation failed
-        """
+        """Generate an image using OpenAI DALL-E (potentially via GPT-4.1-Mini interface)"""
         if not self.openai_client:
             self.logger.error("OpenAI client not initialized. Please set an API key.")
             return None
