@@ -361,6 +361,12 @@ class CombatResolver(QObject):
                                             status_updated_by_llm = True
                                             print(f"[CombatResolver] Updated {target_name}'s status to '{c['status']}' from LLM")
 
+                                        # --- BEGIN STATUS-CONDITIONS SYNC PATCH ---
+                                        # Always synchronize conditions list to status string for UI
+                                        if isinstance(c.get("conditions", None), list):
+                                            c["status"] = ", ".join(c["conditions"]) if c["conditions"] else ""
+                                        # --- END STATUS-CONDITIONS SYNC PATCH ---
+
                                         # If HP changed to 0 or below AND status wasn't explicitly set by LLM, apply default status
                                         if hp_changed and c["hp"] <= 0 and not status_updated_by_llm:
                                             if c.get("type", "").lower() == "monster":
@@ -816,192 +822,20 @@ class CombatResolver(QObject):
                             parsed_decision = json.loads(cleaned)
                             print(f"[CombatResolver] Successfully parsed JSON after standard cleanup")
                             decision_response = parsed_decision
-                        except Exception as e:
-                            print(f"[CombatResolver] Failed to parse JSON after standard cleanup: {e}")
-                                
-                            # 4. Try to find JSON object pattern anywhere in the string
-                            json_match = re.search(r'\{[\s\S]*\}', cleaned)
-                            if json_match:
-                                json_str = json_match.group(0)
-                                print(f"[CombatResolver] Found JSON-like pattern: {json_str[:100]}...")
-                                try:
-                                    parsed_decision = json.loads(json_str)
-                                    print(f"[CombatResolver] Successfully parsed JSON from pattern match")
-                                    decision_response = parsed_decision
-                                except Exception as e:
-                                    print(f"[CombatResolver] Error parsing JSON pattern: {e}")
-                
-                    # If still a string after all attempts, log this clearly
-                    if isinstance(decision_response, str):
-                        print(f"[CombatResolver] WARNING: All JSON parsing attempts failed. Using string as fallback.")
-                    else:
-                        print(f"[CombatResolver] Successfully converted LLM decision to dictionary")
-                    
-                    # ---END FIX ---
-            except Exception as e:
-                import traceback
-                print(f"[CombatResolver] Error getting LLM decision: {str(e)}")
-                traceback.print_exc()
-                
-                # Create a minimal valid result instead of returning None
-                result = {
-                    "action": "The combatant takes a defensive stance.",
-                    "narrative": f"The {active_combatant.get('name', 'combatant')} acted, but a technical issue prevented recording the outcome.",
-                        "updates": [],
-                        "dice": []
-                    }
-                    
-                    # Try to salvage some outcome based on the dice that were rolled
-                if 'dice_results' in locals() and 'target' in locals() and dice_results and target and target.lower() != "none":
-                        damage_dice = [d for d in dice_results if "damage" in d.get("purpose", "").lower()]
-                        attack_rolls = [d for d in dice_results if "attack" in d.get("purpose", "").lower()]
-                        
-                        if damage_dice:
-                            damage_amount = int(damage_dice[0].get("result", 0))
-                                # If we have attack rolls and a target with AC, check if it hit
-                            if attack_rolls:
-                                try:
-                                    attack_value = int(attack_rolls[0].get("result", 0))
-                                    target_obj = next((c for c in combatants if c.get("name") == target), None)
-                                    if target_obj:
-                                        target_ac = target_obj.get("ac", 15)
-                                        if attack_value >= target_ac:
-                                            # Attack hit, apply damage
-                                            current_hp = target_obj.get("hp", 0)
-                                            new_hp = max(0, current_hp - damage_amount)
-                                            print(f"[CombatResolver] Salvaging outcome: {attack_value} hits AC {target_ac}, applying {damage_amount} damage")
-                                            result["updates"] = [{"name": target, "hp": new_hp}]
-                                            result["narrative"] = f"{active_combatant.get('name')} attacks {target} and hits ({attack_value} vs AC {target_ac}), dealing {damage_amount} damage."
-                                        else:
-                                            # Attack missed
-                                            print(f"[CombatResolver] Salvaging outcome: {attack_value} misses AC {target_ac}")
-                                            result["narrative"] = f"{active_combatant.get('name')} attacks {target} but misses ({attack_value} vs AC {target_ac})."
-                                except (ValueError, TypeError):
-                                    print(f"[CombatResolver] Could not parse attack roll when salvaging outcome")
-                        if damage_dice:
-                            try:
-                                damage_amount = int(damage_dice[0].get("result", 0))
-                                # If we have attack rolls and a target with AC, check if it hit
-                                if attack_rolls:
-                                    try:
-                                        attack_value = int(attack_rolls[0].get("result", 0))
-                                        target_obj = next((c for c in combatants if c.get("name") == target), None)
-                                        if target_obj:
-                                            target_ac = target_obj.get("ac", 15)
-                                            if attack_value >= target_ac:
-                                                # Attack hit, apply damage
-                                                current_hp = target_obj.get("hp", 0)
-                                                new_hp = max(0, current_hp - damage_amount)
-                                                print(f"[CombatResolver] Salvaging outcome in fallback: {attack_value} hits AC {target_ac}, applying {damage_amount} damage")
-                                                result["updates"] = [{"name": target, "hp": new_hp}]
-                                                result["narrative"] = f"{active_combatant.get('name')} attacks {target} and hits ({attack_value} vs AC {target_ac}), dealing {damage_amount} damage."
-                                            else:
-                                                # Attack missed
-                                                print(f"[CombatResolver] Salvaging outcome in fallback: {attack_value} misses AC {target_ac}")
-                                                result["narrative"] = f"{active_combatant.get('name')} attacks {target} but misses ({attack_value} vs AC {target_ac})."
-                                    except (ValueError, TypeError):
-                                        print(f"[CombatResolver] Could not parse attack roll when salvaging outcome in fallback")
-                            except (ValueError, TypeError):
-                                print(f"[CombatResolver] Could not parse damage roll when salvaging outcome in fallback")
-                
-                print(f"[CombatResolver] Returning salvaged result: {result}")
-                return result
-            except Exception as e:
-                print(f"[CombatResolver] Error getting LLM decision: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                
-                # Create a minimal valid result instead of returning None
-                result = {
-                    "action": "The combatant takes a defensive stance.",
-                    "narrative": f"The {active_combatant.get('name', 'combatant')} acted, but a technical issue prevented recording the outcome.",
-                    "updates": [],
-                    "dice": []
-                }
-                
-                # Try to salvage some outcome based on the dice that were rolled
-                if 'dice_results' in locals() and 'target' in locals() and dice_results and target and target.lower() != "none":
-                    damage_dice = [d for d in dice_results if "damage" in d.get("purpose", "").lower()]
-                    attack_rolls = [d for d in dice_results if "attack" in d.get("purpose", "").lower()]
-                    
-                    if damage_dice:
-                        try:
-                            damage_amount = int(damage_dice[0].get("result", 0))
-                            # If we have attack rolls and a target with AC, check if it hit
-                            if attack_rolls:
-                                try:
-                                    attack_value = int(attack_rolls[0].get("result", 0))
-                                    target_obj = next((c for c in combatants if c.get("name") == target), None)
-                                    if target_obj:
-                                        target_ac = target_obj.get("ac", 15)
-                                        if attack_value >= target_ac:
-                                            # Attack hit, apply damage
-                                            current_hp = target_obj.get("hp", 0)
-                                            new_hp = max(0, current_hp - damage_amount)
-                                            print(f"[CombatResolver] Salvaging outcome in fallback: {attack_value} hits AC {target_ac}, applying {damage_amount} damage")
-                                            result["updates"] = [{"name": target, "hp": new_hp}]
-                                            result["narrative"] = f"{active_combatant.get('name')} attacks {target} and hits ({attack_value} vs AC {target_ac}), dealing {damage_amount} damage."
-                                        else:
-                                            # Attack missed
-                                            print(f"[CombatResolver] Salvaging outcome in fallback: {attack_value} misses AC {target_ac}")
-                                            result["narrative"] = f"{active_combatant.get('name')} attacks {target} but misses ({attack_value} vs AC {target_ac})."
-                                except (ValueError, TypeError):
-                                    print(f"[CombatResolver] Could not parse attack roll when salvaging outcome in fallback")
-                        except (ValueError, TypeError):
-                            print(f"[CombatResolver] Could not parse damage roll when salvaging outcome in fallback")
-                
-                print(f"[CombatResolver] Returning salvaged fallback result: {result}")
-                return result
-            # 6. Parse the resolution 
-            try:
-                # Parse the LLM's resolution 
-                print(f"[CombatResolver] About to parse LLM resolution: {decision_response!r}")
-                resolution_text = decision_response
-                # If already a dict, use it directly
-                if isinstance(resolution_text, dict):
-                    resolution = resolution_text
-                    print(f"[CombatResolver] Using parsed LLM resolution as dict: {resolution}")
-                else:
-                    # One more attempt to handle string responses robustly
-                    print(f"[CombatResolver] Last attempt to parse string resolution: {resolution_text[:150]}...")
-                    
-                    # Try to extract JSON object
-                    json_match = re.search(r'\{[\s\S]*\}', resolution_text)
-                    if not json_match:
-                        print(f"[CombatResolver] Could not find JSON in LLM resolution response")
-                        # Create a minimal valid resolution with the full text as description
-                        resolution = {
-                            "description": resolution_text,
-                            "narrative": resolution_text,
-                            "updates": []
-                        }
-                        
-                        # Try to extract damage information from plain text
-                        damage_match = re.search(r'(\d+)\s*damage', resolution_text)
-                        if damage_match and 'target' in locals() and target and target.lower() != "none":
-                            damage_amount = int(damage_match.group(1))
-                            # Create or update damage value for target
-                            resolution["damage_dealt"] = {target: damage_amount}
-                            print(f"[CombatResolver] Extracted damage amount from text: {damage_amount}")
-                    else:
-                        json_str = json_match.group(0)
-                        print(f"[CombatResolver] Found JSON string: {json_str[:100]}...")
-                        try:
-                            resolution = json.loads(json_str)
-                            print(f"[CombatResolver] Parsed LLM resolution as JSON (from string): {resolution}")
                         except json.JSONDecodeError as e:  # Use json instead of _json
                             print(f"[CombatResolver] JSON decode error in resolution: {e}")
                             # Try to clean up the JSON string further
-                            cleaned_json = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas
+                            cleaned_json = re.sub(r',\s*}', '}', cleaned)
                             cleaned_json = re.sub(r',\s*]', ']', cleaned_json)  # Remove trailing commas in arrays
                             print(f"[CombatResolver] Cleaned JSON: {cleaned_json[:100]}...")
                             try:
-                                resolution = json.loads(cleaned_json)  # Use json instead of _json
-                                print(f"[CombatResolver] Parsed cleaned LLM resolution as JSON: {resolution}")
+                                parsed_decision = json.loads(cleaned_json)  # Use json instead of _json
+                                print(f"[CombatResolver] Parsed cleaned LLM resolution as JSON: {parsed_decision}")
+                                decision_response = parsed_decision
                             except json.JSONDecodeError as e2:  # Use json instead of _json
                                 print(f"[CombatResolver] Failed to parse JSON resolution even after cleanup: {e2}")
                                 # Use a simpler approach - construct a minimal resolution with description field
-                                resolution = {
+                                decision_response = {
                                     "description": "The action resolves with technical difficulties.",
                                     "narrative": "The action resolves with technical difficulties.",
                                     "updates": []
@@ -1023,16 +857,16 @@ class CombatResolver(QObject):
                                         try:
                                             damage_amount = int(damage_dice[0].get("result", 0))
                                             # Create or update damage value for target
-                                            resolution["damage_dealt"] = {potential_target: damage_amount}
+                                            decision_response["damage_dealt"] = {potential_target: damage_amount}
                                             print(f"[CombatResolver] Created damage_dealt with {damage_amount} to {potential_target}")
                                         except (ValueError, TypeError):
                                             print(f"[CombatResolver] Could not extract damage value from dice")
                 # --- ENSURE resolution is a dict ---
-                if not isinstance(resolution, dict):
+                if not isinstance(decision_response, dict):
                     print(f"[CombatResolver] LLM resolution is not a dict, using fallback.")
-                    resolution = {
-                        "description": str(resolution),
-                        "narrative": str(resolution),
+                    decision_response = {
+                        "description": str(decision_response),
+                        "narrative": str(decision_response),
                         "updates": []
                     }
 
@@ -1043,7 +877,7 @@ class CombatResolver(QObject):
                 # --- DICE ROLLING PHASE ---
                 dice_results = []
                 # Check for dice_requests in the LLM response
-                dice_requests = resolution.get('dice_requests', [])
+                dice_requests = decision_response.get('dice_requests', [])
                 for req in dice_requests:
                     expr = req.get('expression')
                     purpose = req.get('purpose', '')
@@ -1073,8 +907,8 @@ class CombatResolver(QObject):
                     narrative_text = None
                     # Prefer 'reasoning', then 'description', then 'narrative', then 'action', then 'result' for the combat log
                     for field in ["reasoning", "description", "narrative", "action", "result"]:
-                        if field in resolution and resolution[field]:
-                            narrative_text = resolution[field]
+                        if field in decision_response and decision_response[field]:
+                            narrative_text = decision_response[field]
                             print(f"[CombatResolver] Found narrative in field '{field}': {narrative_text[:50]}...")
                             break
                     # If no appropriate field was found, use a default
@@ -1083,7 +917,7 @@ class CombatResolver(QObject):
                         print(f"[CombatResolver] Using fallback narrative: {narrative_text}")
 
                     # Auto-detect targets if no damage_dealt is specified but there's a narrative
-                    if (not resolution.get("damage_dealt") or len(resolution.get("damage_dealt", {})) == 0) and narrative_text:
+                    if (not decision_response.get("damage_dealt") or len(decision_response.get("damage_dealt", {})) == 0) and narrative_text:
                         print(f"[CombatResolver] No damage specified in resolution, attempting to extract from narrative")
                         # Find potential targets mentioned in the narrative
                         potential_targets = []
@@ -1094,8 +928,8 @@ class CombatResolver(QObject):
                         if potential_targets:
                             print(f"[CombatResolver] Found potential targets in narrative: {potential_targets}")
                             # Add the first found target to damage_dealt
-                            if "damage_dealt" not in resolution:
-                                resolution["damage_dealt"] = {}
+                            if "damage_dealt" not in decision_response:
+                                decision_response["damage_dealt"] = {}
                             
                             # Check if attack/damage dice were rolled
                             damage_dice = [d for d in dice_results if "damage" in d.get("purpose", "").lower()]
@@ -1103,13 +937,13 @@ class CombatResolver(QObject):
                                 try:
                                     damage_value = int(damage_dice[0].get("result", 0))
                                     # Create or update damage value for target
-                                    resolution["damage_dealt"][potential_targets[0]] = damage_value
+                                    decision_response["damage_dealt"][potential_targets[0]] = damage_value
                                     print(f"[CombatResolver] Auto-assigned {damage_value} damage to {potential_targets[0]}")
                                 except (ValueError, TypeError):
                                     print(f"[CombatResolver] Could not extract damage value from dice")
                     
                     # If there are damage dice but no damage_dealt section at all, create one
-                    if not resolution.get("damage_dealt") and 'dice_results' in locals() and dice_results:
+                    if not decision_response.get("damage_dealt") and 'dice_results' in locals() and dice_results:
                         damage_dice = [d for d in dice_results if "damage" in d.get("purpose", "").lower()]
                         if damage_dice:
                             # Try to find the most likely target
@@ -1117,7 +951,7 @@ class CombatResolver(QObject):
                                 # Target was specified in the decision
                                 try:
                                     damage_value = int(damage_dice[0].get("result", 0))
-                                    resolution["damage_dealt"] = {target: damage_value}
+                                    decision_response["damage_dealt"] = {target: damage_value}
                                     print(f"[CombatResolver] Created damage_dealt with {damage_value} to {target}")
                                 except (ValueError, TypeError):
                                     print(f"[CombatResolver] Could not extract damage value from dice")
@@ -1128,13 +962,13 @@ class CombatResolver(QObject):
                                 if enemies:
                                     try:
                                         damage_value = int(damage_dice[0].get("result", 0))
-                                        resolution["damage_dealt"] = {enemies[0]: damage_value}
+                                        decision_response["damage_dealt"] = {enemies[0]: damage_value}
                                         print(f"[CombatResolver] Created damage_dealt with {damage_value} to {enemies[0]}")
                                     except (ValueError, TypeError):
                                         print(f"[CombatResolver] Could not extract damage value from dice")
 
                     # Handle damage dealt (reduce HP for targets)
-                    for target_name, dmg in resolution.get("damage_dealt", {}).items():
+                    for target_name, dmg in decision_response.get("damage_dealt", {}).items():
                         target = next((c for c in combatants if c.get("name") == target_name), None)
                         if not target:
                             print(f"[CombatResolver] Target '{target_name}' not found for damage.")
@@ -1144,7 +978,7 @@ class CombatResolver(QObject):
                         save_succeeded = False
                         save_required = False
                         final_dmg = 0
-                        action_name = resolution.get("action", "Unknown Action")
+                        action_name = decision_response.get("action", "Unknown Action")
                         
                         # Find the action definition for the active combatant
                         action_details = None
@@ -1295,14 +1129,14 @@ class CombatResolver(QObject):
                                 existing_update["hp"] = new_hp # Update existing entry
                             else:
                                 updates.append({"name": target_name, "hp": new_hp}) # Add new entry
-                            print(f"[CombatResolver] Applying {final_dmg} damage to {target_name}: HP {target.get('hp', 0)} -> {new_hp}")
+                            print(f"[CombatResolver] Applying {final_dmg} damage to {target_name}: HP {target.get('hp', 0)} → {new_hp}")
                         else:
                             print(f"[CombatResolver] No damage applied to {target_name}.")
 
                         # --- End REVISED Logic ---
 
                     # Handle healing (increase HP up to max)
-                    for target_name, heal in resolution.get("healing", {}).items():
+                    for target_name, heal in decision_response.get("healing", {}).items():
                         if not isinstance(heal, (int, float)):
                             try:
                                 # Attempt to convert to int
@@ -1331,7 +1165,7 @@ class CombatResolver(QObject):
                             print(f"[CombatResolver] Applying {heal} healing to {target_name}: HP {target.get('hp', 0)} → {new_hp}")
                     
                     # Apply conditions if specified
-                    for target_name, conditions in resolution.get("conditions_applied", {}).items():
+                    for target_name, conditions in decision_response.get("conditions_applied", {}).items():
                         target = next((c for c in combatants if c.get("name") == target_name), None)
                         if target and isinstance(conditions, list):
                             if "conditions" not in target:
@@ -1348,7 +1182,7 @@ class CombatResolver(QObject):
                             updates.append(condition_update)
                             
                     # Remove conditions if specified
-                    for target_name, conditions in resolution.get("conditions_removed", {}).items():
+                    for target_name, conditions in decision_response.get("conditions_removed", {}).items():
                         target = next((c for c in combatants if c.get("name") == target_name), None)
                         if target and "conditions" in target and isinstance(conditions, list):
                             # Remove each condition
@@ -1367,12 +1201,12 @@ class CombatResolver(QObject):
                     traceback.print_exc()
 
                 # Fall back to any explicit updates provided by the LLM
-                if not updates and isinstance(resolution.get("updates"), list):
-                    updates = resolution["updates"]
+                if not updates and isinstance(decision_response.get("updates"), list):
+                    updates = decision_response["updates"]
                     print(f"[CombatResolver] Using explicit updates from resolution: {updates}")
 
                 turn_result = {
-                    "action": resolution.get("action", "Unknown action"),
+                    "action": decision_response.get("action", "Unknown action"),
                     "narrative": narrative_text,
                     "dice": dice_results,
                     "updates": updates,
@@ -1387,7 +1221,7 @@ class CombatResolver(QObject):
                 
                 # Even in case of error, return a valid turn result
                 fallback_result = {
-                    "action": resolution.get("action", "Unknown action"),
+                    "action": decision_response.get("action", "Unknown action"),
                     "narrative": f"The {active_combatant.get('name', 'combatant')} acted, but a technical issue prevented recording the outcome.",
                     "dice": dice_results,
                     "updates": []
@@ -1811,6 +1645,8 @@ class CombatResolver(QObject):
                         if condition:
                             if "conditions" not in active_combatant:
                                 active_combatant["conditions"] = {}
+                            
+                            # Add condition
                             active_combatant["conditions"][condition] = {
                                 "source": f"{c.get('name', 'Unknown')}'s {aura_name}",
                                 "duration": effect.get("duration", 1)

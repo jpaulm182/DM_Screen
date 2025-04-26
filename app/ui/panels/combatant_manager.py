@@ -1,4 +1,5 @@
-# combatant_manager.py
+from .combat_utils import get_attr, extract_dice_formula, roll_dice
+from app.ui.panels.combat_utils import get_attr, extract_dice_formula, roll_dice# combatant_manager.py
 """
 Functions for managing combatant data: add, update, verify, etc.
 """

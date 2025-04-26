@@ -1040,7 +1040,24 @@ The system will handle the mechanics based on the structure you provide. **Follo
         
         # Add the saving throw instructions to the prompt
         prompt += saving_throw_instructions
-        
+
+        # --- ENHANCED MONSTER AI INSTRUCTIONS ---
+        low_hp_behavior = """
+--- MONSTER LOW HP BEHAVIOR ---
+If you are a monster and your HP is low (below 25% of max HP), you must either:
+- Make a final aggressive attack,
+- Attempt to flee (describe escape attempt and remove yourself from combat if successful),
+- Or surrender (describe surrender and remove yourself from combat if accepted).
+Do NOT endlessly defend or take only defensive actions. Do NOT stall combat.
+"""
+        prompt += low_hp_behavior
+
+        legendary_action_instructions = """
+--- LEGENDARY ACTIONS ---
+If you are a legendary creature (such as a dragon), you MUST use your legendary actions at the end of other creatures' turns, as per D&D 5e rules. Always list and describe the legendary actions you use in your response. Do not skip legendary actions if you have any left.
+"""
+        prompt += legendary_action_instructions
+
         return prompt 
 
     @staticmethod
@@ -1339,12 +1356,17 @@ The system will handle the mechanics based on the structure you provide. **Follo
                 old_hp = target.current_hp
                 target.current_hp = min(target.current_hp + healing, target.max_hp)
 
-                # Create update message
-                update = {
-                    "type": "log",
-                    "message": f"{attacker.name} heals {target.name} for {healing} HP. "
-                               f"HP: {old_hp} → {target.current_hp}/{target.max_hp}"
-                }
+                # Create hit message
+                message = (f"{attacker.name} heals {target.name} for {healing} HP. "
+                           f"HP: {old_hp} → {target.current_hp}/{target.max_hp}")
+
+                # Check if target died
+                if target.current_hp <= 0:
+                    message += f" {target.name} is defeated!"
+                    # Optionally set status here if needed
+                    target.status = "Dead" # Or "Unconscious" based on rules
+
+                update = {"type": "log", "message": message}
                 logging.debug(f"[AttackProc] Healing processed. Update: {update}") # Log return
                 return update
             else:
