@@ -2539,26 +2539,27 @@ class CombatTrackerPanel(BasePanel):
             combatant_type = type_item.text() if type_item else "unknown"
             
             # Get monster ID from name item if it's a monster
-            monster_id = None
+            # --- RENAME monster_id to instance_id for clarity and consistency --- 
+            instance_id = None
             if name_item:
                 # Get instance_id regardless of type (both monsters and characters need consistent IDs)
-                monster_id = name_item.data(Qt.UserRole + 2)
+                instance_id = name_item.data(Qt.UserRole + 2)
                 
-                if not monster_id:
+                if not instance_id:
                     # Generate a unique ID if none exists
                     import time
                     import hashlib
                     timestamp = int(time.time())
                     hash_base = f"{name}_{timestamp}_{row}"
-                    monster_id = hashlib.md5(hash_base.encode()).hexdigest()[:8]
+                    instance_id = hashlib.md5(hash_base.encode()).hexdigest()[:8]
                     # Store the ID back on the item for future reference
-                    name_item.setData(Qt.UserRole + 2, monster_id)
-                    print(f"[CombatTracker] Generated new instance ID {monster_id} for {name}")
+                    name_item.setData(Qt.UserRole + 2, instance_id)
+                    print(f"[CombatTracker] Generated new instance ID {instance_id} for {name}")
                 else:
-                    print(f"[CombatTracker] Using existing instance ID {monster_id} for {name}")
+                    print(f"[CombatTracker] Using existing instance ID {instance_id} for {name}")
             
             # Debug print current HP values
-            print(f"[CombatTracker] DEBUG: Table row {row}: {name} - HP: {hp}/{max_hp} {' (ID: ' + str(monster_id) + ')' if monster_id else ''}")
+            print(f"[CombatTracker] DEBUG: Table row {row}: {name} - HP: {hp}/{max_hp} {' (ID: ' + str(instance_id) + ')' if instance_id else ''}")
             
             # Create combatant dictionary
             combatant = {
@@ -2570,13 +2571,20 @@ class CombatTrackerPanel(BasePanel):
                 "status": status,
                 "concentration": concentration,
                 "type": combatant_type,
-                "instance_id": monster_id if monster_id else f"combatant_{row}"  # Ensure every combatant has a unique ID
+                "instance_id": instance_id if instance_id else f"combatant_{row}"  # Ensure every combatant has a unique ID
             }
             
             # Add more detailed information if available in the self.combatant_manager.combatants_by_id dictionary
-            if row in self.combatant_manager.combatants_by_id:
-                stored_combatant = self.combatant_manager.combatants_by_id[row]
-                
+            # --- Use instance_id for lookup, not row index --- 
+            stored_combatant = None
+            if instance_id and instance_id in self.combatant_manager.combatants_by_id: # USE CONSISTENT instance_id
+                 stored_combatant = self.combatant_manager.combatants_by_id[instance_id] # USE CONSISTENT instance_id
+                 logging.debug(f"Found stored data for instance ID {instance_id}")
+            # REMOVED Fallback to row index lookup to strictly enforce ID matching
+            # elif row in self.combatant_manager.combatants_by_id: 
+
+            if stored_combatant:
+                # ... (rest of the merging/tagging logic - ENSURE IT USES 'stored_combatant') ...
                 # First, ensure the stored combatant has the same instance ID (sync it)
                 if isinstance(stored_combatant, dict) and "instance_id" in combatant:
                     # Update the stored combatant's instance_id to match what's in the table
@@ -4302,7 +4310,8 @@ class CombatTrackerPanel(BasePanel):
 
             def _prompt_saving_throw(self):
                 """Prompt user for saving throw details and apply to selected combatants."""
-                selected_rows = sorted(list(set(index.row() for index in self.initiative_table.selectionModel().selectedRows())))
+                # Get selected rows first
+                selected_rows = sorted(list(set(index.row() for index in self.initiative_table.selectedIndexes())))
 
                 if not selected_rows:
                     QMessageBox.warning(self, "Selection Error", "Please select one or more combatants to apply the saving throw.")

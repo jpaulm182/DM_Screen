@@ -646,6 +646,20 @@ class CombatResolver(QObject):
             active_combatant = combatants[active_idx]
             print(f"[CombatResolver] Processing turn for {active_combatant.get('name', 'Unknown')} (round {round_num})")
             
+            # --- ADD DEBUG LOGGING --- 
+            try:
+                import json
+                print(f"[CombatResolver] DEBUG: START OF TURN DATA for {active_combatant.get('name')}:")
+                # Print relevant fields, especially actions/traits
+                debug_data = {
+                    k: v for k, v in active_combatant.items() 
+                    if k in ['name', 'type', 'hp', 'ac', 'actions', 'traits', 'instance_id']
+                }
+                print(json.dumps(debug_data, indent=2))
+            except Exception as log_e:
+                print(f"[CombatResolver] Error logging start-of-turn data: {log_e}")
+            # --- END DEBUG LOGGING ---
+            
             # Import ActionEconomyManager if needed
             from app.combat.action_economy import ActionEconomyManager
             
@@ -1023,8 +1037,8 @@ class CombatResolver(QObject):
                     }
 
                 # DEBUG: Print raw LLM output for troubleshooting
-                if 'raw_llm_output' in locals():
-                    print(f"[CombatResolver] RAW LLM OUTPUT (first 500 chars): {str(raw_llm_output)[:500]}")
+                if 'decision_response' in locals(): # Check for decision_response instead
+                    print(f"[CombatResolver] RAW LLM OUTPUT (first 500 chars): {str(decision_response)[:500]}") # Use decision_response
 
                 # --- DICE ROLLING PHASE ---
                 dice_results = []
