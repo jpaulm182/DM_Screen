@@ -1509,8 +1509,10 @@ class CombatResolver(QObject):
                         continue
                         
                     # Check for instance ID to ensure this is for the right monster
-                    action_instance_id = action.get("instance_id", "")
+                    # Use 'monster_instance_id' which is added during combat state gathering
+                    action_instance_id = action.get("monster_instance_id", "") 
                     if action_instance_id and action_instance_id != instance_id:
+                        print(f"[Prompt] Skipping action '{name}' (ID: {action_instance_id}) for combatant {active_combatant.get('name')}({instance_id})")
                         continue  # Skip actions belonging to different instances
                     
                     attack_bonus = action.get("attack_bonus", "")
@@ -1564,8 +1566,10 @@ class CombatResolver(QObject):
                         continue
                         
                     # Check for instance ID to ensure this is for the right monster
-                    ability_instance_id = ability.get("instance_id", "")
+                    # Use 'monster_instance_id' which is added during combat state gathering
+                    ability_instance_id = ability.get("monster_instance_id", "") 
                     if ability_instance_id and ability_instance_id != instance_id:
+                        print(f"[Prompt] Skipping ability '{name}' (ID: {ability_instance_id}) for combatant {active_combatant.get('name')}({instance_id})")
                         continue  # Skip abilities belonging to different instances
                     
                     prompt += f"- {name}{recharge_info}\n"
@@ -1581,8 +1585,10 @@ class CombatResolver(QObject):
                     desc = trait.get("description", "No description")
                     
                     # Check for instance ID to ensure this is for the right monster
-                    trait_instance_id = trait.get("instance_id", "")
+                    # Use 'monster_instance_id' which is added during combat state gathering
+                    trait_instance_id = trait.get("monster_instance_id", "") 
                     if trait_instance_id and trait_instance_id != instance_id:
+                        print(f"[Prompt] Skipping trait '{name}' (ID: {trait_instance_id}) for combatant {active_combatant.get('name')}({instance_id})")
                         continue  # Skip traits belonging to different instances
                     
                     prompt += f"- {name}\n"
