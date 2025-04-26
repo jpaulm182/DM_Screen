@@ -18,6 +18,8 @@ from app.core.initiative_integration import (
 import copy
 import logging
 import re
+import random
+import time
 from typing import Dict, List, Any, Optional
 
 # Import QObject and Signal for thread-safe communication
@@ -361,32 +363,339 @@ class ImprovedCombatResolver(QObject):
                     
                     turn_result["dice"] = dice_rolls
                 
-                # Process target updates
-                if "target" in decision:
+                # Process saving throws for area effects
+                if "area_effect" in decision and decision.get("area_effect", False):
+                    save_dc = decision.get("save_dc", 10)
+                    save_ability = decision.get("save_ability", "dexterity").lower()
+                    damage = int(decision.get("damage", 0))
+                    half_on_save = decision.get("half_on_save", True)
+                    affected_targets = decision.get("affected_targets", [])
+                    
+                    # Process saving throws for each affected target
+                    if damage > 0:
+                        saving_throw_results = self._process_saving_throws(
+                            state, 
+                            affected_targets, 
+                            save_ability, 
+                            save_dc, 
+                            damage, 
+                            half_on_save,
+                            dice_roller
+                        )
+                        
+                        # Add saving throw results to updates
+                        if saving_throw_results:
+                            turn_result["updates"].extend(saving_throw_results.get("updates", []))
+                            turn_result["narrative"] += f"\n{saving_throw_results.get('narrative', '')}"
+                            turn_result["dice"].extend(saving_throw_results.get("dice", []))
+                
+                # Also check for Fire Breath pattern in the action name, as many LLMs might not format properly
+                elif "fire breath" in decision.get("action", "").lower() or "breath weapon" in decision.get("action", "").lower():
+                    logger.info("Detected Fire Breath action, handling as area effect")
+                    # Extract necessary info
+                    target_name = decision.get("target", "")
+                    target_names = []
+                    
+                    # If target is specified, parse it for multiple targets
+                    if target_name:
+                        # Check if the target contains multiple names (comma or "and" separated)
+                        if "," in target_name or " and " in target_name:
+                            # Split by both commas and " and "
+                            target_name = target_name.replace(" and ", ", ")
+                            target_names = [name.strip() for name in target_name.split(",") if name.strip()]
+                        else:
+                            target_names = [target_name]
+                    
+                    logger.info(f"Parsed targets for Fire Breath: {target_names}")
+                    
+                    # Look for save DC in dice_requests
+                    save_dc = 21  # Default
+                    save_ability = "dexterity"  # Default
+                    damage = 0
+                    
+                    # First, find and roll the damage
+                    for dice_request in decision.get("dice_requests", []):
+                        purpose = dice_request.get("purpose", "").lower()
+                        expression = dice_request.get("expression", "").lower()
+                        
+                        # Find damage
+                        if "damage" in purpose and "breath" in purpose:
+                            # Roll the damage dice
+                            dice_expression = dice_request.get("expression", "")
+                            result = dice_roller(dice_expression)
+                            dice_request["result"] = result
+                            if isinstance(result, (int, float)):
+                                damage = int(result)
+                                logger.info(f"Rolled {dice_expression} for Fire Breath damage: {damage}")
+                    
+                    # Now, find save info
+                    for dice_request in decision.get("dice_requests", []):
+                        purpose = dice_request.get("purpose", "").lower()
+                        expression = dice_request.get("expression", "").lower()
+                        
+                        # Find save DC
+                        if "save" in purpose and "dc" in expression:
+                            try:
+                                # Extract DC number
+                                dc_match = re.search(r"dc\s*(\d+)", expression)
+                                if dc_match:
+                                    save_dc = int(dc_match.group(1))
+                                    logger.info(f"Extracted save DC: {save_dc}")
+                            except (ValueError, IndexError):
+                                pass
+                            
+                            # Extract ability
+                            for ability in ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"]:
+                                if ability in purpose or ability in expression:
+                                    save_ability = ability
+                                    logger.info(f"Extracted save ability: {save_ability}")
+                                    break
+                    
+                    # If no targets specified, try to find all living enemies
+                    if not target_names:
+                        logger.warning("No targets specified for Fire Breath, using all living enemies")
+                        for c in combatants:
+                            # Skip self, dead creatures, or allies
+                            if (c.get("name") == combatant.get("name") or 
+                                c.get("hp", 0) <= 0 or 
+                                c.get("status", "").lower() == "dead"):
+                                continue
+                            
+                            target_names.append(c.get("name", "Unknown"))
+                        
+                        logger.info(f"Auto-targeting for Fire Breath: {target_names}")
+                    
+                    # Process saving throws
+                    if damage > 0:
+                        # Special handling for saving throws
+                        saved_targets = []
+                        failed_targets = []
+                        save_updates = []
+                        
+                        for target_name in target_names:
+                            target = None
+                            for c in combatants:
+                                if c.get("name") == target_name:
+                                    target = c
+                                    break
+                            
+                            if not target:
+                                logger.warning(f"Target {target_name} not found, skipping")
+                                continue
+                            
+                            if target.get("hp", 0) <= 0 or target.get("status", "").lower() == "dead":
+                                logger.info(f"Target {target_name} is already dead, skipping")
+                                continue
+                            
+                            # Roll saving throw
+                            save_bonus = target.get("saves", {}).get(save_ability, 0)
+                            # Check if saves is not a dictionary or doesn't have the ability
+                            if save_bonus == 0:
+                                # Try to get from direct attribute
+                                ability_attr = f"{save_ability}_save"
+                                save_bonus = target.get(ability_attr, 0)
+                                if save_bonus == 0:
+                                    # Try to calculate from ability scores
+                                    ability_score = target.get("abilities", {}).get(save_ability, 10)
+                                    save_bonus = (ability_score - 10) // 2
+                                    logger.info(f"Calculated {save_ability} save bonus for {target_name}: {save_bonus}")
+                                else:
+                                    logger.info(f"Found {ability_attr} for {target_name}: {save_bonus}")
+                            
+                            save_roll = random.randint(1, 20) + save_bonus
+                            logger.info(f"{target_name} rolls {save_ability} save: {save_roll} (1d20+{save_bonus}) vs DC {save_dc}")
+                            
+                            # Process result
+                            if save_roll >= save_dc:
+                                # Success - half damage
+                                saved_targets.append(target_name)
+                                damage_to_apply = damage // 2
+                                logger.info(f"{target_name} succeeded on save, taking {damage_to_apply} damage")
+                            else:
+                                # Failure - full damage
+                                failed_targets.append(target_name)
+                                damage_to_apply = damage
+                                logger.info(f"{target_name} failed save, taking {damage_to_apply} damage")
+                            
+                            # Apply damage
+                            current_hp = target.get("hp", 0)
+                            new_hp = max(0, current_hp - damage_to_apply)
+                            
+                            # Update status if defeated
+                            status_update = None
+                            if new_hp == 0 and target.get("status", "").lower() != "dead":
+                                status_update = "dead" if target.get("type", "").lower() == "monster" else "unconscious"
+                            
+                            # Create update
+                            update = {
+                                "name": target_name,
+                                "hp": new_hp
+                            }
+                            if status_update:
+                                update["status"] = status_update
+                            
+                            save_updates.append(update)
+                        
+                        # Add saving throw results to updates
+                        if save_updates:
+                            turn_result["updates"].extend(save_updates)
+                            
+                            # Create narrative for saving throws
+                            save_narrative = f"\nSaving throws vs DC {save_dc} {save_ability.capitalize()}:\n"
+                            if saved_targets:
+                                save_narrative += f"- Succeeded: {', '.join(saved_targets)} (half damage)\n"
+                            if failed_targets:
+                                save_narrative += f"- Failed: {', '.join(failed_targets)} (full damage)\n"
+                            
+                            turn_result["narrative"] += save_narrative
+                            
+                            # Add proper dice results
+                            for target_name in target_names:
+                                # Find target again to get save bonus
+                                target = None
+                                for c in combatants:
+                                    if c.get("name") == target_name:
+                                        target = c
+                                        break
+                                
+                                if not target:
+                                    continue
+                                
+                                # Get save bonus using all possible methods
+                                save_bonus = target.get("saves", {}).get(save_ability, 0)
+                                if save_bonus == 0:
+                                    ability_attr = f"{save_ability}_save"
+                                    save_bonus = target.get(ability_attr, 0)
+                                    if save_bonus == 0:
+                                        ability_score = target.get("abilities", {}).get(save_ability, 10)
+                                        save_bonus = (ability_score - 10) // 2
+                                
+                                # Roll a new save for display
+                                save_roll = random.randint(1, 20)
+                                total_roll = save_roll + save_bonus
+                                
+                                # Determine if in saved_targets or failed_targets for result
+                                save_result = "Success" if target_name in saved_targets else "Fail"
+                                
+                                # Add to dice results
+                                turn_result["dice"].append({
+                                    "expression": f"1d20+{save_bonus}",
+                                    "result": total_roll,
+                                    "purpose": f"{target_name}'s {save_ability} save vs DC {save_dc}: {save_result}"
+                                })
+                # Process target updates for single-target effects
+                elif "target" in decision:
                     target_name = decision["target"]
+                    target_found = False
+                    
                     for i, target in enumerate(combatants):
                         if target.get("name", "") == target_name:
+                            target_found = True
+                            
                             # Found the target, apply damage or effects
                             if "damage" in decision:
                                 damage = int(decision["damage"]) if isinstance(decision["damage"], (int, float)) else 0
                                 if damage > 0:
-                                    # Apply damage to the target
-                                    current_hp = target.get("hp", 0)
-                                    new_hp = max(0, current_hp - damage)
-                                    
-                                    # Check if the target is defeated
-                                    status = target.get("status", "")
-                                    if new_hp == 0 and status != "dead":
-                                        status = "unconscious" if target.get("type", "").lower() != "monster" else "dead"
-                                    
-                                    # Create an update
-                                    update = {
-                                        "name": target_name,
-                                        "hp": new_hp,
-                                        "status": status
-                                    }
-                                    turn_result["updates"].append(update)
+                                    # Check if this attack requires a saving throw
+                                    if "save_dc" in decision and "save_ability" in decision:
+                                        save_dc = decision.get("save_dc", 10)
+                                        save_ability = decision.get("save_ability", "dexterity").lower()
+                                        half_on_save = decision.get("half_on_save", True)
+                                        
+                                        # Process saving throw
+                                        saving_throw_results = self._process_saving_throws(
+                                            state, 
+                                            [target_name], 
+                                            save_ability, 
+                                            save_dc, 
+                                            damage, 
+                                            half_on_save,
+                                            dice_roller
+                                        )
+                                        
+                                        # Add saving throw results to updates
+                                        if saving_throw_results:
+                                            turn_result["updates"].extend(saving_throw_results.get("updates", []))
+                                            turn_result["narrative"] += f"\n{saving_throw_results.get('narrative', '')}"
+                                            turn_result["dice"].extend(saving_throw_results.get("dice", []))
+                                    else:
+                                        # Apply damage to the target (no saving throw)
+                                        current_hp = target.get("hp", 0)
+                                        new_hp = max(0, current_hp - damage)
+                                        
+                                        # Check if the target is defeated
+                                        status = target.get("status", "")
+                                        if new_hp == 0 and status != "dead":
+                                            status = "unconscious" if target.get("type", "").lower() != "monster" else "dead"
+                                        
+                                        # Create an update
+                                        update = {
+                                            "name": target_name,
+                                            "hp": new_hp,
+                                            "status": status
+                                        }
+                                        turn_result["updates"].append(update)
                             break
+                    
+                    # If no explicit target is found, try to use dice request purposes to identify the target
+                    if not target_found and len(turn_result["updates"]) == 0:
+                        # Look for attack rolls against specific targets in dice_requests
+                        possible_targets = []
+                        for dice_req in decision.get("dice_requests", []):
+                            purpose = dice_req.get("purpose", "").lower()
+                            
+                            # Try to find mentions of targets in dice purposes
+                            for combatant in combatants:
+                                combatant_name = combatant.get("name", "").lower()
+                                
+                                # Skip dead targets or the self
+                                if (combatant.get("hp", 0) <= 0 or 
+                                    combatant.get("status", "").lower() == "dead" or
+                                    combatant_name == combatant.get("name", "").lower()):
+                                    continue
+                                    
+                                if combatant_name in purpose and combatant_name not in possible_targets:
+                                    possible_targets.append(combatant.get("name", ""))
+                        
+                        # Now calculate damage for these targets
+                        for target_name in possible_targets:
+                            # Find target's hp and status
+                            for target in combatants:
+                                if target.get("name", "") == target_name:
+                                    # Calculate damage from dice requests
+                                    attack_damage = 0
+                                    for dice_req in decision.get("dice_requests", []):
+                                        purpose = dice_req.get("purpose", "").lower()
+                                        if "damage" in purpose and target_name.lower() in purpose:
+                                            result = dice_req.get("result", 0)
+                                            if isinstance(result, (int, float)):
+                                                attack_damage += int(result)
+                                        elif "damage" in purpose and not any(t.lower() in purpose for t in possible_targets):
+                                            # Generic damage without specific target
+                                            result = dice_req.get("result", 0)
+                                            if isinstance(result, (int, float)):
+                                                attack_damage += int(result)
+                                    
+                                    # Only apply damage if we found some
+                                    if attack_damage > 0:
+                                        current_hp = target.get("hp", 0)
+                                        new_hp = max(0, current_hp - attack_damage)
+                                        
+                                        # Check if the target is defeated
+                                        status = target.get("status", "")
+                                        if new_hp == 0 and status != "dead":
+                                            status = "unconscious" if target.get("type", "").lower() != "monster" else "dead"
+                                        
+                                        # Create an update
+                                        update = {
+                                            "name": target_name,
+                                            "hp": new_hp
+                                        }
+                                        if new_hp == 0:
+                                            update["status"] = status
+                                        
+                                        turn_result["updates"].append(update)
+                                    break
             except json.JSONDecodeError:
                 # Fallback for invalid JSON
                 logger.error(f"Error parsing LLM response as JSON: {response_text[:100]}...")
@@ -403,6 +712,63 @@ class ImprovedCombatResolver(QObject):
                 "narrative": f"{combatant.get('name', 'Unknown')} looks confused and takes no action this turn.",
                 "updates": []
             }
+        
+        # Fall back to checking reasoning/narrative if no updates were found
+        if len(turn_result.get("updates", [])) == 0:
+            narrative = turn_result.get("narrative", "")
+            reasoning = decision.get("reasoning", "") if isinstance(decision, dict) else ""
+            
+            # Get all potential targets that are still alive
+            potential_targets = []
+            
+            for c in combatants:
+                if (c.get("hp", 0) > 0 and 
+                    c.get("status", "").lower() != "dead" and
+                    c.get("name", "") != combatant.get("name", "")):
+                    potential_targets.append(c.get("name", ""))
+            
+            # Look for mentions of these targets in narrative or reasoning
+            target_names = []
+            for target in potential_targets:
+                if target.lower() in narrative.lower() or target.lower() in reasoning.lower():
+                    target_names.append(target)
+            
+            # If we found any targets, use the first one
+            if target_names:
+                logger.info(f"Detected targets in narrative/reasoning: {target_names}")
+                
+                # Try to extract damage from dice results
+                total_damage = 0
+                for dice_req in turn_result.get("dice", []):
+                    if "damage" in dice_req.get("purpose", "").lower():
+                        result = dice_req.get("result", 0)
+                        if isinstance(result, (int, float)):
+                            total_damage += int(result)
+                
+                # If we found damage, apply it to the first target
+                if total_damage > 0:
+                    target_name = target_names[0]
+                    for target in combatants:
+                        if target.get("name", "") == target_name:
+                            current_hp = target.get("hp", 0)
+                            new_hp = max(0, current_hp - total_damage)
+                            
+                            # Check if the target is defeated
+                            status = target.get("status", "")
+                            if new_hp == 0 and status != "dead":
+                                status = "unconscious" if target.get("type", "").lower() != "monster" else "dead"
+                            
+                            # Create an update
+                            update = {
+                                "name": target_name,
+                                "hp": new_hp
+                            }
+                            if new_hp == 0:
+                                update["status"] = status
+                            
+                            turn_result["updates"].append(update)
+                            logger.info(f"Applied {total_damage} damage to {target_name} based on narrative context")
+                            break
         
         # Process action economy for the turn
         turn_result = self._process_action_economy_for_turn(combatant, turn_result, state)
@@ -435,6 +801,148 @@ class ImprovedCombatResolver(QObject):
             }
             update_ui_callback(combat_display_state)
             time.sleep(0.5)
+    
+    def _process_saving_throws(self, state, target_names, save_ability, save_dc, damage, half_on_save, dice_roller):
+        """
+        Process saving throws for one or more targets.
+        
+        Args:
+            state: Current combat state
+            target_names: List of target names that need to make saving throws
+            save_ability: The ability used for the save (str, dex, con, int, wis, cha)
+            save_dc: The DC for the saving throw
+            damage: The damage to apply (modified by saving throw result)
+            half_on_save: Whether a successful save halves damage (True) or negates it (False)
+            dice_roller: Function to roll dice
+            
+        Returns:
+            Dictionary with updates, narrative, and dice rolls
+        """
+        from app.combat.condition_resolver import ConditionResolver
+        
+        combatants = state.get("combatants", [])
+        updates = []
+        narrative = ""
+        dice_rolls = []
+        
+        # If no specific targets are provided but we have a target field, use that instead
+        if not target_names:
+            logger.warning("No target names provided for saving throws, checking for single target")
+            target_name = state.get("target", None)
+            if target_name:
+                target_names = [target_name]
+
+        # If target_names is empty but we have living enemies, target them
+        if not target_names:
+            logger.warning("No target names provided, targeting all living enemies")
+            # Get all living enemies
+            for combatant in combatants:
+                # Skip dead or allied creatures
+                if (combatant.get("hp", 0) <= 0 or 
+                    combatant.get("status", "").lower() == "dead"):
+                    continue
+                
+                target_names.append(combatant.get("name", ""))
+        
+        logger.info(f"Processing saving throws for targets: {target_names}")
+        
+        for target_name in target_names:
+            # Find the target
+            target = None
+            for c in combatants:
+                if c.get("name", "") == target_name:
+                    target = c
+                    break
+                    
+            if not target:
+                logger.warning(f"Target {target_name} not found")
+                continue
+            
+            # Skip dead targets
+            if target.get("hp", 0) <= 0 or target.get("status", "").lower() == "dead":
+                logger.info(f"Skipping dead target: {target_name}")
+                continue
+                
+            # Get save bonus for the ability
+            save_bonus = target.get("saves", {}).get(save_ability, 0)
+            
+            # Check for advantage/disadvantage/auto-fail based on conditions
+            has_advantage, has_disadvantage, auto_fail = ConditionResolver.check_saving_throw_modifiers(
+                target, save_ability
+            )
+            
+            # Roll the saving throw
+            if auto_fail:
+                save_succeeded = False
+                roll1 = 1  # Auto-fail represented as a 1
+                total = 1
+                roll_description = f"{target_name} automatically fails the {save_ability} save due to conditions!"
+            else:
+                # Roll with advantage/disadvantage
+                roll1 = dice_roller("1d20")
+                roll_description = f"{target_name} rolls a {save_ability} save: {roll1}"
+                
+                if has_advantage or has_disadvantage:
+                    roll2 = dice_roller("1d20")
+                    if has_advantage:
+                        roll_to_use = max(roll1, roll2)
+                        roll_description += f" with advantage (rolls: {roll1}, {roll2}, using {roll_to_use})"
+                    else:  # disadvantage
+                        roll_to_use = min(roll1, roll2)
+                        roll_description += f" with disadvantage (rolls: {roll1}, {roll2}, using {roll_to_use})"
+                else:
+                    roll_to_use = roll1
+                
+                total = roll_to_use + save_bonus
+                save_succeeded = total >= save_dc
+            
+            # Record the dice roll
+            dice_rolls.append({
+                "expression": "1d20",
+                "result": roll1,
+                "purpose": f"{target_name}'s {save_ability} save (DC {save_dc})"
+            })
+            
+            # Calculate damage based on save result
+            applied_damage = 0
+            if not save_succeeded:
+                # Failed save - full damage
+                applied_damage = damage
+                narrative += f"{roll_description} → Total: {total} vs DC {save_dc}: Failed! Takes {damage} damage.\n"
+            else:
+                # Successful save
+                if half_on_save:
+                    applied_damage = damage // 2
+                    narrative += f"{roll_description} → Total: {total} vs DC {save_dc}: Success! Takes {applied_damage} damage (half).\n"
+                else:
+                    applied_damage = 0
+                    narrative += f"{roll_description} → Total: {total} vs DC {save_dc}: Success! Takes no damage.\n"
+            
+            # Apply damage
+            current_hp = target.get("hp", 0)
+            new_hp = max(0, current_hp - applied_damage)
+            
+            # Check if the target is defeated
+            status = target.get("status", "")
+            if new_hp == 0 and status != "dead":
+                status = "unconscious" if target.get("type", "").lower() != "monster" else "dead"
+            
+            # Create an update
+            update = {
+                "name": target_name,
+                "hp": new_hp
+            }
+            
+            if new_hp == 0:
+                update["status"] = status
+                
+            updates.append(update)
+            
+        return {
+            "updates": updates,
+            "narrative": narrative.strip(),
+            "dice": dice_rolls
+        }
     
     def _process_action_economy_for_turn(self, combatant, turn_result, state):
         """
@@ -1010,55 +1518,46 @@ class ImprovedCombatResolver(QObject):
             
             if fixed_is_valid:
                 logger.info("Successfully fixed ability mixing in improved resolver!")
-                return fixed_prompt
+                prompt = fixed_prompt
             else:
-                logger.warning(f"Failed to fix ability mixing in improved resolver: {fixed_result}")
-                
-                # As a last resort, generate a completely new prompt for this monster
-                monster_name = active_combatant.get("name", "Unknown")
-                logger.info(f"Attempting to generate clean prompt for {monster_name}")
-                
-                # Create a simplified template
-                template = """
-You are the tactical combat AI for a D&D 5e game. You decide actions for {{MONSTER_NAME}}.
+                # If fixing failed, just use the original
+                logger.error(f"Failed to fix ability mixing: {fixed_result}")
+        
+        # Add instructions for handling saving throws in area effect attacks
+        saving_throw_instructions = """
+SAVING THROWS INSTRUCTIONS:
 
-# COMBAT SITUATION
-Round: {round_num}
-Active Combatant: {{MONSTER_NAME}}
+When using area effect abilities like 'Fire Breath' or spells requiring saving throws:
 
-# {{MONSTER_NAME}} DETAILS
-HP: {hp}/{max_hp}
-AC: {ac}
-Type: monster
-Status: {status}
+1. Include "area_effect": true in your response
+2. Specify "save_dc": [DC number] (e.g., "save_dc": 15)
+3. Specify "save_ability": [ability] (e.g., "save_ability": "dexterity")
+4. Include "half_on_save": true/false (whether targets take half damage on a successful save)
+5. List affected targets in "affected_targets": ["Name1", "Name2", ...]
 
-# SPECIFIC ABILITIES, ACTIONS AND TRAITS
-## Actions:
-{{MONSTER_ACTIONS}}
+Example for Fire Breath:
+{
+  "action": "Red Dragon uses Fire Breath",
+  "narrative": "The dragon exhales fire in a 30-foot cone...",
+  "area_effect": true,
+  "save_dc": 15,
+  "save_ability": "dexterity",
+  "damage": 45,
+  "half_on_save": true,
+  "affected_targets": ["Fighter", "Wizard", "Cleric"]
+}
 
-## Traits:
-{{MONSTER_TRAITS}}
+For single-target effects requiring saves:
+1. Include "target": "Name" as usual
+2. Specify "save_dc": [DC number]
+3. Specify "save_ability": [ability]
+4. Include "half_on_save": true/false
 
-# NEARBY COMBATANTS
-{nearby}
-
-# YOUR TASK
-Decide the most appropriate action for {{MONSTER_NAME}} this turn.
+The system will automatically roll saving throws and apply appropriate damage.
 """
-                # Fill in template values
-                monster_prompt_template = template.format(
-                    round_num=round_num,
-                    hp=active_combatant.get("hp", 0),
-                    max_hp=active_combatant.get("max_hp", active_combatant.get("hp", 0)),
-                    ac=active_combatant.get("ac", 10),
-                    status=active_combatant.get("status", "OK"),
-                    nearby=self.combat_resolver._format_nearby_combatants(
-                        self.combat_resolver._get_nearby_combatants(active_combatant, combatants)
-                    )
-                )
-                
-                # Generate a monster-specific prompt
-                return generate_monster_specific_prompt(active_combatant, monster_prompt_template)
+        
+        # Add the saving throw instructions to the prompt
+        prompt += saving_throw_instructions
         
         return prompt 
 
