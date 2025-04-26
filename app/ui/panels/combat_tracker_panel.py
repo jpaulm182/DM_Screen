@@ -36,6 +36,8 @@ import time
 import threading
 import gc
 import hashlib
+import logging # Add logging import
+
 from .combat_dialogs import (
     DamageDialog, DeathSavesDialog, ConcentrationDialog,
     CombatantDetailsDialog, # Ensure this line is not commented out
@@ -133,7 +135,13 @@ class CombatTrackerPanel(BasePanel):
     
     # Add missing combat_log_signal for panel connection
     combat_log_signal = Signal(str, str, str, str, str)  # category, actor, action, target, result
-    
+
+    # Signal to request character details from PlayerCharacterPanel
+    request_character_details = Signal(str) # Emits character name
+
+    # Signal to request monster details from MonsterPanel
+    request_monster_details = Signal(str) # Emits monster name or ID
+
     @property
     def current_turn(self):
         """Get the current turn index"""
@@ -564,6 +572,7 @@ class CombatTrackerPanel(BasePanel):
     def _add_combatant(self, name, initiative, hp, max_hp, ac, combatant_type="", monster_id=None):
         """Add a combatant to the initiative table"""
         print(f"[CombatTracker] _add_combatant called: name={name}, initiative={initiative}, hp={hp}, max_hp={max_hp}, ac={ac}, type={combatant_type}, id={monster_id}")
+        logging.debug(f"[CombatTracker] Adding combatant: Name={name}, Init={initiative}, HP={hp}/{max_hp}, AC={ac}, Type={combatant_type}, ID={monster_id}") # Add DEBUG log
         
         # Get current row count
         row = self.initiative_table.rowCount()
@@ -5264,3 +5273,37 @@ class CombatTrackerPanel(BasePanel):
 
         # Now invoke the shared cleanup function to physically remove rows.
         self._cleanup_dead_combatants()
+
+    @Slot(object) # Decorator to mark as a slot that accepts a Python object
+    def add_character(self, character):
+        """Add a player character received from the PlayerCharacterPanel."""
+        try:
+            logging.info(f"[CombatTracker] Received character to add: {character.name}")
+            
+            # Extract data from the PlayerCharacter object
+            name = character.name if character.name else "Unnamed Character"
+            # Use initiative bonus to roll initiative
+            initiative_bonus = getattr(character, 'initiative_bonus', 0) 
+            initiative = random.randint(1, 20) + initiative_bonus
+            
+            hp = getattr(character, 'current_hp', 10)
+            max_hp = getattr(character, 'max_hp', 10)
+            ac = getattr(character, 'armor_class', 10)
+            
+            # Add the character to the combat tracker
+            row = self._add_combatant(name, initiative, hp, max_hp, ac, combatant_type="character")
+            
+            if row >= 0:
+                logging.info(f"[CombatTracker] Successfully added character '{name}' to combat at row {row} with initiative {initiative}.")
+                # Log the action
+                self._log_combat_action("Setup", "DM", "added character", name, f"(Rolled Initiative: {initiative})")
+            else:
+                logging.error(f"[CombatTracker] Failed to add character '{name}' using _add_combatant.")
+                QMessageBox.warning(self, "Add Failed", f"Failed to add character '{name}' to the combat tracker.")
+
+        except AttributeError as e:
+            logging.error(f"[CombatTracker] Error accessing attribute on received character object: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"Failed to add character. The character data might be incomplete or invalid: {e}")
+        except Exception as e:
+            logging.error(f"[CombatTracker] Unexpected error adding character: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"An unexpected error occurred while adding the character: {str(e)}")

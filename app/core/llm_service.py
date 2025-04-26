@@ -13,6 +13,7 @@ from enum import Enum
 from pathlib import Path
 import base64
 import uuid
+import hashlib
 
 import openai
 from openai import OpenAI
@@ -475,7 +476,20 @@ class LLMService(QObject):
             
             # Determine output path if not provided
             if not output_path:
-                filename = f"monster_{monster_id or uuid.uuid4()}.png"
+                # Sanitize filename creation
+                base_filename = "monster"
+                # Check if monster_id is a simple type (int, str) and reasonably short
+                if isinstance(monster_id, (int, str)) and len(str(monster_id)) < 50:
+                     # Use monster_id if it's simple and short
+                     base_filename = f"monster_{monster_id}"
+                else:
+                     # Otherwise, use a UUID to guarantee a valid length
+                     base_filename = f"monster_{uuid.uuid4()}"
+                     # Log a warning if monster_id was unusable (and not None)
+                     if monster_id is not None:
+                         self.logger.warning(f"Monster ID '{monster_id}' was unsuitable for filename, using UUID instead.")
+
+                filename = f"{base_filename}.png"
                 output_path = self.monster_images_dir / filename
             else:
                 output_path = Path(output_path)
