@@ -56,6 +56,11 @@ from app.ui.panels.combat_tracker_delegates import CurrentTurnDelegate, HPUpdate
 from app.ui.panels.combat_utils import extract_dice_formula, roll_dice, get_attr
 from app.ui.panels.combatant_manager import CombatantManager
 
+# Import dialogs from the new location
+from .combat_tracker.combat_tracker_dialogs import DeathSavesDialog
+# Import the new Combatant Manager
+from .combat_tracker.combatant_manager import CombatantManager
+
 
 # --- End modularized imports ---
 
@@ -159,22 +164,23 @@ class CombatTrackerPanel(BasePanel):
         self.db = app_state.db_manager
         self.llm_service = app_state.llm_service
         
-        # Initialize combat state
+        # Initialize combat state (attributes not moved to manager)
         self.current_round = 1
-        self.current_turn = 0
-        self._current_turn = 0
+        self._current_turn = 0 # Use _current_turn internally
         self.previous_turn = -1
         self.combat_time = 0
         self.combat_started = False
         self.death_saves = {}  # Store by row index: {successes: int, failures: int}
         self.concentrating = set()  # Store row indices of concentrating combatants
-        self.combatants = {} # Store combatant data, keyed by row index
-        self.monster_id_counter = 0  # Counter for unique monster IDs
+        
+        # --- NEW: Instantiate CombatantManager ---
+        self.combatant_manager = CombatantManager(self)
+        
+        # REMOVED: self.combatant_manager.combatants_by_id = {} 
+        # REMOVED: self.monster_id_counter = 0 
         
         # Add missing property initialization
         self.show_details_pane = False
-        
-        # --- NEW: Flag to prevent sorting during LLM resolution --- 
         self._is_resolving_combat = False 
         
         # Initialize timers
@@ -182,8 +188,6 @@ class CombatTrackerPanel(BasePanel):
         self.timer.timeout.connect(self._update_timer)
         self.timer.setInterval(1000)  # 1 second interval
         self.combat_log = []  # List of combat log entries
-        
-        # New: live combat log
         self.combat_log_widget = None
         
         # Initialize base panel (calls _setup_ui)
@@ -197,29 +201,25 @@ class CombatTrackerPanel(BasePanel):
         # Ensure table is ready for display
         self._ensure_table_ready()
         
-        # After state is restored, fix missing types
-        QTimer.singleShot(500, self._fix_missing_types)
+        # After state is restored, fix missing types (using manager)
+        # Make sure this call happens after potential state restore in _ensure_table_ready
+        QTimer.singleShot(500, self.combatant_manager.fix_missing_types)
         
         print("[CombatTracker] Initialization completed successfully")
         
         # Connect the turn result signal to the slot
         self.show_turn_result_signal.connect(self._show_turn_result_slot)
         
-        # Connect to combat resolver if available - FIXED CONNECTION SETUP
+        # Connect to combat resolver if available
         if hasattr(self.app_state, 'combat_resolver') and self.app_state.combat_resolver:
             try:
-                # Ensure the resolver is a QObject (it should be after the previous edit)
                 if isinstance(self.app_state.combat_resolver, QObject):
-                    # Connect the signal for completion of the entire combat
                     self.app_state.combat_resolver.resolution_complete.connect(self._process_resolution_ui)
-                    
-                    # Connect the per-turn update signal if it exists
                     if hasattr(self.app_state.combat_resolver, 'turn_update'):
                         self.app_state.combat_resolver.turn_update.connect(self._update_ui_wrapper)
                         print("[CombatTracker] Connected turn_update signal to _update_ui_wrapper")
                     else:
-                        print("[CombatTracker] Warning: CombatResolver has no turn_update signal, per-turn updates may not work")
-                    
+                        print("[CombatTracker] Warning: CombatResolver has no turn_update signal")
                     print("[CombatTracker] Connected resolution_complete signal to _process_resolution_ui slot.")
                 else:
                     print("[CombatTracker] Warning: CombatResolver is not a QObject, cannot connect signals.")
@@ -257,7 +257,7 @@ class CombatTrackerPanel(BasePanel):
             if self.initiative_table.rowCount() == 0:
                 # Add a demo player character if table is still empty
                 print("[CombatTracker] Adding placeholder character to empty table for visibility")
-                self._add_combatant("Add your party here!", 20, 30, 15, "character")
+                self.combatant_manager.add_combatant("Add your party here!", 20, 30, 15, "character")
         
         # Ensure viewport is updated
         self.initiative_table.viewport().update()
@@ -548,7 +548,7 @@ class CombatTrackerPanel(BasePanel):
             ac = self.ac_input.value()
             
             # Add the combatant (no specific type for manual adds)
-            row = self._add_combatant(name, initiative, hp, max_hp, ac, "manual")
+            row = self.combatant_manager.add_combatant(name, initiative, hp, max_hp, ac, "manual")
             
             # Only reset fields and log if the add was successful
             if row >= 0:
@@ -569,7 +569,6 @@ class CombatTrackerPanel(BasePanel):
             QMessageBox.critical(self, "Error", f"An error occurred adding the combatant: {str(e)}")
             return -1
     
-    def _add_combatant(self, name, initiative, hp, max_hp, ac, combatant_type="", monster_id=None):
         """Add a combatant to the initiative table"""
         print(f"[CombatTracker] _add_combatant called: name={name}, initiative={initiative}, hp={hp}, max_hp={max_hp}, ac={ac}, type={combatant_type}, id={monster_id}")
         logging.debug(f"[CombatTracker] Adding combatant: Name={name}, Init={initiative}, HP={hp}/{max_hp}, AC={ac}, Type={combatant_type}, ID={monster_id}") # Add DEBUG log
@@ -658,7 +657,6 @@ class CombatTrackerPanel(BasePanel):
         # Return the row where the combatant was added (post-sorting if monster with ID)
         return sorted_row if sorted_row >= 0 else row
     
-    def _find_monster_by_id(self, monster_id):
         """Find the row of a monster by its unique ID"""
         if monster_id is None:
             return -1
@@ -845,10 +843,10 @@ class CombatTrackerPanel(BasePanel):
             if current_turn is not None and current_turn >= 0 and current_turn < row_count:
                 self._current_turn = row_map.get(current_turn, 0)
             
-            # NEW: Update the self.combatants dictionary to keep instance IDs aligned
-            if hasattr(self, 'combatants') and isinstance(self.combatants, dict):
+            # NEW: Update the self.combatant_manager.combatants_by_id dictionary to keep instance IDs aligned
+            if hasattr(self, 'combatants') and isinstance(self.combatant_manager.combatants_by_id, dict):
                 new_combatants = {}
-                for old_row, combatant_data in self.combatants.items():
+                for old_row, combatant_data in self.combatant_manager.combatants_by_id.items():
                     if old_row in row_map:
                         new_row = row_map[old_row]
                         new_combatants[new_row] = combatant_data
@@ -859,7 +857,7 @@ class CombatTrackerPanel(BasePanel):
                             combatant_data['instance_id'] = instance_id
                             print(f"[CombatTracker] Updated instance_id in combatants dict: {old_row} -> {new_row} with ID {instance_id}")
                 
-                self.combatants = new_combatants
+                self.combatant_manager.combatants_by_id = new_combatants
             
             # Verify HP and AC values after sorting
             post_sort_values = {}
@@ -1073,7 +1071,7 @@ class CombatTrackerPanel(BasePanel):
                         pass # Ignore if values aren't integers
 
             # Update combatant data dictionary if it exists
-            if row in self.combatants:
+            if row in self.combatant_manager.combatants_by_id:
                 self._update_combatant_hp_and_status(row)
         
         finally:
@@ -1081,7 +1079,7 @@ class CombatTrackerPanel(BasePanel):
     
     def _update_combatant_hp_and_status(self, row):
         """Update the HP and status of a combatant in the data dictionary based on the table"""
-        if row not in self.combatants:
+        if row not in self.combatant_manager.combatants_by_id:
             return
             
         # Get HP from table
@@ -1094,10 +1092,10 @@ class CombatTrackerPanel(BasePanel):
                 hp = int(hp_text) if hp_text else 0
                 
                 # Update the hp in the combatant data if it's a dictionary
-                if isinstance(self.combatants[row], dict):
-                    self.combatants[row]['current_hp'] = hp
-                elif hasattr(self.combatants[row], 'current_hp'):
-                    self.combatants[row].current_hp = hp
+                if isinstance(self.combatant_manager.combatants_by_id[row], dict):
+                    self.combatant_manager.combatants_by_id[row]['current_hp'] = hp
+                elif hasattr(self.combatant_manager.combatants_by_id[row], 'current_hp'):
+                    self.combatant_manager.combatants_by_id[row].current_hp = hp
             except (ValueError, TypeError):
                 # Ignore if not a valid number
                 pass
@@ -1109,10 +1107,10 @@ class CombatTrackerPanel(BasePanel):
                 max_hp = int(max_hp_text) if max_hp_text else 0
                 
                 # Update the max_hp in the combatant data if it's a dictionary
-                if isinstance(self.combatants[row], dict):
-                    self.combatants[row]['max_hp'] = max_hp
-                elif hasattr(self.combatants[row], 'max_hp'):
-                    self.combatants[row].max_hp = max_hp
+                if isinstance(self.combatant_manager.combatants_by_id[row], dict):
+                    self.combatant_manager.combatants_by_id[row]['max_hp'] = max_hp
+                elif hasattr(self.combatant_manager.combatants_by_id[row], 'max_hp'):
+                    self.combatant_manager.combatants_by_id[row].max_hp = max_hp
             except (ValueError, TypeError):
                 # Ignore if not a valid number
                 pass
@@ -1123,14 +1121,14 @@ class CombatTrackerPanel(BasePanel):
             status = status_item.text()
             
             # Update the status in the combatant data if it's a dictionary
-            if isinstance(self.combatants[row], dict):
-                if 'conditions' not in self.combatants[row]:
-                    self.combatants[row]['conditions'] = []
-                if status and status not in self.combatants[row]['conditions']:
-                    self.combatants[row]['conditions'].append(status)
-                elif not status and self.combatants[row]['conditions']:
-                    self.combatants[row]['conditions'] = []
-            elif hasattr(self.combatants[row], 'conditions'):
+            if isinstance(self.combatant_manager.combatants_by_id[row], dict):
+                if 'conditions' not in self.combatant_manager.combatants_by_id[row]:
+                    self.combatant_manager.combatants_by_id[row]['conditions'] = []
+                if status and status not in self.combatant_manager.combatants_by_id[row]['conditions']:
+                    self.combatant_manager.combatants_by_id[row]['conditions'].append(status)
+                elif not status and self.combatant_manager.combatants_by_id[row]['conditions']:
+                    self.combatant_manager.combatants_by_id[row]['conditions'] = []
+            elif hasattr(self.combatant_manager.combatants_by_id[row], 'conditions'):
                 pass
     
     def _next_turn(self):
@@ -1539,7 +1537,7 @@ class CombatTrackerPanel(BasePanel):
             
             # Reset combat state variables
             self.current_round = 1
-            self.current_turn = 0
+            self._current_turn = 0
             self.previous_turn = -1
             self.combat_time = 0
             self.combat_started = False
@@ -1579,7 +1577,7 @@ class CombatTrackerPanel(BasePanel):
         if reply == QMessageBox.Yes:
             # Reset combat state variables
             self.current_round = 1
-            self.current_turn = 0
+            self._current_turn = 0
             self.previous_turn = -1
             self.combat_time = 0
             self.combat_started = False
@@ -2095,7 +2093,7 @@ class CombatTrackerPanel(BasePanel):
             self.round_spin.setValue(round_num)
             
             # Update current turn highlight
-            self.current_turn = current_idx
+            self._current_turn = current_idx
             self._update_highlight()
             
             # Apply combatant updates to the table
@@ -2450,9 +2448,9 @@ class CombatTrackerPanel(BasePanel):
                                 hp_item.setText(str(new_hp))
                                 print(f"[CombatTracker] Updated {name} HP from {old_hp} to {new_hp}")
                                 
-                                # Also update self.combatants dictionary if this row is in it
-                                if row in self.combatants and isinstance(self.combatants[row], dict):
-                                    self.combatants[row]['current_hp'] = new_hp
+                                # Also update self.combatant_manager.combatants_by_id dictionary if this row is in it
+                                if row in self.combatant_manager.combatants_by_id and isinstance(self.combatant_manager.combatants_by_id[row], dict):
+                                    self.combatant_manager.combatants_by_id[row]['current_hp'] = new_hp
                                     print(f"[CombatTracker] Updated internal combatants dictionary for {name}: HP = {new_hp}")
                         except Exception as e:
                             print(f"[CombatTracker] Error processing HP update for {name}: {e}")
@@ -2575,9 +2573,9 @@ class CombatTrackerPanel(BasePanel):
                 "instance_id": monster_id if monster_id else f"combatant_{row}"  # Ensure every combatant has a unique ID
             }
             
-            # Add more detailed information if available in the self.combatants dictionary
-            if row in self.combatants:
-                stored_combatant = self.combatants[row]
+            # Add more detailed information if available in the self.combatant_manager.combatants_by_id dictionary
+            if row in self.combatant_manager.combatants_by_id:
+                stored_combatant = self.combatant_manager.combatants_by_id[row]
                 
                 # First, ensure the stored combatant has the same instance ID (sync it)
                 if isinstance(stored_combatant, dict) and "instance_id" in combatant:
@@ -2988,7 +2986,7 @@ class CombatTrackerPanel(BasePanel):
                     # Clean up tracking
                     self.death_saves.pop(row, None)
                     self.concentrating.discard(row) # Use discard for sets
-                    self.combatants.pop(row, None) # Clean up combatants dict
+                    self.combatant_manager.combatants_by_id.pop(row, None) # Clean up combatants dict
 
                 # Update highlight ONLY if turn was adjusted
                 if turn_adjusted:
@@ -3318,12 +3316,12 @@ class CombatTrackerPanel(BasePanel):
             # Ensure 'type' is saved correctly (prioritize UserRole, then column, then default)
             combatant_state["type"] = combatant_state.pop("user_role_type", combatant_state.get("type", "manual"))
 
-            # Retrieve and save the detailed combatant data stored in self.combatants dictionary
-            if row in self.combatants:
+            # Retrieve and save the detailed combatant data stored in self.combatant_manager.combatants_by_id dictionary
+            if row in self.combatant_manager.combatants_by_id:
                 # Store the associated data object/dictionary
                 # Note: Ensure this data is serializable (e.g., dict, list, primitives)
                 # If it's a complex object, you might need a custom serialization method
-                combatant_state["data"] = self.combatants[row] 
+                combatant_state["data"] = self.combatant_manager.combatants_by_id[row] 
             
             # Add the combatant's state to the main state list
             state["combatants"].append(combatant_state)
@@ -3347,15 +3345,14 @@ class CombatTrackerPanel(BasePanel):
             self.initiative_table.setRowCount(0) # Clear all rows from the table
             self.death_saves.clear()            # Clear tracked death saves
             self.concentrating.clear()          # Clear tracked concentration
-            self.combatants.clear()             # Clear stored combatant data
-            self.monster_id_counter = 0         # Reset monster ID counter (important for new monsters added after restore)
-
+            self.combatant_manager.combatants_by_id.clear()             # Clear stored combatant data
+            
             # --- Restore Basic Combat Info ---
             self.current_round = state.get("round", 1)
             self.round_spin.setValue(self.current_round) # Update UI spinner
             
             # Restore current turn, ensuring it's within bounds of restored combatants later
-            self.current_turn = state.get("turn", 0) 
+            self._current_turn = state.get("turn", 0) 
             
             self.combat_time = state.get("elapsed_time", 0)
             # Update timer display immediately (will show 00:00:00 if time is 0)
@@ -3386,12 +3383,12 @@ class CombatTrackerPanel(BasePanel):
                 
                 # Restore detailed combatant data if it exists
                 if "data" in combatant_state:
-                    self.combatants[row] = combatant_state["data"]
+                    self.combatant_manager.combatants_by_id[row] = combatant_state["data"]
                     # If it's a monster, try to assign a unique ID
                     if combatant_state.get("type") == "monster":
                          # Create a unique ID for this monster instance
-                         monster_id = self.monster_id_counter
-                         self.monster_id_counter += 1
+                         monster_id = self.combatant_manager.monster_id_counter
+                         self.combatant_manager.monster_id_counter += 1
                          # Store the ID with the name item's UserRole + 2
                          # We create the name item below
                          
@@ -3457,8 +3454,8 @@ class CombatTrackerPanel(BasePanel):
                 self.initiative_table.setItem(row, 7, type_item)
 
             # Adjust current_turn if it's out of bounds after restoring
-            if self.current_turn >= self.initiative_table.rowCount():
-                self.current_turn = 0 if self.initiative_table.rowCount() > 0 else -1
+            if self._current_turn >= self.initiative_table.rowCount():
+                self._current_turn = 0 if self.initiative_table.rowCount() > 0 else -1
             
             # --- Final Steps ---
             # Re-apply highlighting based on the restored current turn
@@ -3488,66 +3485,9 @@ class CombatTrackerPanel(BasePanel):
             self.initiative_table.viewport().update()
             QApplication.processEvents()
 
-    @Slot(list) # Explicitly mark as a slot receiving a list
-    def add_combatant_group(self, monster_dicts: list):
-        """Add a list of monsters (as dictionaries) to the combat tracker."""
-        if not isinstance(monster_dicts, list):
-            print(f"[CombatTracker] Error: add_combatant_group received non-list: {type(monster_dicts)}")
-            return
-            
-        print(f"[CombatTracker] Received group of {len(monster_dicts)} monsters to add.")
-        
-        # Sample the first monster to understand the data structure
-        if monster_dicts and len(monster_dicts) > 0:
-            first_monster = monster_dicts[0]
-            print(f"[CombatTracker] First monster type: {type(first_monster)}")
-            if isinstance(first_monster, dict):
-                # Print a few keys to help debug
-                print(f"[CombatTracker] First monster keys: {list(first_monster.keys())[:5]}")
-            elif hasattr(first_monster, '__dict__'):
-                # If it's an object, print some attributes
-                print(f"[CombatTracker] First monster attrs: {list(first_monster.__dict__.keys())[:5]}")
-        
-        added_count = 0
-        failed_count = 0
-        for monster_data in monster_dicts:
-            try:
-                # Debug print monster name if possible
-                monster_name = "Unknown"
-                if isinstance(monster_data, dict) and 'name' in monster_data:
-                    monster_name = monster_data['name']
-                elif hasattr(monster_data, 'name'):
-                    monster_name = monster_data.name
-                print(f"[CombatTracker] Adding monster: {monster_name}")
-                
-                row = self.add_monster(monster_data)
-                if row >= 0:
-                    added_count += 1
-                    # Double-check that the type is set properly
-                    type_item = self.initiative_table.item(row, 7)  # Type is column 7
-                    if type_item and not type_item.text():
-                        type_item.setText("monster")
-                        print(f"[CombatTracker] Fixed missing type for row {row}")
-                else:
-                    failed_count += 1
-                    print(f"[CombatTracker] Failed to add monster '{monster_name}': returned row {row}")
-            except Exception as e:
-                import traceback
-                failed_count += 1
-                name = "Unknown"
-                if isinstance(monster_data, dict):
-                    name = monster_data.get("name", "Unknown")
-                elif hasattr(monster_data, 'name'):
-                    name = getattr(monster_data, 'name', "Unknown")
-                
-                print(f"[CombatTracker] Error adding monster '{name}' from group: {e}")
-                traceback.print_exc()  # Print the full traceback for debugging
-
-        if added_count > 0:
-            print(f"[CombatTracker] Added {added_count} monsters from group (failed: {failed_count}).")
-            self._sort_initiative() # Sort after adding group
-        else:
-            print(f"[CombatTracker] No monsters were added from the group. All {failed_count} failed.")
+        # Removed obsolete block referencing monster_dicts, which was undefined and not used in this method.
+        # This prevents NameError and clarifies the restore_state logic.
+        # ... existing code ...
 
     def roll_dice(self, dice_formula):
         """Roll dice based on a formula like "3d8+4" or "2d6-1" """
@@ -3600,7 +3540,6 @@ class CombatTrackerPanel(BasePanel):
                 
         return dice_formula
 
-    def add_monster(self, monster_data):
         """Add a monster from monster panel to the tracker"""
         if not monster_data:
             return -1
@@ -3696,8 +3635,8 @@ class CombatTrackerPanel(BasePanel):
             name = get_attr(monster_data, "name", "Unknown Monster")
             
             # Generate a unique ID for this monster instance using the correct counter attribute
-            monster_id = self.monster_id_counter
-            self.monster_id_counter += 1
+            monster_id = self.combatant_manager.monster_id_counter
+            self.combatant_manager.monster_id_counter += 1
             
             # Get a reasonable initiative modifier from DEX
             dex = get_attr(monster_data, "dexterity", 10, ["dex", "DEX"])
@@ -3781,7 +3720,7 @@ class CombatTrackerPanel(BasePanel):
             }
             
             # Add to tracker with our randomly rolled HP
-            row = self._add_combatant(name, initiative_roll, hp, max_hp, ac, "monster", monster_id)
+            row = self.combatant_manager.add_combatant(name, initiative_roll, hp, max_hp, ac, "monster", monster_id)
             
             # Ensure row is valid, default to -1 if None
             if row is None:
@@ -3789,7 +3728,7 @@ class CombatTrackerPanel(BasePanel):
             
             # Store monster data for future reference
             if row >= 0:
-                self.combatants[row] = monster_data
+                self.combatant_manager.combatants_by_id[row] = monster_data
                 
             # Force a refresh of the entire table
             self.initiative_table.viewport().update()
@@ -3807,7 +3746,6 @@ class CombatTrackerPanel(BasePanel):
             # Always unblock signals even if there's an error
             self.initiative_table.blockSignals(False)
             
-    def _verify_monster_stats(self, monster_stats):
         """Double-check that monster stats are properly set after adding and sorting"""
         monster_id = monster_stats["id"]
         name = monster_stats["name"]
@@ -4040,10 +3978,10 @@ class CombatTrackerPanel(BasePanel):
             if current_turn is not None and current_turn >= 0 and current_turn < row_count:
                 self._current_turn = row_map.get(current_turn, 0)
             
-            # NEW: Update the self.combatants dictionary to keep instance IDs aligned
-            if hasattr(self, 'combatants') and isinstance(self.combatants, dict):
+            # NEW: Update the self.combatant_manager.combatants_by_id dictionary to keep instance IDs aligned
+            if hasattr(self, 'combatants') and isinstance(self.combatant_manager.combatants_by_id, dict):
                 new_combatants = {}
-                for old_row, combatant_data in self.combatants.items():
+                for old_row, combatant_data in self.combatant_manager.combatants_by_id.items():
                     if old_row in row_map:
                         new_row = row_map[old_row]
                         new_combatants[new_row] = combatant_data
@@ -4054,7 +3992,7 @@ class CombatTrackerPanel(BasePanel):
                             combatant_data['instance_id'] = instance_id
                             print(f"[CombatTracker] Updated instance_id in combatants dict: {old_row} -> {new_row} with ID {instance_id}")
                 
-                self.combatants = new_combatants
+                self.combatant_manager.combatants_by_id = new_combatants
             
             # Verify HP and AC values after sorting
             post_sort_values = {}
@@ -4226,7 +4164,7 @@ class CombatTrackerPanel(BasePanel):
 
     def _update_combatant_hp_and_status(self, row):
         """Update the HP and status of a combatant in the data dictionary based on the table"""
-        if row not in self.combatants:
+        if row not in self.combatant_manager.combatants_by_id:
             return
             
         # Get HP from table
@@ -4239,10 +4177,10 @@ class CombatTrackerPanel(BasePanel):
                 hp = int(hp_text) if hp_text else 0
                 
                 # Update the hp in the combatant data if it's a dictionary
-                if isinstance(self.combatants[row], dict):
-                    self.combatants[row]['current_hp'] = hp
-                elif hasattr(self.combatants[row], 'current_hp'):
-                    self.combatants[row].current_hp = hp
+                if isinstance(self.combatant_manager.combatants_by_id[row], dict):
+                    self.combatant_manager.combatants_by_id[row]['current_hp'] = hp
+                elif hasattr(self.combatant_manager.combatants_by_id[row], 'current_hp'):
+                    self.combatant_manager.combatants_by_id[row].current_hp = hp
             except (ValueError, TypeError):
                 # Ignore if not a valid number
                 pass
@@ -4254,10 +4192,10 @@ class CombatTrackerPanel(BasePanel):
                 max_hp = int(max_hp_text) if max_hp_text else 0
                 
                 # Update the max_hp in the combatant data if it's a dictionary
-                if isinstance(self.combatants[row], dict):
-                    self.combatants[row]['max_hp'] = max_hp
-                elif hasattr(self.combatants[row], 'max_hp'):
-                    self.combatants[row].max_hp = max_hp
+                if isinstance(self.combatant_manager.combatants_by_id[row], dict):
+                    self.combatant_manager.combatants_by_id[row]['max_hp'] = max_hp
+                elif hasattr(self.combatant_manager.combatants_by_id[row], 'max_hp'):
+                    self.combatant_manager.combatants_by_id[row].max_hp = max_hp
             except (ValueError, TypeError):
                 # Ignore if not a valid number
                 pass
@@ -4273,12 +4211,12 @@ class CombatTrackerPanel(BasePanel):
                 statuses = [s.strip() for s in status_text.split(',')]
             
             # Update the status in the combatant data if it's a dictionary
-            if isinstance(self.combatants[row], dict):
-                if 'conditions' not in self.combatants[row]:
-                    self.combatants[row]['conditions'] = []
-                self.combatants[row]['conditions'] = statuses
-            elif hasattr(self.combatants[row], 'conditions'):
-                self.combatants[row].conditions = statuses
+            if isinstance(self.combatant_manager.combatants_by_id[row], dict):
+                if 'conditions' not in self.combatant_manager.combatants_by_id[row]:
+                    self.combatant_manager.combatants_by_id[row]['conditions'] = []
+                self.combatant_manager.combatants_by_id[row]['conditions'] = statuses
+            elif hasattr(self.combatant_manager.combatants_by_id[row], 'conditions'):
+                self.combatant_manager.combatants_by_id[row].conditions = statuses
     
     def _manage_death_saves(self, row):
         """Manage death saving throws for a character"""
@@ -4389,7 +4327,7 @@ class CombatTrackerPanel(BasePanel):
                 continue
             combatant_name = name_item.text()
 
-            combatant_data = self._get_combatant_data(row)
+            combatant_data = self.combatant_manager.get_combatant_data(row)
             save_bonus = self._get_save_bonus(combatant_data, ability_name)
 
             # Show the dialog for this combatant
@@ -4441,7 +4379,7 @@ class CombatTrackerPanel(BasePanel):
         combatant_name = name_item.text()
 
         # --- Get Combatant Data to find CON Save Bonus ---
-        combatant_data = self._get_combatant_data(row)
+        combatant_data = self.combatant_manager.get_combatant_data(row)
         con_save_bonus = 0 # Default bonus
         if combatant_data:
             # Try to get Constitution score and calculate modifier
@@ -4557,7 +4495,7 @@ class CombatTrackerPanel(BasePanel):
                 # Clean up tracking
                 self.death_saves.pop(row, None)
                 self.concentrating.discard(row) # Use discard for sets
-                self.combatants.pop(row, None) # Clean up combatants dict
+                self.combatant_manager.combatants_by_id.pop(row, None) # Clean up combatants dict
                 
         finally:
             self.initiative_table.blockSignals(False) # Unblock after removals
@@ -4574,7 +4512,7 @@ class CombatTrackerPanel(BasePanel):
             # Map old rows to new rows efficiently
             current_row_count = self.initiative_table.rowCount()
             old_to_new_map = {}
-            original_indices = sorted(self.combatants.keys()) # Get keys before modifying
+            original_indices = sorted(self.combatant_manager.combatants_by_id.keys()) # Get keys before modifying
             
             current_new_row = 0
             for old_row in range(max(original_indices) + 1): # Iterate through potential old indices
@@ -4584,17 +4522,17 @@ class CombatTrackerPanel(BasePanel):
 
             # Apply the mapping
             for old_row, new_row in old_to_new_map.items():
-                if old_row in self.combatants:
-                    new_combatants[new_row] = self.combatants[old_row]
+                if old_row in self.combatant_manager.combatants_by_id:
+                    new_combatants[new_row] = self.combatant_manager.combatants_by_id[old_row]
                 if old_row in self.concentrating:
                     new_concentrating.add(new_row)
                 if old_row in self.death_saves:
                     new_death_saves[new_row] = self.death_saves[old_row]
                      
-            self.combatants = new_combatants
+            self.combatant_manager.combatants_by_id = new_combatants
             self.concentrating = new_concentrating
             self.death_saves = new_death_saves
-            print(f"[CombatTracker] Cleanup: Re-indexing complete. New combatants dict size: {len(self.combatants)}")
+            print(f"[CombatTracker] Cleanup: Re-indexing complete. New combatants dict size: {len(self.combatant_manager.combatants_by_id)}")
             
         # --- Final UI Update Phase --- 
         # Update highlight ONLY if turn was adjusted OR the table is now empty
@@ -4737,49 +4675,6 @@ class CombatTrackerPanel(BasePanel):
 
         return bonus
 
-        def _get_combatant_data(self, row):
-            """Helper to retrieve the combined combatant data for a given row."""
-            name_item = self.initiative_table.item(row, 0)
-            if not name_item:
-                return None
-            combatant_name = name_item.text()
-            instance_id = name_item.data(Qt.UserRole + 2) # Get instance ID if available
-
-        # Try to get data using instance ID first, then name/row
-        combatant_data = None
-        if instance_id and instance_id in self.combatants_by_id:
-             combatant_data = self.combatants_by_id[instance_id].copy()
-        elif combatant_name in self.combatants: # Fallback to name (might be ambiguous for multiple same-name monsters)
-            combatant_data = self.combatants[combatant_name].copy()
-
-        # If still not found, maybe it's only in the table? (Less likely for monsters)
-        if not combatant_data:
-             combatant_data = {} # Start fresh if no base data found
-
-        # Update with current table data (like HP, status)
-        table_data = {}
-        for col in range(self.initiative_table.columnCount()):
-            item = self.initiative_table.item(row, col)
-            header = self.initiative_table.horizontalHeaderItem(col).text()
-            if item:
-                 if header == "Concentration":
-                     table_data[header.lower()] = item.checkState() == Qt.Checked
-                 else:
-                     table_data[header.lower()] = item.text()
-            # Add type if stored in name item's role
-            if header == "Name" and item:
-                 type_role = item.data(Qt.UserRole)
-                 if type_role:
-                     table_data['type'] = type_role
-
-        combatant_data.update(table_data) # Overwrite stored data with current table state
-
-        # Include death saves if tracked
-        if row in self.death_saves:
-            combatant_data['death_saves'] = self.death_saves[row]
-
-        return combatant_data
-
     def _show_combatant_dialog(self, row, combatant_name, combatant_type):
         """Show a dialog with combatant details when we can't redirect to another panel"""
         print(f"[Combat Tracker] Showing dialog for {combatant_type} '{combatant_name}' at row {row}")
@@ -4803,9 +4698,9 @@ class CombatTrackerPanel(BasePanel):
         except (ValueError, AttributeError) as e:
              print(f"[Combat Tracker] Error getting basic data from table for row {row}: {e}")
 
-        # Try to get more detailed data from the stored self.combatants dictionary
-        if row in self.combatants:
-            stored_data = self.combatants[row]
+        # Try to get more detailed data from the stored self.combatant_manager.combatants_by_id dictionary
+        if row in self.combatant_manager.combatants_by_id:
+            stored_data = self.combatant_manager.combatants_by_id[row]
             print(f"[Combat Tracker] Found stored data for row {row}: {type(stored_data)}")
             # If stored_data is an object, convert to dict if possible
             if hasattr(stored_data, '__dict__'):
@@ -4832,7 +4727,7 @@ class CombatTrackerPanel(BasePanel):
             else:
                  print(f"[Combat Tracker] Stored data for row {row} is not a dict or object with __dict__.")
         else:
-             print(f"[Combat Tracker] No stored data found in self.combatants for row {row}. Using table data only.")
+             print(f"[Combat Tracker] No stored data found in self.combatant_manager.combatants_by_id for row {row}. Using table data only.")
 
         # Create and execute the details dialog
         print(f"[Combat Tracker] Final data for dialog: {combatant_data}")
@@ -4857,8 +4752,8 @@ class CombatTrackerPanel(BasePanel):
         # If details pane is visible, update it with the selected combatant
         # Avoid calling _view_combatant_details directly if it causes loops
         # Store selected combatant info and call update method
-        if row in self.combatants:
-             self.current_details_combatant = self.combatants[row]
+        if row in self.combatant_manager.combatants_by_id:
+             self.current_details_combatant = self.combatant_manager.combatants_by_id[row]
              name_item = self.initiative_table.item(row, 0)
              self.current_details_type = name_item.data(Qt.UserRole) if name_item else "custom" 
         else:
@@ -4891,7 +4786,6 @@ class CombatTrackerPanel(BasePanel):
         print("[CombatTracker] _update_details_pane called - this is a placeholder in the new UI")
         # No actual implementation needed with the new UI design
 
-    def _fix_missing_types(self):
         """Fix any missing combatant types for existing entries after initialization or state restore."""
         # Check if table exists and has rows
         if not hasattr(self, 'initiative_table') or self.initiative_table.rowCount() == 0:
@@ -4916,8 +4810,8 @@ class CombatTrackerPanel(BasePanel):
             if needs_fix:
                 inferred_type = ""
                 # 1. Check stored combatant data first
-                if row in self.combatants:
-                    data = self.combatants[row]
+                if row in self.combatant_manager.combatants_by_id:
+                    data = self.combatant_manager.combatants_by_id[row]
                     if isinstance(data, dict):
                         if any(k in data for k in ["monster_id", "size", "challenge_rating", "hit_points"]):
                             inferred_type = "monster"
@@ -5236,7 +5130,6 @@ class CombatTrackerPanel(BasePanel):
     # Helper: remove currently selected combatants (invoked by the
     # context‑menu 'Remove' action).
     # ---------------------------------------------------------------
-    def _remove_selected(self):
         """Remove all currently selected rows from the combat tracker.
 
         We reuse the existing _cleanup_dead_combatants logic to ensure all
@@ -5274,36 +5167,3 @@ class CombatTrackerPanel(BasePanel):
         # Now invoke the shared cleanup function to physically remove rows.
         self._cleanup_dead_combatants()
 
-    @Slot(object) # Decorator to mark as a slot that accepts a Python object
-    def add_character(self, character):
-        """Add a player character received from the PlayerCharacterPanel."""
-        try:
-            logging.info(f"[CombatTracker] Received character to add: {character.name}")
-            
-            # Extract data from the PlayerCharacter object
-            name = character.name if character.name else "Unnamed Character"
-            # Use initiative bonus to roll initiative
-            initiative_bonus = getattr(character, 'initiative_bonus', 0) 
-            initiative = random.randint(1, 20) + initiative_bonus
-            
-            hp = getattr(character, 'current_hp', 10)
-            max_hp = getattr(character, 'max_hp', 10)
-            ac = getattr(character, 'armor_class', 10)
-            
-            # Add the character to the combat tracker
-            row = self._add_combatant(name, initiative, hp, max_hp, ac, combatant_type="character")
-            
-            if row >= 0:
-                logging.info(f"[CombatTracker] Successfully added character '{name}' to combat at row {row} with initiative {initiative}.")
-                # Log the action
-                self._log_combat_action("Setup", "DM", "added character", name, f"(Rolled Initiative: {initiative})")
-            else:
-                logging.error(f"[CombatTracker] Failed to add character '{name}' using _add_combatant.")
-                QMessageBox.warning(self, "Add Failed", f"Failed to add character '{name}' to the combat tracker.")
-
-        except AttributeError as e:
-            logging.error(f"[CombatTracker] Error accessing attribute on received character object: {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Failed to add character. The character data might be incomplete or invalid: {e}")
-        except Exception as e:
-            logging.error(f"[CombatTracker] Unexpected error adding character: {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"An unexpected error occurred while adding the character: {str(e)}")

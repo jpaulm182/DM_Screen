@@ -289,8 +289,8 @@ class PanelManager(QObject):
 
             # Connect MonsterPanel -> CombatTracker
             if monster_panel and combat_tracker:
-                if hasattr(monster_panel, 'add_combatant_signal') and hasattr(combat_tracker, 'add_combatant_group'):
-                    monster_panel.add_combatant_signal.connect(combat_tracker.add_combatant_group)
+                if hasattr(monster_panel, 'add_combatant_signal') and hasattr(combat_tracker, 'combatant_manager'):
+                    monster_panel.add_combatant_signal.connect(combat_tracker.combatant_manager.add_combatant_group)
                     print("[PanelManager] Connected MonsterPanel -> CombatTracker")
                 else:
                     print("[PanelManager] Failed to connect Monster -> Combat: Missing signal/slot")
@@ -299,8 +299,8 @@ class PanelManager(QObject):
 
             # Connect PlayerCharacterPanel -> CombatTracker
             if pc_panel and combat_tracker:
-                if hasattr(pc_panel, 'add_to_combat') and hasattr(combat_tracker, 'add_character'):
-                    pc_panel.add_to_combat.connect(combat_tracker.add_character)
+                if hasattr(pc_panel, 'add_to_combat') and hasattr(combat_tracker, 'combatant_manager'):
+                    pc_panel.add_to_combat.connect(combat_tracker.combatant_manager.add_character)
                     print("[PanelManager] Connected PlayerCharacterPanel -> CombatTracker")
                 else:
                      print("[PanelManager] Failed to connect PC -> Combat: Missing signal/slot")
