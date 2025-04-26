@@ -23,7 +23,8 @@ from PySide6.QtWidgets import (
     QGroupBox, QWidget, QStyledItemDelegate, QStyle, QToolButton,
     QTabWidget, QScrollArea, QFormLayout, QFrame, QSplitter, QApplication,
     QSizePolicy, QTextEdit, QMenu, QMessageBox, QDialog, QDialogButtonBox,
-    QAbstractItemView
+    QAbstractItemView,
+    QInputDialog
 )
 from PySide6.QtCore import Qt, QTimer, Signal, Slot, QSize, QMetaObject, Q_ARG, QObject, QPoint, QRect, QEvent, QThread
 from PySide6.QtGui import QColor, QFont, QTextCharFormat, QBrush, QPixmap, QImage, QTextCursor, QPalette, QAction, QKeySequence
@@ -37,8 +38,11 @@ import gc
 import hashlib
 from .combat_dialogs import (
     DamageDialog, DeathSavesDialog, ConcentrationDialog,
-    CombatantDetailsDialog # Ensure this line is not commented out
+    CombatantDetailsDialog, # Ensure this line is not commented out
+    SavingThrowDialog, ABILITIES
 )
+
+from .combat_utils import get_attr, roll_dice, extract_dice_formula
 
 from app.ui.panels.base_panel import BasePanel
 from app.ui.panels.panel_category import PanelCategory
@@ -1304,6 +1308,11 @@ class CombatTrackerPanel(BasePanel):
             menu.addAction(death_saves)
             menu.addSeparator()
         
+        save_action = QAction("Make Saving Throw...", self)
+        save_action.triggered.connect(self._prompt_saving_throw) # Connect to new handler
+        menu.addAction(save_action)
+        menu.addSeparator() # Optional separator after
+    
         # Status submenu - Changed to Add Status and Remove Status
         status_menu = menu.addMenu("Add Status")
         status_menu.addAction("Clear All").triggered.connect(lambda: self._clear_statuses())
@@ -4344,6 +4353,69 @@ class CombatTrackerPanel(BasePanel):
                             result=f"{successes} successes, {failures} failures"
                         )
 
+            def _prompt_saving_throw(self):
+                """Prompt user for saving throw details and apply to selected combatants."""
+                selected_rows = sorted(list(set(index.row() for index in self.initiative_table.selectionModel().selectedRows())))
+
+                if not selected_rows:
+                    QMessageBox.warning(self, "Selection Error", "Please select one or more combatants to apply the saving throw.")
+                    return
+
+        # 1. Prompt for Ability
+        ability_name, ok1 = QInputDialog.getItem(self, "Select Saving Throw Ability",
+                                                 "Ability:", ABILITIES, 0, False)
+        if not ok1 or not ability_name:
+            return # User cancelled
+
+        # 2. Prompt for DC
+        dc, ok2 = QInputDialog.getInt(self, "Enter Saving Throw DC",
+                                      "DC:", 10, 1, 30, 1)
+        if not ok2:
+            return # User cancelled
+
+        # 3. Process each selected combatant
+        for row in selected_rows:
+            name_item = self.initiative_table.item(row, 0)
+            if not name_item:
+                continue
+            combatant_name = name_item.text()
+
+            combatant_data = self._get_combatant_data(row)
+            save_bonus = self._get_save_bonus(combatant_data, ability_name)
+
+            # Show the dialog for this combatant
+            dialog = SavingThrowDialog(combatant_name, ability_name, save_bonus, dc, self)
+
+            if dialog.exec_(): # User confirmed roll in the dialog
+                roll = dialog.final_roll
+                total_save = roll + save_bonus # Recalculate total for logging clarity
+                succeeded = dialog.succeeded # Use the outcome stored by the dialog
+
+                outcome_text = "succeeded on" if succeeded else "failed"
+                # Log the action
+                self._log_combat_action(
+                    "Saving Throw", # New category
+                    combatant_name,
+                    f"{outcome_text} DC {dc} {ability_name} save", # Describe action
+                    target=None, # Save is against an effect/DC
+                    result=f"(Rolled {roll}, Total: {total_save})" # Show roll and total
+                )
+                # Future: Apply effects based on failure (e.g., status condition)
+                # if not succeeded:
+                #     # Example: apply 'Burning' status on failed DEX save vs Fire Breath
+                #     if ability_name == "Dexterity" and dc > 10: # Simplistic check
+                #          self._add_status("Burning", row=row) # Need _add_status to accept row
+
+            else: # User cancelled the roll dialog for this specific combatant
+                 self._log_combat_action(
+                    "Saving Throw",
+                    combatant_name,
+                    f"DC {dc} {ability_name} save cancelled",
+                    target=None, result=None
+                 )
+                 # Loop continues to the next selected combatant
+
+
         def _check_concentration(self, row, damage):
             """Check if a combatant needs to make a concentration save, get bonus, and log correctly."""
             # Check if the combatant in this row is actually concentrating
@@ -4602,6 +4674,60 @@ class CombatTrackerPanel(BasePanel):
         if not panel_found:
             print(f"[Combat Tracker] Type is '{combatant_type}' or panel redirection failed. Showing dialog.")
             self._show_combatant_dialog(row, combatant_name, combatant_type)
+        
+        def _get_save_bonus(self, combatant_data, ability_name):
+            """Calculate the saving throw bonus for a given ability."""
+            if not combatant_data or not ability_name:
+                return 0
+
+            ability_lower = ability_name.lower()
+            bonus = 0
+
+        # 1. Check for explicit save bonus (e.g., "dexterity_save")
+        save_key = f"{ability_lower}_save"
+        if save_key in combatant_data:
+            try:
+                # Use get_attr for safe retrieval
+                bonus = int(get_attr(combatant_data, save_key, '0'))
+                # print(f"[DEBUG] Found explicit save bonus {save_key}: {bonus}") # Optional Debug
+                return bonus
+            except (ValueError, TypeError):
+                 print(f"[CombatTracker] Warning: Could not parse explicit save bonus '{save_key}' for {combatant_data.get('name', 'Unknown')}")
+
+        # 2. If no explicit bonus, calculate from ability score
+        score_key = ability_lower
+        if score_key in combatant_data:
+             # Use get_attr for safe retrieval
+             score_str = get_attr(combatant_data, score_key, None)
+             if score_str is not None:
+                 try:
+                     score = int(score_str)
+                     bonus = (score - 10) // 2
+                     # print(f"[DEBUG] Calculated save bonus from {score_key}={score}: {bonus}") # Optional Debug
+                 except (ValueError, TypeError):
+                     print(f"[CombatTracker] Warning: Could not parse ability score '{score_key}' for {combatant_data.get('name', 'Unknown')}")
+             else:
+                 # Log if the key exists but the value is None or empty
+                 print(f"[CombatTracker] Warning: Ability score key '{score_key}' present but value is None/empty for {combatant_data.get('name', 'Unknown')}")
+        else:
+             # Log if the ability score key itself is missing
+             print(f"[CombatTracker] Warning: Ability score key '{score_key}' not found for {combatant_data.get('name', 'Unknown')}")
+
+
+        # TODO: Add proficiency bonus if proficient? Requires proficiency data.
+        # This depends heavily on how proficiency information is stored in combatant_data
+        # prof_bonus = get_attr(combatant_data, 'proficiency_bonus', 0)
+        # save_proficiencies = get_attr(combatant_data, 'proficiencies', []) # Example structure
+        # is_proficient = any(p.get('proficiency', {}).get('name', '') == f"Saving Throw: {ability_name}" for p in save_proficiencies)
+        # if is_proficient:
+        #     try:
+        #          bonus += int(prof_bonus)
+        #          print(f"[DEBUG] Added proficiency bonus {prof_bonus}, total {bonus}")
+        #     except (ValueError, TypeError):
+        #          print(f"[CombatTracker] Warning: Could not parse proficiency bonus '{prof_bonus}'")
+
+        return bonus
+
         def _get_combatant_data(self, row):
             """Helper to retrieve the combined combatant data for a given row."""
             name_item = self.initiative_table.item(row, 0)

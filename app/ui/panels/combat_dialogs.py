@@ -729,3 +729,92 @@ class ConcentrationDialog(QDialog):
         # Emit the final result
         self.checkResult.emit(self.save_dc, self.damage_taken, succeeded)
         self.accept()
+
+
+# ==============================================================================
+# Generic Saving Throw Dialog
+# ==============================================================================
+
+ABILITIES = ["Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma"]
+
+class SavingThrowDialog(QDialog):
+    """Dialog for handling a generic saving throw check."""
+
+    def __init__(self, combatant_name, ability_name, save_bonus, save_dc, parent=None):
+        super().__init__(parent)
+        self.combatant_name = combatant_name
+        self.ability_name = ability_name
+        self.save_bonus = save_bonus
+        self.save_dc = save_dc
+        self.final_roll = 0  # Store the final d20 roll
+        self.succeeded = False # Store the outcome
+
+        self.setWindowTitle(f"{ability_name} Save: {combatant_name}")
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        info_text = (f"<b>{self.combatant_name}</b> must make a DC <b>{self.save_dc}</b> "
+                     f"<b>{self.ability_name}</b> saving throw.\n"
+                     f"{self.ability_name[:3].upper()} Save Bonus: <b>{self.save_bonus:+}</b>")
+        info_label = QLabel(info_text)
+        layout.addWidget(info_label)
+
+        roll_layout = QHBoxLayout()
+        roll_layout.addWidget(QLabel("Roll d20:"))
+        self.roll_input = QSpinBox()
+        self.roll_input.setRange(1, 20)
+        self.roll_input.setToolTip("Enter the d20 roll result")
+        roll_layout.addWidget(self.roll_input)
+        roll_layout.addStretch()
+        layout.addLayout(roll_layout)
+
+        self.result_label = QLabel("Result: --")
+        self.result_label.setStyleSheet("font-weight: bold;")
+        layout.addWidget(self.result_label)
+
+        button_layout = QHBoxLayout()
+        # Changed button text for clarity
+        self.ok_button = QPushButton("Confirm Roll")
+        self.ok_button.clicked.connect(self._finalize_save)
+        self.ok_button.setDefault(True)
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject)
+        button_layout.addStretch()
+        button_layout.addWidget(self.ok_button)
+        button_layout.addWidget(self.cancel_button)
+        layout.addLayout(button_layout)
+
+        # Connect roll input changes to update result display dynamically
+        self.roll_input.valueChanged.connect(self._update_result_display)
+        # Initial display update
+        self._update_result_display()
+
+    def _update_result_display(self):
+        """Updates the result label based on the current roll input."""
+        roll = self.roll_input.value()
+        total_save = roll + self.save_bonus
+        succeeded = total_save >= self.save_dc
+
+        result_text = f"Result: {roll} + {self.save_bonus} = {total_save} vs DC {self.save_dc} \u2192 " # Using arrow
+        if succeeded:
+            result_text += "<span style='color: green;'>Success!</span>"
+        else:
+            result_text += "<span style='color: red;'>Failed!</span>"
+        self.result_label.setText(result_text)
+
+    def _finalize_save(self):
+        """Store the final roll and outcome, then accept the dialog."""
+        roll = self.roll_input.value()
+        self.final_roll = roll
+        total_save = roll + self.save_bonus
+        self.succeeded = total_save >= self.save_dc
+        self.accept() # Close dialog with success
+
+    # Optional: Add getters if needed outside the dialog context, though we'll use attributes directly
+    def get_roll(self):
+        return self.final_roll
+
+    def was_successful(self):
+        return self.succeeded
