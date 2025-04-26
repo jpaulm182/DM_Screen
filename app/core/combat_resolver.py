@@ -398,47 +398,58 @@ class CombatResolver(QObject):
                                                 c["status"] = "Dead"
                                                 print(f"[CombatResolver] {c.get('name', 'Unknown')} died from failed death saves")
                         
-                        # Update the UI
+                        # Update the UI *before* checking end condition based on this turn's results
                         if update_ui_callback:
-                            # Create a deep copy of the combatants to ensure latest HP values
-                            # are passed to the UI after all updates are applied
                             import copy
                             combatants_updated = copy.deepcopy(combatants)
-                            
                             combat_display_state = {
                                 "round": round_num,
                                 "current_turn_index": idx,
                                 "combatants": combatants_updated,
                                 "latest_action": turn_log_entry
                             }
-                            # Print HP values being sent to UI
-                            print(f"\n[CombatResolver] DEBUG: HP VALUES BEING SENT TO UI:")
+                            print(f"\n[CombatResolver] DEBUG: HP VALUES BEING SENT TO UI (End of {combatant.get('name')}'s turn):")
                             for c in combatants_updated:
-                                print(f"[CombatResolver] DEBUG: {c.get('name', 'Unknown')}: HP {c.get('hp', 0)}/{c.get('max_hp', c.get('hp', 0))}")
-                            
-                            # Give the UI a chance to update between turns
+                                print(f"[CombatResolver] DEBUG:   {c.get('name', 'Unknown')}: HP {c.get('hp', 0)}/{c.get('max_hp', c.get('hp', 0))}, Status: {c.get('status', '')}")
                             update_ui_callback(combat_display_state)
-                            # Small delay to let UI update and for more natural combat flow
-                            time.sleep(0.5)
-                            
+                            time.sleep(0.5) # Small delay
+
+                        # --- BEGIN ADDED DEBUG LOGGING (Moved after UI update) ---
+                        print(f"\n[CombatResolver] DEBUG: STATE BEFORE END CHECK (Round {round_num}, After Actor: {combatant.get('name')}'s turn)")
+                        for check_c in combatants: # Check the main combatants list
+                            print(f"[CombatResolver] DEBUG:   {check_c.get('name', 'Unknown')}: HP {check_c.get('hp', 'N/A')}, Status '{check_c.get('status', 'N/A')}', Type '{check_c.get('type', 'N/A')}'")
+                        # --- END ADDED DEBUG LOGGING ---
+
                         # After each turn, check if combat is over
                         remaining_monsters = [c for c in combatants if c.get("type", "").lower() == "monster" and c.get("hp", 0) > 0 and c.get("status", "").lower() != "dead"]
-                        remaining_characters = [c for c in combatants if c.get("type", "").lower() != "monster" and (c.get("hp", 0) > 0 or c.get("status", "").lower() == "unconscious" or c.get("status", "").lower() == "stable")]
-                        
+                        remaining_characters = [c for c in combatants if c.get("type", "").lower() != "monster" and (c.get("hp", 0) > 0 or c.get("status", "").lower() in ["unconscious", "stable"])]
+
                         # Check end condition again after turn
                         combat_should_end_after_turn = False
-                        if not remaining_monsters and not remaining_characters:
+                        if not remaining_monsters and not remaining_characters: # Both sides wiped?
+                            print("[CombatResolver] Ending check: Both sides wiped.")
                             combat_should_end_after_turn = True
-                        elif not remaining_characters:
-                            if len(remaining_monsters) <= 1:
-                                combat_should_end_after_turn = True
-                        elif not remaining_monsters:
+                        elif not remaining_characters: # Only monsters left?
+                            print("[CombatResolver] Ending check: No characters remaining (Monsters win).")
+                            combat_should_end_after_turn = True
+                        elif not remaining_monsters: # Only characters left?
+                             print("[CombatResolver] Ending check: No monsters remaining (Characters win).")
                              combat_should_end_after_turn = True
-                             
+
                         if combat_should_end_after_turn:
                             print(f"[CombatResolver] Combat ending after turn: Monsters alive={len(remaining_monsters)}, Characters alive={len(remaining_characters)}")
                             break # Break inner turn loop
-                    
+
+                    # --- End of turn loop ('for idx in ...') ---
+
+                    # Check if the inner loop was broken by an end condition
+                    if combat_should_end_after_turn:
+                        print(f"[CombatResolver] Breaking outer round loop due to end condition after turn.")
+                        break # Break outer round loop
+
+                    # End of round processing (only if inner loop completed naturally)
+                    # ... (existing end of round code: increment round_num, update state, etc.) ...
+
                     # Check end condition at end of round (after processing all turns)
                     remaining_monsters_end_round = [c for c in combatants if c.get("type", "").lower() == "monster" and c.get("hp", 0) > 0 and c.get("status", "").lower() != "dead"]
                     remaining_characters_end_round = [c for c in combatants if c.get("type", "").lower() != "monster" and (c.get("hp", 0) > 0 or c.get("status", "").lower() == "unconscious" or c.get("status", "").lower() == "stable")]
@@ -509,6 +520,53 @@ class CombatResolver(QObject):
                     except Exception as e:
                         print(f"[CombatResolver] Error updating state combatants: {e}")
 
+                    # --- BEGIN ADDED DEBUG LOGGING ---
+                    print(f"\n[CombatResolver] DEBUG: STATE BEFORE END CHECK (Round {round_num}, Actor: {combatant.get('name')})")
+                    for check_c in combatants:
+                        print(f"[CombatResolver] DEBUG:   {check_c.get('name', 'Unknown')}: HP {check_c.get('hp', 'N/A')}, Status '{check_c.get('status', 'N/A')}', Type '{check_c.get('type', 'N/A')}'")
+                    # --- END ADDED DEBUG LOGGING ---
+
+                    # Update the UI
+                    if update_ui_callback:
+                        # Create a deep copy of the combatants to ensure latest HP values
+                        # are passed to the UI after all updates are applied
+                        import copy
+                        combatants_updated = copy.deepcopy(combatants)
+                        
+                        combat_display_state = {
+                            "round": round_num,
+                            "current_turn_index": idx,
+                            "combatants": combatants_updated,
+                            "latest_action": turn_log_entry
+                        }
+                        # Print HP values being sent to UI
+                        print(f"\n[CombatResolver] DEBUG: HP VALUES BEING SENT TO UI:")
+                        for c in combatants_updated:
+                            print(f"[CombatResolver] DEBUG: {c.get('name', 'Unknown')}: HP {c.get('hp', 0)}/{c.get('max_hp', c.get('hp', 0))}")
+                        
+                        # Give the UI a chance to update between turns
+                        update_ui_callback(combat_display_state)
+                        # Small delay to let UI update and for more natural combat flow
+                        time.sleep(0.5)
+                        
+                    # After each turn, check if combat is over
+                    remaining_monsters = [c for c in combatants if c.get("type", "").lower() == "monster" and c.get("hp", 0) > 0 and c.get("status", "").lower() != "dead"]
+                    remaining_characters = [c for c in combatants if c.get("type", "").lower() != "monster" and (c.get("hp", 0) > 0 or c.get("status", "").lower() == "unconscious" or c.get("status", "").lower() == "stable")]
+                    
+                    # Check end condition again after turn
+                    combat_should_end_after_turn = False
+                    if not remaining_monsters and not remaining_characters:
+                        combat_should_end_after_turn = True
+                    elif not remaining_characters:
+                        if len(remaining_monsters) <= 1:
+                            combat_should_end_after_turn = True
+                    elif not remaining_monsters:
+                         combat_should_end_after_turn = True
+                         
+                    if combat_should_end_after_turn:
+                        print(f"[CombatResolver] Combat ending after turn: Monsters alive={len(remaining_monsters)}, Characters alive={len(remaining_characters)}")
+                        break # Break inner turn loop
+                
                 # Prepare final summary
                 survivors = [c for c in combatants if c.get("hp", 0) > 0]
                 summary = {
