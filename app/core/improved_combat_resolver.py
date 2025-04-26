@@ -116,7 +116,20 @@ class ImprovedCombatResolver(QObject):
         round_num = state.get("round", 1)
         max_rounds = 50  # Failsafe to prevent infinite loops
         log = []  # Combat log for transparency
-        
+
+        # --- FIX: Ensure active_combatants is initialized at the start ---
+        if not state.get("active_combatants"):
+            # Initialize to all living combatants in initiative order
+            state["active_combatants"] = [
+                i for i in sorted(range(len(combatants)), key=lambda i: -int(combatants[i].get("initiative", 0)))
+                if combatants[i].get("hp", 0) > 0 or (
+                    combatants[i].get("status", "").lower() in ["unconscious", "stable"] and 
+                    combatants[i].get("type", "").lower() != "monster"
+                )
+            ]
+            # Add a comment for clarity
+            # This ensures all valid combatants get a turn each round.
+
         # Main combat loop
         while round_num <= max_rounds:
             print(f"[ImprovedCombatResolver] Starting round {round_num}")
@@ -151,32 +164,24 @@ class ImprovedCombatResolver(QObject):
                 break
             
             # Process each combatant's turn in initiative order
-            current_idx = None
-            while True:
-                # Get the next combatant in the initiative order
-                next_idx, end_of_round = get_next_combatant(state, current_idx)
-                
-                # If we've reached the end of the round, break to the next round
-                if end_of_round:
-                    break
-                    
-                current_idx = next_idx
+            # --- FIX: Use a simple for-loop over active_combatants to ensure all get a turn ---
+            for current_idx in state["active_combatants"]:
                 combatant = combatants[current_idx]
-                
+
                 # Check if the combatant is dead or inactive
                 if combatant.get("hp", 0) <= 0 and combatant.get("status", "").lower() == "dead":
                     continue
-                
+
                 # For unconscious characters, process death saves
                 if combatant.get("type", "").lower() != "monster" and combatant.get("hp", 0) <= 0 and combatant.get("status", "").lower() in ["unconscious", ""]:
                     self._process_death_save(combatant, state, current_idx, round_num, log, update_ui_callback)
                     continue
-                
+
                 # Process normal turn for conscious combatants
                 self._process_turn_with_improved_initiative(
                     state, current_idx, round_num, dice_roller, log, update_ui_callback
                 )
-                
+
                 # Check if combat should end after this turn
                 if self._should_end_combat(state):
                     break
@@ -188,7 +193,18 @@ class ImprovedCombatResolver(QObject):
             # End of round, update state for the next round
             state = update_combat_state_for_next_round(state)
             round_num = state.get("round", round_num + 1)
-            
+
+            # --- FIX: Re-initialize active_combatants for the new round ---
+            combatants = state.get("combatants", [])
+            state["active_combatants"] = [
+                i for i in sorted(range(len(combatants)), key=lambda i: -int(combatants[i].get("initiative", 0)))
+                if combatants[i].get("hp", 0) > 0 or (
+                    combatants[i].get("status", "").lower() in ["unconscious", "stable"] and 
+                    combatants[i].get("type", "").lower() != "monster"
+                )
+            ]
+            # This ensures all valid combatants get a turn each round.
+
             # Check if we've hit the maximum rounds
             if round_num > max_rounds:
                 print(f"[ImprovedCombatResolver] Maximum rounds ({max_rounds}) reached, ending combat")

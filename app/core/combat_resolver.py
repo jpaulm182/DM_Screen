@@ -430,8 +430,12 @@ class CombatResolver(QObject):
                             print("[CombatResolver] Ending check: Both sides wiped.")
                             combat_should_end_after_turn = True
                         elif not remaining_characters: # Only monsters left?
-                            print("[CombatResolver] Ending check: No characters remaining (Monsters win).")
-                            combat_should_end_after_turn = True
+                            # Only end if 1 or 0 monsters are left
+                            if len(remaining_monsters) <= 1:
+                                print("[CombatResolver] Ending check: No characters remaining and <=1 monster left (Monsters win/Last monster standing).")
+                                combat_should_end_after_turn = True
+                            else:
+                                print(f"[CombatResolver] End check: No characters, but {len(remaining_monsters)} monsters remain. Combat continues.")
                         elif not remaining_monsters: # Only characters left?
                              print("[CombatResolver] Ending check: No monsters remaining (Characters win).")
                              combat_should_end_after_turn = True
@@ -1117,54 +1121,171 @@ class CombatResolver(QObject):
 
                     # Handle damage dealt (reduce HP for targets)
                     for target_name, dmg in resolution.get("damage_dealt", {}).items():
-                        if not isinstance(dmg, (int, float)):
+                        target = next((c for c in combatants if c.get("name") == target_name), None)
+                        if not target:
+                            print(f"[CombatResolver] Target '{target_name}' not found for damage.")
+                            continue
+
+                        # --- REVISED Saving Throw & Damage Logic ---
+                        save_succeeded = False
+                        save_required = False
+                        final_dmg = 0
+                        action_name = resolution.get("action", "Unknown Action")
+                        
+                        # Find the action definition for the active combatant
+                        action_details = None
+                        if "actions" in active_combatant:
+                             action_details = next((a for a in active_combatant["actions"] if isinstance(a, dict) and a.get("name") == action_name), None)
+                        
+                        # 1. Check if the action requires a saving throw based on its description
+                        if action_details and "saving throw" in action_details.get("description", "").lower():
+                            save_required = True
+                            print(f"[CombatResolver] Action '{action_name}' requires a saving throw.")
+                            
+                            # Extract DC and Ability from action description (more reliable)
+                            save_dc = 15 # Default fallback DC
+                            save_ability_name = "Dexterity" # Default fallback ability
+                            damage_on_save = "half" # Default assumption
+                            
+                            # Regex to find "DC X Ability saving throw"
+                            save_match = re.search(r"DC\s*(\d+)\s*(\w+)\s*saving throw", action_details["description"], re.IGNORECASE)
+                            if save_match:
+                                save_dc = int(save_match.group(1))
+                                save_ability_name = save_match.group(2).capitalize()
+                                print(f"[CombatResolver] Extracted Save DC {save_dc} and Ability {save_ability_name} from action description.")
+                            else:
+                                print(f"[CombatResolver] WARNING: Could not extract DC/Ability from action description: {action_details['description']}. Using defaults DC {save_dc} {save_ability_name}.")
+
+                            # Determine damage on save from description
+                            if "half as much damage on a successful one" in action_details["description"].lower():
+                                damage_on_save = "half"
+                            elif "no damage on a successful save" in action_details["description"].lower(): # Check for 'no damage' case
+                                damage_on_save = "none"
+                            else:
+                                damage_on_save = "full" # Assume full damage on fail, maybe half on success if not specified
+                                print(f"[CombatResolver] Assuming '{damage_on_save}' damage on successful save for {action_name}")
+
+                            # Get target's save modifier
+                            # Map ability name to stat abbreviation (e.g., Dexterity -> dex)
+                            ability_abbr_map = {"Strength": "str", "Dexterity": "dex", "Constitution": "con", "Intelligence": "int", "Wisdom": "wis", "Charisma": "cha"}
+                            ability_abbr = ability_abbr_map.get(save_ability_name, "dex") # Default to dex if name is weird
+                            
+                            target_stat_value = target.get(ability_abbr, 10) # Default to 10 if stat missing
+                            save_modifier = (target_stat_value - 10) // 2
+                            print(f"[CombatResolver] Target {target_name}'s {save_ability_name} modifier: {save_modifier}")
+                            
+                            # Roll the save INTERNALLY
+                            save_roll_expr = f"1d20+{save_modifier}"
                             try:
-                                # Attempt to convert to int
-                                dmg = int(dmg)
+                                save_roll_result = dice_roller(save_roll_expr)
+                                if isinstance(save_roll_result, (int, float)): # Check if roll succeeded
+                                     save_roll_result = int(save_roll_result)
+                                     # Append this internally rolled save to dice_results for logging
+                                     dice_results.append({
+                                         'expression': save_roll_expr,
+                                         'result': save_roll_result,
+                                         'purpose': f"{target_name}'s {save_ability_name} save vs DC {save_dc}"
+                                     })
+                                     print(f"[CombatResolver] Internally rolled save for {target_name}: {save_roll_result} vs DC {save_dc}")
+                                     if save_roll_result >= save_dc:
+                                         save_succeeded = True
+                                         print(f"[CombatResolver] {target_name} succeeded on the internal save!")
+                                     else:
+                                         save_succeeded = False
+                                         print(f"[CombatResolver] {target_name} failed the internal save.")
+                                else:
+                                     print(f"[CombatResolver] ERROR: Internal save roll failed or returned invalid type: {save_roll_result}. Assuming failure.")
+                                     save_succeeded = False
+                                     # Log the failed roll attempt
+                                     dice_results.append({
+                                         'expression': save_roll_expr,
+                                         'result': 'Error',
+                                         'purpose': f"{target_name}'s {save_ability_name} save vs DC {save_dc} (Roll Failed)"
+                                     })
+                            except Exception as e:
+                                print(f"[CombatResolver] CRITICAL ERROR rolling internal save '{save_roll_expr}': {e}. Assuming failure.")
+                                save_succeeded = False
+                                # Log the failed roll attempt
+                                dice_results.append({
+                                    'expression': save_roll_expr,
+                                    'result': 'Error',
+                                    'purpose': f"{target_name}'s {save_ability_name} save vs DC {save_dc} (Roll Exception)"
+                                })
+                        
+                        # 2. Validate and get initial damage amount (from LLM or dice)
+                        initial_dmg = 0
+                        if isinstance(dmg, (int, float)):
+                            initial_dmg = int(dmg)
+                        else:
+                            try:
+                                initial_dmg = int(dmg)
                             except (ValueError, TypeError):
-                                print(f"[CombatResolver] Invalid damage value: {dmg} for target {target_name}")
-                                # Try to extract any damage from dice results
+                                print(f"[CombatResolver] Invalid initial damage value: {dmg} for target {target_name}. Trying dice fallback.")
+                                # Fallback: Try extracting from dice results directly
                                 damage_dice = [d for d in dice_results if "damage" in d.get("purpose", "").lower()]
                                 if damage_dice:
-                                    # Use the first damage roll result
                                     try:
-                                        dmg = int(damage_dice[0].get("result", 0))
-                                        print(f"[CombatResolver] Using damage from dice result: {dmg}")
+                                        initial_dmg = int(damage_dice[0].get("result", 0))
+                                        print(f"[CombatResolver] Using damage from dice result: {initial_dmg}")
                                     except (ValueError, TypeError):
-                                        dmg = 0
-                                        print(f"[CombatResolver] Could not use dice damage value")
+                                        print(f"[CombatResolver] Could not parse damage dice result.")
+                                        initial_dmg = 0
                                 else:
-                                    dmg = 0
+                                    initial_dmg = 0
                         
-                        # Ensure there's at least some damage if dice were rolled
-                        if dmg == 0 and 'dice_results' in locals() and dice_results:
-                            damage_dice = [d for d in dice_results if "damage" in d.get("purpose", "").lower()]
+                        # 3. Adjust damage based on saving throw outcome
+                        if save_required:
+                            if save_succeeded:
+                                if damage_on_save == "half":
+                                    final_dmg = initial_dmg // 2
+                                    print(f"[CombatResolver] Applying half damage ({final_dmg}) due to successful save.")
+                                elif damage_on_save == "none":
+                                    final_dmg = 0
+                                    print(f"[CombatResolver] Applying no damage due to successful save.")
+                                else: # Includes 'full' which implies full damage on fail, half on success? Revisit this assumption if needed.
+                                     final_dmg = initial_dmg // 2 # Default to half damage on save if not specified otherwise
+                                     print(f"[CombatResolver] Applying default half damage ({final_dmg}) due to successful save.")
+                            else: # Save failed
+                                final_dmg = initial_dmg
+                                print(f"[CombatResolver] Applying full damage ({final_dmg}) due to failed save.")
+                        else: 
+                            # 4. If no save required, check attack roll vs AC
+                            final_dmg = 0 # Default to 0 unless attack hits
                             attack_rolls = [d for d in dice_results if "attack" in d.get("purpose", "").lower()]
-                            
-                            # If damage dice were rolled and attack rolls were successful, use the damage
-                            if damage_dice and attack_rolls:
+                            if attack_rolls:
                                 try:
                                     attack_value = int(attack_rolls[0].get("result", 0))
-                                    # Find the target's AC
-                                    target = next((c for c in combatants if c.get("name") == target_name), None)
-                                    target_ac = target.get("ac", 15) if target else 15
-                                    
-                                    # If the attack hit, apply damage
+                                    target_ac = target.get("ac", 15) # Use target's AC
+                                    print(f"[CombatResolver] Checking attack roll {attack_value} vs AC {target_ac} for {target_name}")
                                     if attack_value >= target_ac:
-                                        try:
-                                            dmg = int(damage_dice[0].get("result", 0))
-                                            print(f"[CombatResolver] Attack roll {attack_value} >= AC {target_ac}, applying damage {dmg}")
-                                        except (ValueError, TypeError):
-                                            dmg = 0
-                                            print(f"[CombatResolver] Could not parse damage dice result")
-                                except (ValueError, TypeError):
-                                    print(f"[CombatResolver] Could not parse attack roll")
+                                        final_dmg = initial_dmg # Apply full damage if attack hits
+                                        print(f"[CombatResolver] Attack hit! Applying damage {final_dmg}.")
+                                    else:
+                                        final_dmg = 0 # Ensure damage is zero if attack missed
+                                        print(f"[CombatResolver] Attack missed. No damage applied.")
+                                except (ValueError, TypeError, IndexError) as e:
+                                    print(f"[CombatResolver] Could not parse attack roll for damage check: {e}. Assuming miss.")
+                                    final_dmg = 0
+                            else:
+                                # If no attack roll found for non-save action, assume it hits? Or apply 0 damage?
+                                # Let's assume 0 damage if no attack roll present for a non-save action.
+                                print(f"[CombatResolver] No attack roll found for action '{action_name}'. Applying 0 damage.")
+                                final_dmg = 0
                         
-                        target = next((c for c in combatants if c.get("name") == target_name), None)
-                        if target:
-                            new_hp = max(0, target.get("hp", 0) - int(dmg))
-                            updates.append({"name": target_name, "hp": new_hp})
-                            print(f"[CombatResolver] Applying {dmg} damage to {target_name}: HP {target.get('hp', 0)} → {new_hp}")
+                        # 5. Apply the final calculated damage
+                        if final_dmg > 0:
+                            new_hp = max(0, target.get("hp", 0) - final_dmg)
+                            # Check if update already exists for this target
+                            existing_update = next((u for u in updates if u.get("name") == target_name), None)
+                            if existing_update:
+                                existing_update["hp"] = new_hp # Update existing entry
+                            else:
+                                updates.append({"name": target_name, "hp": new_hp}) # Add new entry
+                            print(f"[CombatResolver] Applying {final_dmg} damage to {target_name}: HP {target.get('hp', 0)} -> {new_hp}")
+                        else:
+                            print(f"[CombatResolver] No damage applied to {target_name}.")
+
+                        # --- End REVISED Logic ---
 
                     # Handle healing (increase HP up to max)
                     for target_name, heal in resolution.get("healing", {}).items():
@@ -1285,12 +1406,17 @@ class CombatResolver(QObject):
         # Get lists of available and unavailable recharge abilities
         available_recharge_abilities = []
         unavailable_recharge_abilities = []
-        
-        for name, info in active_combatant.get("recharge_abilities", {}).items():
-            if info.get("available", False):
-                available_recharge_abilities.append(f"{name} ({info.get('recharge_text', 'Recharge ability')})")
-            else:
-                unavailable_recharge_abilities.append(f"{name} ({info.get('recharge_text', 'Recharge ability')})")
+        # Use try-except for potential errors during processing
+        try: 
+            for name, info in active_combatant.get("recharge_abilities", {}).items():
+                if info.get("available", False):
+                    available_recharge_abilities.append(f"{name} ({info.get('recharge_text', 'Recharge ability')})")
+                else:
+                    unavailable_recharge_abilities.append(f"{name} ({info.get('recharge_text', 'Recharge ability')})")
+        except Exception as e:
+            print(f"[CombatResolver] Error processing recharge abilities: {e}")
+            # Handle error case gracefully, e.g., log or default behavior
+            pass  # Example: continue without adding abilities
         
         # Format initiative order
         initiative_order = []
@@ -1486,17 +1612,14 @@ class CombatResolver(QObject):
         # Add details about requesting dice rolls
         prompt += '  "dice_requests": [\n    {"expression": "1d20+5", "purpose": "Attack roll"},\n    {"expression": "2d6+3", "purpose": "Damage roll"}\n  ]\n}\n\n'
         
-        prompt += "IMPORTANT GUIDELINES:\n"
-        prompt += "- For 'action', specify a clear action like 'Multiattack', 'Cast Fireball', etc.\n"
-        prompt += "- For 'target', provide a specific name if you're targeting someone\n"
-        prompt += "- Always include 'dice_requests' for any checks, attacks, or damage needed\n"
-        prompt += "- For attacks, include both attack and damage dice\n"
-        prompt += "- For spells with saving throws, include the save DC and effect dice\n"
+        # Ensure prompt is a string, even if errors occurred
+        if not isinstance(prompt, str):
+            prompt = "Error: Prompt generation failed."
         
         return prompt
 
     def _process_death_save(self, combatant):
-        """Process a death save for an unconscious character"""
+        """Process a death saving throw for a combatant."""
         import random
         
         # Set up death saves tracking if not present
@@ -1537,152 +1660,42 @@ class CombatResolver(QObject):
             combatant["status"] = "Dead"
             print(f"[CombatResolver] {combatant['name']} has died after 3 failed death saves!")
 
-    # Keep legacy methods for backwards compatibility
-    def resolve_combat_async(self, combat_state, callback):
-        # Legacy method retained for backwards compatibility
-        print("Legacy resolve_combat_async called - consider using resolve_combat_turn_by_turn instead")
-        # Create a simplified prompt
-        prompt = self._create_combat_prompt(combat_state)
-        
-        try:
-            # Get available models
-            available_models = self.llm_service.get_available_models()
-            if not available_models:
-                callback(None, "No LLM models available. Check your API keys.")
-                return
-            model_id = available_models[0]["id"]
-            
-            # Call the LLM service
-            self.llm_service.generate_completion_async(
-                model=model_id,
-                messages=[{"role": "user", "content": prompt}],
-                callback=lambda response, error: self._handle_llm_response(response, error, callback),
-                temperature=0.7,
-                max_tokens=1000
-            )
-        except Exception as e:
-            callback(None, f"Error calling LLM service: {str(e)}")
-            
-    def resolve_combat_turn_by_turn_async(self, combat_state, dice_roller, callback):
-        # Redirect to the new implementation
-        self.resolve_combat_turn_by_turn(combat_state, dice_roller, callback)
-        
-    # Keep legacy methods for backwards compatibility
-    def _create_combat_prompt(self, combat_state):
-        # Simplified legacy prompt creation
-        round_num = combat_state.get("round", 1)
-        combatants = combat_state.get("combatants", [])
-        
-        combatant_str = "\n".join([
-            f"- {c.get('name', 'Unknown')}: HP {c.get('hp', 0)}/{c.get('max_hp', c.get('hp', 0))}, AC {c.get('ac', 10)}, Status: {c.get('status', 'OK')}"
-            for c in combatants
-        ])
-        
-        prompt = f"""
-You are a Dungeons & Dragons 5e Dungeon Master. Resolve this combat encounter with a brief narrative and status updates.
-
-Combat State:
-Round: {round_num}
-Combatants:
-{combatant_str}
-
-Response format:
-{{
-  "narrative": "Brief description of combat outcome",
-  "updates": [
-    {{"name": "Combatant1", "hp": 25, "status": "OK"}},
-    ...
-  ]
-}}
-
-Return ONLY the JSON object with no other text.
-"""
-        return prompt
-
-    def _handle_llm_response(self, response, error, callback):
-        # Legacy handler for backward compatibility
-        if error:
-            callback(None, f"LLM Error: {error}")
-            return
-            
-        if not response:
-            callback(None, "Empty response from LLM")
-            return
-             
-        try:
-            # Extract JSON from response
-            json_match = re.search(r'\{[\s\S]*\}', response)
-            if json_match:
-                json_str = json_match.group(0)
-                result = _json.loads(json_str)
-                callback(result, None)
-            else:
-                callback(None, f"Could not find JSON in LLM response: {response}")
-        except Exception as e:
-            callback(None, f"Error parsing LLM response: {str(e)}\nResponse: {response}")
-
     def _process_hp_update(self, target_name, hp_update, current_hp):
         """
-        Process an HP update value to ensure it's valid and properly formatted.
+        Processes an HP update instruction, handling relative changes.
         
         Args:
-            target_name: Name of the target combatant
-            hp_update: The HP update value (could be integer, string, or None)
-            current_hp: The current HP value to compare against
+            target_name: Name of the target combatant.
+            hp_update: The HP update value (can be int, '+X', '-X').
+            current_hp: The current HP of the target.
             
         Returns:
-            Validated integer HP value
+            The new HP value (int).
         """
-        # If hp_update is None, return the current HP
-        if hp_update is None:
-            print(f"[CombatResolver] HP update for {target_name} is None, keeping current HP {current_hp}")
+        try:
+            if isinstance(hp_update, str):
+                if hp_update.startswith('+'):
+                    change = int(hp_update[1:])
+                    return current_hp + change
+                elif hp_update.startswith('-'):
+                    change = int(hp_update[1:])
+                    return max(0, current_hp - change)
+                else:
+                    # Assume absolute value if no sign
+                    return int(hp_update)
+            elif isinstance(hp_update, (int, float)):
+                # If it's already a number, assume absolute value
+                return int(hp_update)
+            else:
+                print(f"[CombatResolver] Invalid hp_update type for {target_name}: {type(hp_update)}. Defaulting to current HP.")
+                return current_hp
+        except (ValueError, TypeError) as e:
+            print(f"[CombatResolver] Error processing HP update '{hp_update}' for {target_name}: {e}. Defaulting to current HP.")
             return current_hp
-        
-        # If hp_update is an integer, use it directly
-        if isinstance(hp_update, int):
-            print(f"[CombatResolver] HP update for {target_name} is already an integer: {hp_update}")
-            return hp_update
-            
-        # If hp_update is a string, try to convert it to an integer
-        if isinstance(hp_update, str):
-            # Clean up the string
-            hp_str = hp_update.strip()
-            
-            # Try to extract a plain integer
-            try:
-                return int(hp_str)
-            except ValueError:
-                pass
-                
-            # Try to extract it from a format like "X/Y" (current/max HP)
-            try:
-                if '/' in hp_str:
-                    parts = hp_str.split('/')
-                    return int(parts[0].strip())
-            except (ValueError, IndexError):
-                pass
-                
-            # Try to handle patterns like "reduced to X" or "takes X damage"
-            try:
-                if "reduced to " in hp_str.lower():
-                    remaining_hp = int(re.search(r'reduced to (\d+)', hp_str.lower()).group(1))
-                    return remaining_hp
-                elif "takes " in hp_str.lower() and " damage" in hp_str.lower():
-                    damage_match = re.search(r'takes (\d+) damage', hp_str.lower())
-                    if damage_match and current_hp is not None:
-                        damage = int(damage_match.group(1))
-                        return max(0, current_hp - damage)
-                elif "heals " in hp_str.lower() or "healing " in hp_str.lower():
-                    healing_match = re.search(r'(?:heals|healing) (\d+)', hp_str.lower())
-                    if healing_match and current_hp is not None:
-                        healing = int(healing_match.group(1))
-                        return current_hp + healing
-            except (ValueError, AttributeError, TypeError):
-                pass
-        
-        # If all else fails, return the current HP or 0 if that's None too
-        print(f"[CombatResolver] Could not parse HP update '{hp_update}' for {target_name}, using current HP {current_hp or 0}")
-        return current_hp if current_hp is not None else 0 
+        except Exception as e:
+            # Catch any other unexpected errors during HP processing
+            print(f"[CombatResolver] Unexpected error processing HP update for {target_name}: {e}. Defaulting to current HP.")
+            return current_hp
 
     def _process_auras(self, active_combatant, all_combatants):
         """
@@ -2423,3 +2436,87 @@ IMPORTANT: If the action involves using a recharge ability that is not available
                 formatted_lines.append(f"{expr} ⇒ {res}")
 
         return "\n".join(formatted_lines)
+
+    # Keep legacy methods for backwards compatibility
+    def resolve_combat_async(self, combat_state, callback):
+        # Legacy method retained for backwards compatibility
+        print("Legacy resolve_combat_async called - consider using resolve_combat_turn_by_turn instead")
+        # Create a simplified prompt
+        prompt = self._create_combat_prompt(combat_state)
+        
+        try:
+            # Get available models
+            available_models = self.llm_service.get_available_models()
+            if not available_models:
+                callback(None, "No LLM models available. Check your API keys.")
+                return
+            model_id = available_models[0]["id"]
+            
+            # Call the LLM service
+            self.llm_service.generate_completion_async(
+                model=model_id,
+                messages=[{"role": "user", "content": prompt}],
+                callback=lambda response, error: self._handle_llm_response(response, error, callback),
+                temperature=0.7,
+                max_tokens=1000
+            )
+        except Exception as e:
+            callback(None, f"Error calling LLM service: {str(e)}")
+            
+    def resolve_combat_turn_by_turn_async(self, combat_state, dice_roller, callback):
+        # Redirect to the new implementation
+        self.resolve_combat_turn_by_turn(combat_state, dice_roller, callback)
+        
+    # Keep legacy methods for backwards compatibility
+    def _create_combat_prompt(self, combat_state):
+        # Simplified legacy prompt creation
+        round_num = combat_state.get("round", 1)
+        combatants = combat_state.get("combatants", [])
+        
+        combatant_str = "\n".join([
+            f"- {c.get('name', 'Unknown')}: HP {c.get('hp', 0)}/{c.get('max_hp', c.get('hp', 0))}, AC {c.get('ac', 10)}, Status: {c.get('status', 'OK')}"
+            for c in combatants
+        ])
+        
+        prompt = f"""
+You are a Dungeons & Dragons 5e Dungeon Master. Resolve this combat encounter with a brief narrative and status updates.
+
+Combat State:
+Round: {round_num}
+Combatants:
+{combatant_str}
+
+Response format:
+{{
+  \"narrative\": \"Brief description of combat outcome\",
+  \"updates\": [
+    {{\"name\": \"Combatant1\", \"hp\": 25, \"status\": \"OK\"}},
+    ...
+  ]
+}}
+
+Return ONLY the JSON object with no other text.
+"""
+        return prompt
+
+    def _handle_llm_response(self, response, error, callback):
+        # Legacy handler for backward compatibility
+        if error:
+            callback(None, f"LLM Error: {error}")
+            return
+            
+        if not response:
+            callback(None, "Empty response from LLM")
+            return
+             
+        try:
+            # Extract JSON from response
+            json_match = re.search(r'\{[\s\S]*\}', response)
+            if json_match:
+                json_str = json_match.group(0)
+                result = _json.loads(json_str)
+                callback(result, None)
+            else:
+                callback(None, f"Could not find JSON in LLM response: {response}")
+        except Exception as e:
+            callback(None, f"Error parsing LLM response: {str(e)}\nResponse: {response}")
