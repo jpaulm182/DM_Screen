@@ -45,6 +45,61 @@ class CombatantDetailsDialog(QDialog):
         self.setMinimumSize(450, 500) # Increased min height slightly
         self._setup_ui() # We will add this call back later
 
+# --- Dialog Classes --- 
+
+
+class DeathSavesDialog(QDialog):
+    """Dialog for tracking death saving throws"""
+    def __init__(self, parent=None, current_saves=None):
+        super().__init__(parent)
+        self.setWindowTitle("Death Saving Throws")
+        self.current_saves = current_saves or {"successes": 0, "failures": 0}
+        self._setup_ui()
+    
+    def _setup_ui(self):
+        layout = QVBoxLayout()
+        
+        # Successes
+        success_group = QGroupBox("Successes")
+        success_layout = QHBoxLayout()
+        self.success_checks = []
+        for i in range(3):
+            check = QCheckBox()
+            check.setChecked(i < self.current_saves["successes"])
+            self.success_checks.append(check)
+            success_layout.addWidget(check)
+        success_group.setLayout(success_layout)
+        layout.addWidget(success_group)
+        
+        # Failures
+        failure_group = QGroupBox("Failures")
+        failure_layout = QHBoxLayout()
+        self.failure_checks = []
+        for i in range(3):
+            check = QCheckBox()
+            check.setChecked(i < self.current_saves["failures"])
+            self.failure_checks.append(check)
+            failure_layout.addWidget(check)
+        failure_group.setLayout(failure_layout)
+        layout.addWidget(failure_group)
+        
+        # Buttons
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        
+        self.setLayout(layout)
+    
+    def get_saves(self):
+        """Get the current death saves state"""
+        return {
+            "successes": sum(1 for c in self.success_checks if c.isChecked()),
+            "failures": sum(1 for c in self.failure_checks if c.isChecked())
+        }
+
 
     def _setup_ui(self):
         """Set up the dialog UI with a compact layout"""

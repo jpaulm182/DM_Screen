@@ -1,0 +1,34 @@
+{
+  "replacements": [
+    {
+      "type": "class",
+      "name": "DeathSavesDialog",
+      "import": "from .combat_dialogs import DeathSavesDialog"
+    },
+    {
+      "type": "class",
+      "name": "DamageDialog",
+      "import": "from .combat_dialogs import DamageDialog"
+    },
+    {
+      "type": "class",
+      "name": "ConcentrationDialog",
+      "import": "from .combat_dialogs import ConcentrationDialog"
+    },
+    {
+      "type": "class",
+      "name": "SavingThrowDialog",
+      "import": "from .combat_dialogs import SavingThrowDialog"
+    },
+    {
+      "type": "class",
+      "name": "CombatantDetailsDialog",
+      "import": "from .combat_dialogs import CombatantDetailsDialog"
+    },
+    {
+      "type": "class",
+      "name": "CombatantManager",
+      "import": "from .combatant_manager import CombatantManager"
+    }
+  ]
+}

@@ -1,78 +1,4 @@
-# app/ui/panels/combat_tracker_panel.py - Combat tracker panel
-"""
-Combat tracker panel for managing initiative and combat encounters
-
-Features:
-- Initiative tracking with auto-sorting
-- HP and AC management
-- Status conditions with quick apply
-- Death saving throws tracking
-- Concentration tracking
-- Combat timer
-- Round/turn tracking
-- Keyboard shortcuts
-- Quick HP updates
-- Combat log integration
-- View monster and character details
-- Inline details panel for quick reference
-"""
-
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, QLabel,
-    QSpinBox, QLineEdit, QPushButton, QHeaderView, QComboBox, QCheckBox,
-    QGroupBox, QWidget, QStyledItemDelegate, QStyle, QToolButton,
-    QTabWidget, QScrollArea, QFormLayout, QFrame, QSplitter, QApplication,
-    QSizePolicy, QTextEdit, QMenu, QMessageBox, QDialog, QDialogButtonBox,
-    QAbstractItemView,
-    QInputDialog
-)
-from PySide6.QtCore import Qt, QTimer, Signal, Slot, QSize, QMetaObject, Q_ARG, QObject, QPoint, QRect, QEvent, QThread
-from PySide6.QtGui import QColor, QFont, QTextCharFormat, QBrush, QPixmap, QImage, QTextCursor, QPalette, QAction, QKeySequence
-import random
-import re
-import json
-import copy
-import time
-import threading
-import gc
-import hashlib
-import logging # Add logging import
-
-from .combat_dialogs import (
-    DamageDialog, DeathSavesDialog, ConcentrationDialog,
-    CombatantDetailsDialog, # Ensure this line is not commented out
-    SavingThrowDialog, ABILITIES
-)
-
-from .combat_utils import get_attr, roll_dice, extract_dice_formula
-
-from app.ui.panels.base_panel import BasePanel
-from app.ui.panels.panel_category import PanelCategory
-
-# --- Modularized imports ---
-from app.ui.panels.combat_constants import CONDITIONS
-# Around line 48
-from app.ui.panels.combat_tracker_delegates import CurrentTurnDelegate, HPUpdateDelegate, InitiativeUpdateDelegate
-from app.ui.panels.combat_utils import extract_dice_formula, roll_dice, get_attr
-from app.ui.panels.combatant_manager import CombatantManager
-
-# Import dialogs from the new location
-from .combat_tracker.combat_tracker_dialogs import DeathSavesDialog
-# Import the new Combatant Manager
-from .combat_tracker.combatant_manager import CombatantManager
-
-
-# --- End modularized imports ---
-
-# Remove: In-file CONDITIONS, CurrentTurnDelegate, HPUpdateDelegate, etc.
-# Use the imported versions throughout your file.
-
-
-
-
-
-
-# --- Main Panel Class --- 
+# Split from combat_tracker_panel.py
 
 class CombatTrackerPanel(BasePanel):
     """Panel for tracking combat initiative, HP, and conditions"""
@@ -5121,4 +5047,3 @@ class CombatTrackerPanel(BasePanel):
 
         # Now invoke the shared cleanup function to physically remove rows.
         self._cleanup_dead_combatants()
-
