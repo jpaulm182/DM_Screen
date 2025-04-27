@@ -19,7 +19,9 @@ from PySide6.QtGui import QAction, QKeySequence
 
 class CombatTrackerPanel(BasePanel):
     """Panel for tracking combat initiative, HP, and conditions"""
-    
+    def _verify_monster_stats(self, stats):
+        # Stub: Implement stat verification if needed
+        pass
     # Signal to emit when combat resolution is complete (or failed)
     # Carries the result dict and error string (one will be None)
     resolution_complete = Signal(dict, str)
@@ -92,7 +94,7 @@ class CombatTrackerPanel(BasePanel):
         
         # After state is restored, fix missing types (using manager)
         # Make sure this call happens after potential state restore in _ensure_table_ready
-        QTimer.singleShot(500, self.combatant_manager.fix_missing_types)
+        #QTimer.singleShot(500, self.combatant_manager.fix_missing_types)
         
         print("[CombatTracker] Initialization completed successfully")
         

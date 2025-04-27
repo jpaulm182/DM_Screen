@@ -636,6 +636,23 @@ class MonsterPanel(BasePanel):
                     pass
             print(f"[MonsterPanel] Manually converted monster to dictionary with {len(monster_dict)} keys")
         
+        # --- BEGIN PATCH: Ensure 'hp' field is present and correct ---
+        # If 'hp' is missing but 'hit_points' exists, add it as a string
+        if 'hp' not in monster_dict:
+            if 'hit_points' in monster_dict:
+                # Accept either string or int
+                if isinstance(monster_dict['hit_points'], int):
+                    monster_dict['hp'] = str(monster_dict['hit_points'])
+                else:
+                    monster_dict['hp'] = str(monster_dict['hit_points'])
+            # If 'hp_average' and 'hp_formula' are present (alternate formats)
+            elif 'hp_average' in monster_dict and 'hp_formula' in monster_dict:
+                monster_dict['hp'] = f"{monster_dict['hp_average']} ({monster_dict['hp_formula']})"
+        # If 'hp' is an int, convert to string for consistency
+        if 'hp' in monster_dict and isinstance(monster_dict['hp'], int):
+            monster_dict['hp'] = str(monster_dict['hp'])
+        # --- END PATCH ---
+        
         # FIXED: Improved validation approach to prevent ability mixing
         # Add a unique ID if not already present to ensure abilities can be properly tracked
         if "id" not in monster_dict or not monster_dict["id"]:
@@ -1083,6 +1100,7 @@ class MonsterPanel(BasePanel):
                 # Resolve the paths if they're relative
                 resolved_existing_path = existing_image_path
                 if not os.path.isabs(existing_image_path):
+                    # This is a relative path, resolve it against app_dir
                     app_dir = self.app_state.app_dir
                     resolved_existing_path = os.path.normpath(os.path.join(app_dir, existing_image_path))
                 
@@ -1477,71 +1495,3 @@ class ImageComparisonDialog(QDialog):
 #          # Find and select the monster in the list after loading
 #          # Need to ensure monsters are loaded before calling this
 #          pass # Implementation depends on when restore_state is called vs _load_initial_monsters
-
-
-# Example: Placeholder for the Edit Dialog (would be in its own file)
-# class MonsterEditDialog(QDialog):
-#     def __init__(self, monster: Monster, llm_service, parent=None):
-#         super().__init__(parent)
-#         self.monster = monster # Store the monster being edited/created
-#         self.llm_service = llm_service
-#         self.setWindowTitle("Create/Edit Custom Monster")
-#         self._setup_ui()
-#
-#     def _setup_ui(self):
-#         layout = QVBoxLayout(self)
-#         # ... Add QLineEdit, QTextEdit, etc. for all Monster fields ...
-#         self.name_input = QLineEdit(self.monster.name)
-#         layout.addWidget(QLabel("Name:"))
-#         layout.addWidget(self.name_input)
-#         # ... many more fields ...
-#
-#         # LLM Buttons
-#         llm_layout = QHBoxLayout()
-#         generate_btn = QPushButton("Generate from Prompt (LLM)")
-#         generate_btn.clicked.connect(self._generate_with_llm)
-#         extract_btn = QPushButton("Extract from Text (LLM)")
-#         extract_btn.clicked.connect(self._extract_with_llm)
-#         llm_layout.addWidget(generate_btn)
-#         llm_layout.addWidget(extract_btn)
-#         layout.addLayout(llm_layout)
-#
-#         # Dialog buttons (OK/Cancel)
-#         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-#         button_box.accepted.connect(self.accept) # `accept` will trigger saving
-#         button_box.rejected.connect(self.reject)
-#         layout.addWidget(button_box)
-#
-#     def _generate_with_llm(self):
-#         # Show prompt input, call monster_generator.generate_monster_from_prompt
-#         # Populate fields with result
-#         pass
-#
-#     def _extract_with_llm(self):
-#         # Show text input, call monster_generator.extract_monster_from_text
-#         # Populate fields with result
-#         pass
-#
-#     def accept(self):
-#         # Called when OK is clicked
-#         # 1. Update self.monster object from UI fields
-#         self.monster.name = self.name_input.text()
-#         # ... update all other fields ...
-#         self.monster.is_custom = True # Ensure it's marked custom
-#
-#         # 2. Save to database (using db_manager from parent or passed in)
-#         db_manager = self.parent().db_manager # Assuming parent is MonsterPanel
-#         try:
-#              saved_id = db_manager.save_custom_monster(self.monster)
-#              if saved_id is not None:
-#                  self.monster.id = saved_id # Update object with ID if new
-#                  super().accept() # Close dialog if save successful
-#              else:
-#                  QMessageBox.critical(self, "Save Error", "Failed to save monster to database.")
-#         except Exception as e:
-#              QMessageBox.critical(self, "Save Error", f"An error occurred during save: {e}")
-#
-#     def get_monster(self) -> Optional[Monster]:
-#         # Returns the saved monster object IF save was successful (dialog accepted)
-#         # The caller should check if the dialog was accepted before calling this
-#         return self.monster 

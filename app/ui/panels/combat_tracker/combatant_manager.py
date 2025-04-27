@@ -350,6 +350,7 @@ class CombatantManager:
                 monster_name = monster_dict.get('name', monster_name)
                 # Extract HP - handles "10 (3d6)" format or just number/dice string
                 hp_string = monster_dict.get('hp', '10') # Get the HP string (e.g., "59 (7d10+21)")
+                logging.debug(f"[CombatantManager] Raw HP string for {monster_name}: '{hp_string}'")  # LOG HP STRING
                 max_hp = 10 # Default max HP
                 hp = 10 # Default current HP
 
@@ -359,33 +360,36 @@ class CombatantManager:
                     match_avg = re.match(r"\s*(\d+)", hp_string)
                     if match_avg:
                         max_hp = int(match_avg.group(1))
-                    
+                        logging.debug(f"[CombatantManager] Parsed average HP for {monster_name}: {max_hp}")
                     # Extract dice formula (inside parenthesis)
                     formula_match = re.search(r"\((.*?)\)", hp_string)
                     if formula_match:
                         formula = formula_match.group(1).replace(" ", "") # Remove spaces
+                        logging.debug(f"[CombatantManager] Parsed dice formula for {monster_name}: '{formula}'")
                         # Roll for current HP using the formula
-                        hp = self.panel.roll_dice(formula) 
+                        if hasattr(self.panel, 'roll_dice'):
+                            hp = self.panel.roll_dice(formula)
+                        else:
+                            logging.error(f"[CombatantManager] self.panel.roll_dice is missing! Using average HP.")
+                            hp = max_hp
                         # Use average if roll fails or is unreasonable
                         if not isinstance(hp, int) or hp <= 0 or hp > max_hp * 2:
-                            print(f"[CombatantManager] Warning: Dice roll for {formula} failed or unreasonable ({hp}). Using average HP {max_hp}.")
+                            logging.warning(f"[CombatantManager] Dice roll for {formula} failed or unreasonable ({hp}). Using average HP {max_hp}.")
                             hp = max_hp
                     else:
                         # If no formula, use the average/parsed number for both current and max HP
-                        hp = max_hp 
+                        hp = max_hp
                 except Exception as e:
-                    print(f"[CombatantManager] Error parsing HP string '{hp_string}': {e}. Using defaults.")
+                    logging.error(f"[CombatantManager] Error parsing HP string '{hp_string}': {e}. Using defaults.")
                     hp = 10
                     max_hp = 10
 
                 # Ensure HP values are reasonable minimums
                 hp = max(1, hp)
                 max_hp = max(1, max_hp)
-                
                 # Ensure current HP doesn't exceed max HP initially
                 hp = min(hp, max_hp)
-
-                print(f"[CombatantManager] Parsed HP for {monster_name}: Current={hp}, Max={max_hp}")
+                logging.info(f"[CombatantManager] Parsed HP for {monster_name}: Current={hp}, Max={max_hp}")
 
                 # Extract AC
                 ac = monster_dict.get('ac', monster_dict.get('armor_class', 10))
@@ -394,7 +398,6 @@ class CombatantManager:
                         ac = int(ac) # Handle AC potentially being a string
                     except (ValueError, TypeError):
                         ac = 10 # Default AC if conversion fails
-                
                 # Extract Initiative Modifier (Dexterity)
                 dex = monster_dict.get('dex', monster_dict.get('dexterity', 10))
                 if not isinstance(dex, int):
@@ -411,14 +414,53 @@ class CombatantManager:
             elif hasattr(monster_data, 'name'): # Handle object input (e.g., Monster class instance)
                  # Fallback logic for object attributes (should ideally not be needed if to_dict works)
                  monster_name = getattr(monster_data, 'name', monster_name)
-                 # Similar HP parsing logic required here if this path is used
-                 hp_string = getattr(monster_data, 'hit_points', '10') # Assuming attribute name 'hit_points'
-                 # ... (repeat HP parsing logic as above) ... 
-                 # For brevity, assuming to_dict path is the primary one
-                 hp = getattr(monster_data, 'hp', hp) # Placeholder if direct attribute exists
-                 max_hp = getattr(monster_data, 'max_hp', max_hp)
-                 ac = getattr(monster_data, 'armor_class', ac)
-                 dex = getattr(monster_data, 'dexterity', 10)
+                 # Try to get both 'hp' and 'hit_points' attributes, fallback to '10'
+                 hp_string = getattr(monster_data, 'hp', None)
+                 if hp_string is None:
+                    hp_string = getattr(monster_data, 'hit_points', '10')
+                 logging.debug(f"[CombatantManager] Raw HP string for {monster_name} (object): '{hp_string}'")  # LOG HP STRING
+                 max_hp = 10
+                 hp = 10
+                 try:
+                    match_avg = re.match(r"\s*(\d+)", str(hp_string))
+                    if match_avg:
+                        max_hp = int(match_avg.group(1))
+                        logging.debug(f"[CombatantManager] Parsed average HP for {monster_name}: {max_hp}")
+                    formula_match = re.search(r"\((.*?)\)", str(hp_string))
+                    if formula_match:
+                        formula = formula_match.group(1).replace(" ", "")
+                        logging.debug(f"[CombatantManager] Parsed dice formula for {monster_name}: '{formula}'")
+                        if hasattr(self.panel, 'roll_dice'):
+                            hp = self.panel.roll_dice(formula)
+                        else:
+                            logging.error(f"[CombatantManager] self.panel.roll_dice is missing! Using average HP.")
+                            hp = max_hp
+                        if not isinstance(hp, int) or hp <= 0 or hp > max_hp * 2:
+                            logging.warning(f"[CombatantManager] Dice roll for {formula} failed or unreasonable ({hp}). Using average HP {max_hp}.")
+                            hp = max_hp
+                    else:
+                        hp = max_hp
+                 except Exception as e:
+                    logging.error(f"[CombatantManager] Error parsing HP string '{hp_string}': {e}. Using defaults.")
+                    hp = 10
+                    max_hp = 10
+                 hp = max(1, hp)
+                 max_hp = max(1, max_hp)
+                 hp = min(hp, max_hp)
+                 logging.info(f"[CombatantManager] Parsed HP for {monster_name} (object): Current={hp}, Max={max_hp}")
+                 # Extract AC
+                 ac = getattr(monster_data, 'ac', getattr(monster_data, 'armor_class', 10))
+                 if not isinstance(ac, int):
+                    try:
+                        ac = int(ac)
+                    except (ValueError, TypeError):
+                        ac = 10
+                 dex = getattr(monster_data, 'dex', getattr(monster_data, 'dexterity', 10))
+                 if not isinstance(dex, int):
+                    try:
+                        dex = int(dex)
+                    except (ValueError, TypeError):
+                        dex = 10
                  init_mod = (dex - 10) // 2
                  initiative = random.randint(1, 20) + init_mod
                  # Convert object to dict for storage (less ideal than a proper to_dict)
