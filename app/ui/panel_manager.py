@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt, QObject
 from PySide6.QtGui import QPalette, QColor
 
 # Import all panel types
-from app.ui.panels.combat_tracker_panel import CombatTrackerPanel
+from app.ui.panels.combat_tracker_split import CombatTrackerPanel
 from app.ui.panels.dice_roller_panel import DiceRollerPanel
 from app.ui.panels.conditions_panel import ConditionsPanel
 from app.ui.panels.rules_reference_panel import RulesReferencePanel
