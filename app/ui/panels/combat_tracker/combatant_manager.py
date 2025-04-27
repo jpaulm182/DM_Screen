@@ -278,6 +278,7 @@ class CombatantManager:
             return
 
         logging.info(f"[CombatantManager] Received group of {len(monster_list)} monsters to add.")
+        logging.debug(f"[CombatantManager] Monster group data: {monster_list}")  # ADDED: Log incoming monster data for debugging
         added_count = 0
         failed_count = 0
         rows_added = []
@@ -294,6 +295,7 @@ class CombatantManager:
                 logging.debug(f"[CombatantManager] Adding monster from group: {monster_name}")
 
                 # Use the add_monster method to handle individual addition
+                logging.debug(f"[CombatantManager] Data passed to add_monster: {monster_data}")  # ADDED: Log each monster data before adding
                 row = self.add_monster(monster_data)
                 if row >= 0:
                     added_count += 1
@@ -321,12 +323,15 @@ class CombatantManager:
             logging.info(f"[CombatantManager] Added {added_count} monsters from group (failed: {failed_count}).")
             # Sort initiative after adding the whole group
             self.panel._sort_initiative()
+            # --- Force UI Refresh after adding monsters ---
+            self.panel.initiative_table.viewport().update()  # ADDED: Ensure UI displays new monsters
         else:
             logging.warning(f"[CombatantManager] No monsters were added from the group (all {failed_count} failed).")
 
 
     def add_monster(self, monster_data):
         """Adds a single monster (dict or object) to the combat tracker."""
+        logging.debug(f"[CombatantManager] add_monster received: {monster_data}")  # ADDED: Log monster data at entry
         if not monster_data:
             logging.warning("[CombatantManager] add_monster called with empty data.")
             return -1
