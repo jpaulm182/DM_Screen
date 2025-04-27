@@ -14,7 +14,8 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QInputDialog
 )
 from app.ui.panels.combat_tracker_delegates import InitiativeUpdateDelegate, HPUpdateDelegate, CurrentTurnDelegate
-from PySide6.QtGui import QAction, QKeySequence# Helpers for CombatTrackerPanel (CombatTrackerPanel)
+from PySide6.QtGui import QAction, QKeySequence
+# Helpers for CombatTrackerPanel (CombatTrackerPanel)
 
 class CombatTrackerPanel(BasePanel):
     """Panel for tracking combat initiative, HP, and conditions"""
