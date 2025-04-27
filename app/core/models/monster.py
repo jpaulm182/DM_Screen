@@ -294,19 +294,32 @@ class Monster:
                  init_data['legendary_actions'] = None
 
             # Filter out None values for fields that don't allow None
+            from dataclasses import _MISSING_TYPE
             final_init_data = {}
             for key, value in init_data.items():
-                 if key in cls.__dataclass_fields__:
+                if key in cls.__dataclass_fields__:
                     field_type = cls.__annotations__[key]
+                    field_info = cls.__dataclass_fields__[key]
                     # Check if the field type is Optional (Union[T, None])
                     is_optional = hasattr(field_type, '__origin__') and field_type.__origin__ is Optional
 
                     if value is not None or is_optional:
                         final_init_data[key] = value
-                    # If value is None but field isn't optional, use default factory/value
-                    elif hasattr(cls.__dataclass_fields__[key], 'default_factory') and cls.__dataclass_fields__[key].default_factory is not None:
-                         final_init_data[key] = cls.__dataclass_fields__[key].default_factory()
-                    elif hasattr(cls.__dataclass_fields__[key], 'default') and cls.__dataclass_fields__[key].default is not None:
-                         final_init_data[key] = cls.__dataclass_fields__[key].default
-
+                    else:
+                        # Only use default if it's not _MISSING_TYPE
+                        if hasattr(field_info, 'default_factory') and field_info.default_factory is not _MISSING_TYPE:
+                            final_init_data[key] = field_info.default_factory()
+                        elif hasattr(field_info, 'default') and field_info.default is not _MISSING_TYPE:
+                            final_init_data[key] = field_info.default
+                        else:
+                            # Fallbacks for common types
+                            if field_type == str:
+                                final_init_data[key] = ""
+                            elif field_type == int:
+                                final_init_data[key] = 0
+                            elif field_type == list or (hasattr(field_type, "__origin__") and field_type.__origin__ is list):
+                                final_init_data[key] = []
+                            else:
+                                # If all else fails, skip the field or set to None
+                                final_init_data[key] = None
             return cls(**final_init_data) 
