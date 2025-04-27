@@ -636,22 +636,49 @@ class MonsterPanel(BasePanel):
                     pass
             print(f"[MonsterPanel] Manually converted monster to dictionary with {len(monster_dict)} keys")
         
-        # --- BEGIN PATCH: Ensure 'hp' field is present and correct ---
-        # If 'hp' is missing but 'hit_points' exists, add it as a string
-        if 'hp' not in monster_dict:
-            if 'hit_points' in monster_dict:
-                # Accept either string or int
-                if isinstance(monster_dict['hit_points'], int):
-                    monster_dict['hp'] = str(monster_dict['hit_points'])
-                else:
-                    monster_dict['hp'] = str(monster_dict['hit_points'])
-            # If 'hp_average' and 'hp_formula' are present (alternate formats)
-            elif 'hp_average' in monster_dict and 'hp_formula' in monster_dict:
-                monster_dict['hp'] = f"{monster_dict['hp_average']} ({monster_dict['hp_formula']})"
-        # If 'hp' is an int, convert to string for consistency
-        if 'hp' in monster_dict and isinstance(monster_dict['hp'], int):
-            monster_dict['hp'] = str(monster_dict['hp'])
-        # --- END PATCH ---
+        # --- REFACTOR: Build canonical combatant dict for tracker ---
+        # Extract and parse stats for combat tracker
+        import re
+        def parse_hp(hp_field):
+            # Accept int, or string like '256 (19d12 + 133)'
+            if isinstance(hp_field, int):
+                return hp_field
+            if isinstance(hp_field, str):
+                m = re.match(r'^(\d+)', hp_field)
+                if m:
+                    return int(m.group(1))
+                if hp_field.isdigit():
+                    return int(hp_field)
+            return 10  # fallback default
+
+        def parse_ac(ac_field):
+            # Accept int, or string
+            if isinstance(ac_field, int):
+                return ac_field
+            if isinstance(ac_field, str) and ac_field.isdigit():
+                return int(ac_field)
+            return 10
+
+        # Compose canonical dict
+        combatant = {
+            'name': monster_dict.get('name', 'Unknown Monster'),
+            'hp': parse_hp(monster_dict.get('hp', 10)),
+            'max_hp': parse_hp(monster_dict.get('hp', 10)),
+            'ac': parse_ac(monster_dict.get('ac', monster_dict.get('armor_class', 10))),
+            'initiative': None,  # Let tracker roll or fill in as needed
+            'type': monster_dict.get('type', 'monster'),
+            'id': monster_dict.get('id'),
+            # Optionally include extras for tracker display
+            'image_path': monster_dict.get('image_path', ''),
+            'actions': monster_dict.get('actions', []),
+            'traits': monster_dict.get('traits', []),
+            'legendary_actions': monster_dict.get('legendary_actions', []),
+        }
+        # Emit only this canonical dict (in a list for group compatibility)
+        print(f"[MonsterPanel] Emitting add_combatant_signal with canonical combatant: {combatant}")
+        self.add_combatant_signal.emit([combatant])
+        return
+        # --- END REFACTOR ---
         
         # FIXED: Improved validation approach to prevent ability mixing
         # Add a unique ID if not already present to ensure abilities can be properly tracked

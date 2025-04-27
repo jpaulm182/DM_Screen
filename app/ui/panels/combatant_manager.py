@@ -7,6 +7,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 from .combat_utils import get_attr, extract_dice_formula, roll_dice
 import random
+import re  # Needed for extracting average HP from strings like '256 (19d12 + 133)'
 import re
 
 class CombatantManager:
@@ -23,42 +24,30 @@ class CombatantManager:
             dex = get_attr(monster_data, "dexterity", 10, ["dex", "DEX"])
             init_mod = (dex - 10) // 2
             initiative_roll = random.randint(1, 20) + init_mod
-            hp_value = get_attr(monster_data, "hp", 10, ["hit_points", "hitPoints", "hit_points_roll", "hit_dice"])
-            # Calculate max_hp
-            max_hp = 0
-            if isinstance(hp_value, int):
-                max_hp = hp_value
-            elif isinstance(hp_value, dict) and 'average' in hp_value:
-                max_hp = int(hp_value['average'])
-            elif isinstance(hp_value, str):
-                match = re.match(r'(\d+)\s*\(', hp_value)
-                if match:
-                    max_hp = int(match.group(1))
-                elif hp_value.isdigit():
-                    max_hp = int(hp_value)
-            if max_hp <= 0:
-                max_hp = 10
-            dice_formula = extract_dice_formula(hp_value)
-            if dice_formula:
-                hp = roll_dice(dice_formula)
-            else:
-                if max_hp > 200:
-                    die_size = 12
-                    num_dice = max(1, int(max_hp * 0.75 / (die_size/2 + 0.5)))
-                elif max_hp > 100:
-                    die_size = 10
-                    num_dice = max(1, int(max_hp * 0.8 / (die_size/2 + 0.5)))
-                else:
-                    die_size = 8
-                    num_dice = max(1, int(max_hp * 0.85 / (die_size/2 + 0.5)))
-                modifier = int(max_hp * 0.1)
-                estimated_formula = f"{num_dice}d{die_size}+{modifier}"
-                hp = roll_dice(estimated_formula)
-                min_hp = int(max_hp * 0.5)
-                max_possible_hp = int(max_hp * 1.25)
-                hp = max(min_hp, min(hp, max_possible_hp))
-            max_hp = hp
-            ac = get_attr(monster_data, "ac", 10, ["armor_class", "armorClass", "AC"])
+
+            # --- REFACTOR: Use canonical HP/AC fields directly if present ---
+            # The monster_data dict from MonsterPanel should have integer 'hp', 'max_hp', and 'ac' fields.
+            hp = monster_data.get('hp', 10)
+            max_hp = monster_data.get('max_hp', hp)
+            ac = monster_data.get('ac', 10)
+            # Validate types, fallback to default if invalid
+            if not isinstance(hp, int):
+                try:
+                    hp = int(hp)
+                except Exception:
+                    hp = 10
+            if not isinstance(max_hp, int):
+                try:
+                    max_hp = int(max_hp)
+                except Exception:
+                    max_hp = hp
+            if not isinstance(ac, int):
+                try:
+                    ac = int(ac)
+                except Exception:
+                    ac = 10
+            # --- END REFACTOR ---
+
             monster_stats = {
                 "id": monster_id,
                 "name": name,
