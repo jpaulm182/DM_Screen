@@ -12,7 +12,7 @@ Project is version‑controlled (Git).
 
 A reliable test suite (pytest -q exits ≡0 on success).
 
-The monolithic file is named big_file.py at repo root.
+The monolithic file is named ./app/ui/panels/combat_tracker_panel.py
 
 1  Job Overview
 
