@@ -1,0 +1,8 @@
+# Mapping of CombatTrackerPanel methods to modules
+current_turn: turn
+event: event
+save_state: persistence
+restore_state: persistence
+roll_dice: dice
+extract_dice_formula: dice
+closeEvent: lifecycle
