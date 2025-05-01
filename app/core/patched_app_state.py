@@ -34,23 +34,6 @@ def apply_patches():
             logger.info("LLM service patches applied successfully")
         except Exception as e:
             logger.error(f"Failed to apply LLM service patches: {e}", exc_info=True)
-        
-        # Replace the combat resolver with our stabilized version
-        logger.info("Applying combat resolver patches")
-        try:
-            # Create a new stabilized resolver
-            new_resolver = init_stabilized_resolver(self.llm_service)
-            
-            # Replace the existing resolver
-            self.combat_resolver = new_resolver
-            
-            # Force garbage collection
-            gc.collect()
-            
-            logger.info("Combat resolver successfully patched")
-        except Exception as e:
-            logger.error(f"Failed to patch combat resolver: {e}", exc_info=True)
-            logger.warning("Using original unpatched resolver")
     
     # Apply the patch
     AppState.__init__ = patched_init
