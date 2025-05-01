@@ -14,7 +14,7 @@ from datetime import datetime
 from app.core.llm_service import LLMService
 from app.data.llm_data_manager import LLMDataManager
 from app.core.config import get_app_dir
-from app.core.combat_resolver import CombatResolver
+from app.core.improved_combat_resolver import ImprovedCombatResolver
 
 # Default application settings
 DEFAULT_SETTINGS = {
@@ -74,7 +74,7 @@ class AppState:
         # Initialize LLM services
         self.llm_data_manager = LLMDataManager(self)
         self.llm_service = LLMService(self)
-        self.combat_resolver = CombatResolver(self.llm_service)
+        self.combat_resolver = ImprovedCombatResolver(self.llm_service)
     
     def _ensure_directories(self):
         """Create application directories if they don't exist"""
