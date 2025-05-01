@@ -344,9 +344,9 @@ class CombatantManager:
                 monster_dict = monster_data
                 monster_name = monster_dict.get('name', monster_name)
                 # Extract HP - handles "10 (3d6)" format or just number/dice string
-                hp_string = monster_dict.get('hp', '10') # Get the HP string (e.g., "59 (7d10+21)")
-                max_hp = 10 # Default max HP
-                hp = 10 # Default current HP
+                hp_string = str(monster_dict.get('hit_points', monster_dict.get('hp', '10')))
+                max_hp = 10 # default max HP
+                hp = 10 # default current HP
 
                 # Try to parse average and roll dice
                 try:
