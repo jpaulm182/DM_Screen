@@ -5,6 +5,8 @@ class CombatTrackerPanel(BasePanel):
     """Combat Tracker panel built with modular UI functions."""
 
     def __init__(self, app_state):
+        # Initialize UI state required by ui.setup (round counter)
+        self.current_round = 1
         super().__init__(app_state, "Combat Tracker")
 
     def _setup_ui(self):
@@ -23,5 +25,7 @@ class CombatTrackerPanel(BasePanel):
         self._handle_add_click = lambda: None
         self._clear_combat_log = lambda: None
         self._update_highlight = lambda: None
+        # Stub roll initiative handler for UI button
+        self._roll_initiative = lambda: None
         # Build UI layout and widgets
         _setup_ui(self)
