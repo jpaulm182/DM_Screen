@@ -1,5 +1,6 @@
 from app.ui.panels.base_panel import BasePanel
 from app.ui.panels.combat_tracker.ui import _setup_ui
+from app.ui.panels.combat_tracker.combatant_manager import CombatantManager
 
 class CombatTrackerPanel(BasePanel):
     """Combat Tracker panel built with modular UI functions."""
@@ -8,6 +9,8 @@ class CombatTrackerPanel(BasePanel):
         # Initialize UI state required by ui.setup (round counter)
         self.current_round = 1
         super().__init__(app_state, "Combat Tracker")
+        # Initialize combatant manager for MonsterPanel signals
+        self.combatant_manager = CombatantManager(self)
 
     def _setup_ui(self):
         # Stub callback methods to satisfy UI signal connections
