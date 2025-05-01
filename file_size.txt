@@ -1,0 +1,8 @@
+1489 app/core/improved_combat_resolver.py
+2377 app/core/combat_resolver.py
+1055 app/data/llm_data_manager.py
+1232 app/ui/panels/location_generator_panel.py
+1991 app/ui/panels/session_notes_panel.py
+1739 app/ui/panels/combat_tracker/facade.py
+1546 app/ui/panels/monster_panel.py
+1193 app/ui/main_window.py
