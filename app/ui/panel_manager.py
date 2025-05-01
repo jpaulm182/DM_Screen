@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt, QObject
 from PySide6.QtGui import QPalette, QColor
 
 # Import all panel types
-from app.ui.panels.combat_tracker_panel import CombatTrackerPanel
+from app.ui.panels.combat_tracker.facade import CombatTrackerPanel
 from app.ui.panels.dice_roller_panel import DiceRollerPanel
 from app.ui.panels.conditions_panel import ConditionsPanel
 from app.ui.panels.rules_reference_panel import RulesReferencePanel
@@ -872,81 +872,3 @@ class PanelManager(QObject):
         # Raise the combat tracker initially
         if "combat_tracker" in self.panels and self.panels["combat_tracker"]:
             self.panels["combat_tracker"].raise_()
-
-    def _set_panel_sizes(self, category_panels, active_categories):
-        """Set appropriate sizes for panels based on layout"""
-        main_window_geometry = self.main_window.geometry()
-        window_width = main_window_geometry.width()
-        window_height = main_window_geometry.height()
-        
-        # Get panel layout settings
-        use_percentage_sizing = self.app_state.get_panel_layout_setting("use_percentage_sizing", True)
-        
-        # If not using percentage-based sizing, just use default sizes
-        if not use_percentage_sizing:
-            return
-        
-        # Set size multipliers based on the number of active categories
-        width_multiplier = 0.45
-        height_multiplier = 0.45
-        
-        if active_categories == 1:
-            # If only one category is visible, give it more space
-            width_multiplier = 0.9
-            height_multiplier = 0.9
-        elif active_categories == 2:
-            # If two categories are visible, give them half the space each
-            width_multiplier = 0.5
-            height_multiplier = 0.5
-        
-        # Ensure all panels have reasonable sizes
-        for category, panel_ids in category_panels.items():
-            # Only process the first panel in each category since others may be tabbed
-            if not panel_ids:
-                continue
-                
-            panel_id = panel_ids[0]
-            if not self.panels[panel_id]:
-                continue
-                
-            dock = self.panels[panel_id]
-            
-            # Skip floating panels - they're handled separately
-            if dock.isFloating():
-                continue
-                
-            # Set size based on category and available space
-            if category == PanelCategory.COMBAT:
-                # Combat panels take up more space for maps and tokens
-                width = min(int(window_width * width_multiplier), 800)
-                height = min(int(window_height * height_multiplier), 600)
-                dock.resize(width, height)
-            elif category == PanelCategory.REFERENCE:
-                # Reference panels need space for text content
-                width = min(int(window_width * width_multiplier), 800)
-                height = min(int(window_height * height_multiplier), 600)
-                dock.resize(width, height)
-            elif category == PanelCategory.CAMPAIGN:
-                # Campaign panels for notes and management
-                width = min(int(window_width * width_multiplier), 800)
-                height = min(int(window_height * (height_multiplier * 0.9)), 500)
-                dock.resize(width, height)
-            else:  # UTILITY
-                # Utility panels usually need less space
-                width = min(int(window_width * (width_multiplier * 0.9)), 700)
-                height = min(int(window_height * (height_multiplier * 0.9)), 500)
-                dock.resize(width, height)
-                
-        # Handle floating panels separately
-        for panel_id, dock in self.panels.items():
-            if dock and dock.isVisible() and dock.isFloating():
-                category = PanelCategory.get_category(panel_id)
-                # Set size based on category
-                if category == PanelCategory.COMBAT:
-                    dock.resize(700, 500)
-                elif category == PanelCategory.REFERENCE:
-                    dock.resize(650, 550)
-                elif category == PanelCategory.CAMPAIGN:
-                    dock.resize(600, 450)
-                else:  # UTILITY
-                    dock.resize(500, 400)

@@ -5,7 +5,7 @@ from pathlib import Path
 # Ensure project root is on PYTHONPATH
 sys.path.append(str(Path(__file__).parent.parent))
 
-from app.ui.panels.combat_tracker_panel import CombatTrackerPanel
+from app.ui.panels.combat_tracker.facade import CombatTrackerPanel
 
 
 def main():
