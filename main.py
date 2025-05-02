@@ -36,6 +36,16 @@ from app.core.app_state import AppState
 from app.core.patched_app_state import apply_patches
 from app.ui.main_window import MainWindow
 
+# Initialize LLM monitoring - always enabled
+llm_monitoring_enabled = False
+try:
+    import monitor_llm_calls
+    llm_monitoring_enabled = monitor_llm_calls.init_monitoring()
+    if llm_monitoring_enabled:
+        logging.info("LLM monitoring enabled")
+except Exception as e:
+    logging.error(f"Error initializing LLM monitoring: {e}", exc_info=True)
+
 def main():
     """Main application entry point"""
     # Set up logging
@@ -64,21 +74,12 @@ def main():
     # Apply stability patches
     logging.info("Applying stability patches")
     try:
-        # Apply LLM monitoring if enabled
-        try:
-            from monitor_llm_calls import patch_llm_service, patch_combat_resolver, monitor_ui_updates
-            # Only enable LLM monitoring if explicitly requested via environment variable
-            if os.environ.get('ENABLE_LLM_MONITORING', 'false').lower() == 'true':
-                patch_llm_service()
-                patch_combat_resolver()
-                monitor_ui_updates()
-                logging.info("LLM monitoring enabled")
-        except ImportError:
-            logging.info("LLM monitoring not available (normal during regular usage)")
-            
         # Apply app state patches
         from app.core.patched_app_state import apply_patches
         apply_patches()
+        
+        # Initialize application state
+        app_state = AppState()
         
         # Apply specific combat resolver patches
         from app.core.combat_resolver_patch import apply_patches as apply_combat_patches
@@ -96,9 +97,6 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("DM Screen")
     app.setApplicationVersion("0.5.0")
-    
-    # Initialize application state~
-    app_state = AppState()
     
     # Create and show the main window
     window = MainWindow(app_state)

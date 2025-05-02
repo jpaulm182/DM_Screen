@@ -1,0 +1,7 @@
+{
+  "timestamp": 1746203883.5678596,
+  "call_id": "call_0002",
+  "elapsed_seconds": 1.7057676315307617,
+  "response_length": 271,
+  "response": "{\n  \"action\": \"Multiattack\",\n  \"target\": \"Adult Red Dragon\",\n  \"explanation\": \"Using Multiattack maximizes damage output against the Adult Red Dragon, the primary enemy threat, leveraging the Infernal Tyrant's powerful melee attacks to pressure the dragon immediately.\"\n}"
+}

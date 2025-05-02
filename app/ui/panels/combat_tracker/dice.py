@@ -1,3 +1,9 @@
+import random
+import re
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QTableWidgetItem, QApplication, QTimer
+
+class DiceRoller:
     def roll_dice(self, dice_formula):
         """Roll dice based on a formula like "3d8+4" or "2d6-1" """
         print(f"[CombatTracker] Rolling dice formula: {dice_formula}")
@@ -49,6 +55,7 @@
                 
         return dice_formula
 
+    def add_monster(self, monster_data):
         """Add a monster from monster panel to the tracker"""
         if not monster_data:
             return -1

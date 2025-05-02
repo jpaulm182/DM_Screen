@@ -951,6 +951,13 @@ class CombatResolver(QObject):
                       # Check attack roll vs AC
                       # ... (find attack roll in dice_results) ...
                       # ... (compare roll vs target['ac']) ...
+                      attack_hits = False  # Default to miss
+                      attack_roll_entry = next((d for d in dice_results if d.get("purpose", "").lower().startswith("attack")), None)
+                      if attack_roll_entry:
+                          attack_roll = attack_roll_entry.get("result", 0)
+                          if isinstance(attack_roll, (int, float)) and target and target.get("ac"):
+                              attack_hits = attack_roll >= target.get("ac", 10)
+                              logging.debug(f"Attack roll {attack_roll} vs AC {target.get('ac')}: {'Hit' if attack_hits else 'Miss'}")
                       if attack_hits: final_dmg = initial_dmg
                       else: final_dmg = 0
 
