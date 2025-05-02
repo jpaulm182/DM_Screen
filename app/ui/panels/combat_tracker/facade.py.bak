@@ -27,8 +27,6 @@ class CombatTrackerPanel(BasePanel):
         self.combatant_manager = CombatantManager(self)
         # Flag to prevent multiple simultaneous combat resolutions
         self._is_resolving_combat = False
-        # Flag to track if combat has ended
-        self._combat_has_ended = False
 
     def _setup_ui(self):
         """Set up the combat tracker user interface"""
@@ -65,9 +63,6 @@ class CombatTrackerPanel(BasePanel):
         self.next_button = QPushButton("Next Turn")
         self.resolve_button = QPushButton("Resolve Combat")
         self.fast_resolve_button = QPushButton("Fast Resolve")
-        self.continue_button = QPushButton("Continue Combat")  # Add Continue Combat button
-        self.continue_button.setVisible(False)  # Initially hidden
-        self.continue_button.setStyleSheet("background-color: #6c9; color: black; font-weight: bold;")  # Highlight button
         self.reset_button = QPushButton("Reset")
         
         # Add buttons to button bar
@@ -75,7 +70,6 @@ class CombatTrackerPanel(BasePanel):
         self.button_bar.addWidget(self.next_button)
         self.button_bar.addWidget(self.resolve_button)
         self.button_bar.addWidget(self.fast_resolve_button)
-        self.button_bar.addWidget(self.continue_button)  # Add to layout
         self.button_bar.addWidget(self.reset_button)
         self.top_layout.addLayout(self.button_bar)
         
@@ -146,7 +140,6 @@ class CombatTrackerPanel(BasePanel):
             self.next_button.clicked.connect(self._handle_next_turn)
             self.resolve_button.clicked.connect(self._handle_resolve_click)
             self.fast_resolve_button.clicked.connect(self._handle_fast_resolve_click)
-            self.continue_button.clicked.connect(self._handle_continue_click)  # Connect Continue button
             self.reset_button.clicked.connect(self._handle_reset_click)
             
             # Table signals
@@ -172,239 +165,23 @@ class CombatTrackerPanel(BasePanel):
         print("[CombatTracker] Resolve Combat button clicked")
     
     def _handle_fast_resolve_click(self):
-        """Handle the Fast Resolve button click"""
-        import logging
-        
-        try:
-            logging.info("[CombatTracker] Fast Resolve button clicked")
-            # Make sure we're in 'step' mode so combat pauses after each turn
-            # showing the continue button, which improves user experience
-            self._fast_resolve_combat(mode='step')
-        except Exception as e:
-            logging.error(f"[CombatTracker] Error in fast resolve: {e}", exc_info=True)
-    
-    def _handle_continue_click(self):
-        """Handle continue combat button click"""
-        logging.info("[CombatTracker] Continue Combat button clicked")
-        
-        # Hide the continue button
-        self.continue_button.setVisible(False)
-        
-        # Show the fast resolve button (in case it was hidden)
-        self.fast_resolve_button.setVisible(True)
-        
-        # Update button text
-        self.fast_resolve_button.setText("Resolving...")
-        self.fast_resolve_button.setEnabled(False)
-        
-        # Set resolving flag
-        self._is_resolving_combat = True
-        
-        # Get the appropriate resolver instance
-        if hasattr(self.app_state, 'combat_resolver'):
-            if hasattr(self.app_state.combat_resolver, 'combat_resolver'):
-                # Using ImprovedCombatResolver
-                resolver = self.app_state.combat_resolver.combat_resolver
-            else:
-                # Using CombatResolver directly
-                resolver = self.app_state.combat_resolver
-                
-            # Call continue_turn on the resolver
-            resolver.continue_turn()
-            logging.info("[CombatTracker] Called continue_turn on combat resolver")
-        else:
-            logging.error("[CombatTracker] Cannot continue - combat resolver not found")
-            # Reset button state 
-            self._reset_resolve_button("Fast Resolve", True)
-            self._is_resolving_combat = False
+        """Handle fast resolve button click"""
+        print("[CombatTracker] Fast Resolve button clicked")
+        # Call the actual implementation
+        self._fast_resolve_combat()
     
     def _handle_reset_click(self):
         """Handle reset button click"""
-        import logging
-        
-        logging.info("[CombatTracker] Reset button clicked")
-        
-        # First, try to stop any ongoing combat resolution
-        try:
-            if hasattr(self.app_state, 'combat_resolver'):
-                # Get the appropriate resolver instance
-                if hasattr(self.app_state.combat_resolver, 'combat_resolver'):
-                    # Using ImprovedCombatResolver
-                    resolver = self.app_state.combat_resolver.combat_resolver
-                else:
-                    # Using CombatResolver directly
-                    resolver = self.app_state.combat_resolver
-                    
-                # Call reset_resolution on the correct resolver instance
-                resolver.reset_resolution()
-                logging.info("[CombatTracker] Reset combat resolver to clean state")
-        except Exception as reset_error:
-            logging.error(f"[CombatTracker] Error resetting combat resolver: {reset_error}")
-        
-        # Reset UI state
-        self._reset_resolve_button("Fast Resolve", True)
-        self._is_resolving_combat = False
-        self._combat_has_ended = False
-        self.continue_button.setVisible(False)
-        self.fast_resolve_button.setVisible(True)
-        
-        # Clear the combat log
-        self._clear_combat_log()
-        
-        # Reset any timers that might be running
-        self._cancel_safety_timer()
-        self._cancel_backup_timer()
-        
-        # Log the reset
-        self.combat_log_widget.append("<div style='background-color:#f0f0f0; padding:8px; border-radius:4px; margin:8px 0;'>")
-        self.combat_log_widget.append("<h4 style='color:#333333; margin:0;'>Combat Reset</h4>")
-        self.combat_log_widget.append("<p>Combat tracker has been reset.</p>")
-        self.combat_log_widget.append("</div>")
+        print("[CombatTracker] Reset button clicked")
     
     def _handle_cell_changed(self, row, column):
         """Handle cell value changes in the initiative table"""
         print(f"[CombatTracker] Cell changed: row={row}, column={column}")
     
     def _handle_context_menu(self, position):
-        """Show custom context menu for the initiative table"""
-        import logging
-        from PySide6.QtWidgets import QMenu, QAction
-        from PySide6.QtCore import Qt
-        
-        try:
-            # Get row under cursor
-            row = self.initiative_table.rowAt(position.y())
-            if row < 0:
-                return
-            
-            # If the right-clicked row is not already selected, clear any previous
-            # selection (to avoid unintended multi-row edits) and select this row.
-            if row not in [idx.row() for idx in self.initiative_table.selectionModel().selectedRows()]:
-                self.initiative_table.clearSelection()
-                self.initiative_table.selectRow(row)
+        """Show context menu for initiative table"""
+        print(f"[CombatTracker] Context menu requested at {position}")
     
-            # Create menu
-            menu = QMenu(self)
-            
-            # Add Delete action
-            delete_action = QAction("Delete", self)
-            delete_action.triggered.connect(lambda: self._delete_combatant(row))
-            menu.addAction(delete_action)
-            
-            # Add Move Up/Down actions
-            if row > 0:
-                move_up_action = QAction("Move Up", self)
-                move_up_action.triggered.connect(lambda: self._move_table_row(row, row-1))
-                menu.addAction(move_up_action)
-                
-            if row < self.initiative_table.rowCount() - 1:
-                move_down_action = QAction("Move Down", self)
-                move_down_action.triggered.connect(lambda: self._move_table_row(row, row+1))
-                menu.addAction(move_down_action)
-            
-            # Add Copy action
-            copy_action = QAction("Copy", self)
-            copy_action.triggered.connect(lambda: self._copy_combatant(row))
-            menu.addAction(copy_action)
-            
-            menu.addSeparator()
-            
-            # HP adjustment actions
-            hp_menu = menu.addMenu("Adjust HP")
-            
-            # Damage options
-            damage_action = QAction("Apply Damage...", self)
-            damage_action.triggered.connect(lambda: self._apply_damage(row))
-            hp_menu.addAction(damage_action)
-            
-            # Healing options
-            heal_action = QAction("Apply Healing...", self)
-            heal_action.triggered.connect(lambda: self._apply_healing(row))
-            hp_menu.addAction(heal_action)
-            
-            # Status/condition actions
-            status_menu = menu.addMenu("Conditions")
-            
-            # Common conditions
-            for condition in ["Blinded", "Charmed", "Deafened", "Frightened", "Paralyzed", "Poisoned", "Stunned"]:
-                condition_action = QAction(condition, self)
-                condition_action.triggered.connect(lambda checked, c=condition: self._apply_condition(row, c))
-                status_menu.addAction(condition_action)
-                
-            # Clear conditions
-            clear_action = QAction("Clear All", self)
-            clear_action.triggered.connect(lambda: self._clear_conditions(row))
-            status_menu.addAction(clear_action)
-            
-            # Show the menu at the clicked position
-            menu.exec_(self.initiative_table.viewport().mapToGlobal(position))
-            
-        except Exception as e:
-            logging.error(f"[CombatTracker] Error displaying context menu: {e}", exc_info=True)
-
-    def _delete_combatant(self, row):
-        """Delete a combatant from the initiative table"""
-        import logging
-        
-        logging.info(f"[CombatTracker] Deleting combatant at row {row}")
-        
-        if row < 0 or row >= self.initiative_table.rowCount():
-            logging.warning(f"[CombatTracker] Invalid row index: {row}")
-            return
-        
-        # Get the combatant name for logging
-        name_item = self.initiative_table.item(row, 0)
-        name = name_item.text() if name_item else f"Combatant {row}"
-        
-        # Remove from the dictionary if it exists
-        if hasattr(self, 'combatant_manager') and hasattr(self.combatant_manager, 'combatants_by_id'):
-            instance_id = name_item.data(Qt.UserRole + 2) if name_item else None
-            if instance_id and instance_id in self.combatant_manager.combatants_by_id:
-                del self.combatant_manager.combatants_by_id[instance_id]
-                logging.info(f"[CombatTracker] Removed {name} (ID: {instance_id}) from combatants_by_id")
-        
-        # Remove the row from the table
-        self.initiative_table.removeRow(row)
-        logging.info(f"[CombatTracker] Deleted combatant: {name}")
-
-    def _copy_combatant(self, row):
-        """Copy a combatant in the initiative table"""
-        import logging
-        
-        logging.info(f"[CombatTracker] Copying combatant at row {row}")
-        
-        if row < 0 or row >= self.initiative_table.rowCount():
-            logging.warning(f"[CombatTracker] Invalid row index: {row}")
-            return
-        
-        # Get data from the source row
-        name_item = self.initiative_table.item(row, 0)
-        initiative_item = self.initiative_table.item(row, 1)
-        hp_item = self.initiative_table.item(row, 2)
-        max_hp_item = self.initiative_table.item(row, 3)
-        ac_item = self.initiative_table.item(row, 4)
-        type_item = self.initiative_table.item(row, 7) if self.initiative_table.columnCount() > 7 else None
-        
-        # Extract data
-        name = name_item.text() + " (Copy)" if name_item else "Unknown (Copy)"
-        initiative = initiative_item.text() if initiative_item else "10"
-        hp = hp_item.text() if hp_item else "10"
-        max_hp = max_hp_item.text() if max_hp_item else hp
-        ac = ac_item.text() if ac_item else "10"
-        combatant_type = type_item.text() if type_item else "unknown"
-        
-        # Add the new combatant
-        if hasattr(self, 'combatant_manager'):
-            self.combatant_manager.add_combatant(
-                name=name,
-                initiative=int(initiative) if initiative.isdigit() else 10,
-                hp=int(hp) if hp.isdigit() else 10,
-                max_hp=int(max_hp) if max_hp.isdigit() else int(hp) if hp.isdigit() else 10,
-                ac=int(ac) if ac.isdigit() else 10,
-                combatant_type=combatant_type
-            )
-            logging.info(f"[CombatTracker] Created copy of combatant: {name}")
-
     def _handle_selection_changed(self):
         """Handle selection changes in the initiative table"""
         print("[CombatTracker] Selection changed")
@@ -465,16 +242,13 @@ class CombatTrackerPanel(BasePanel):
     # ------------------------------------------------------------------
     # START: _fast_resolve_combat method implementation from chunk1.py
     # ------------------------------------------------------------------
-    def _fast_resolve_combat(self, mode='continuous'):
+    def _fast_resolve_combat(self):
         """Use LLM to resolve the current combat encounter (turn-by-turn, rule-correct)."""
         # Prevent multiple clicks while processing
         if self._is_resolving_combat:
             print("[CombatTracker] Already resolving combat, ignoring click.")
             return
         self._is_resolving_combat = True
-        
-        # Reset the combat ended flag when starting a new combat
-        self._combat_has_ended = False
 
         # First, update UI to indicate processing is happening
         self.fast_resolve_button.setEnabled(False)
@@ -685,8 +459,10 @@ class CombatTrackerPanel(BasePanel):
                         # Connection might not exist yet, which is fine
                         pass
                     
-                    # Connect the signal - directly connect to the slot without using lambda
-                    resolver.resolution_update.connect(self._process_resolution_ui)
+                    # Connect the signal
+                    resolver.resolution_update.connect(
+                        lambda state, status, error: self._process_resolution_ui(state, error)
+                    )
                     print("[CombatTracker] Successfully connected resolution_update signal")
                 except Exception as conn_error:
                     print(f"[CombatTracker] Failed to connect signal: {conn_error}")
@@ -696,7 +472,7 @@ class CombatTrackerPanel(BasePanel):
                     combat_state,
                     dice_roller,
                     self._update_ui_wrapper, # Pass the wrapper for UI updates
-                    mode=mode  # Use step mode instead of continuous to allow pausing
+                    mode='continuous'
                 )
                 
                 if not success:
@@ -809,9 +585,10 @@ class CombatTrackerPanel(BasePanel):
                     # Connection might not exist yet, which is fine
                     pass
                 
-                # Connect to the resolution_update signal
-                # This is a safer way to connect the signal that explicitly handles all parameters
-                resolver.resolution_update.connect(self._process_resolution_ui)
+                # Connect to the resolution_update signal (state, status, error)
+                resolver.resolution_update.connect(
+                    lambda state, status, error: self._process_resolution_ui(state, error)
+                )
                 print("[CombatTracker] Successfully connected resolution_update signal")
             except Exception as conn_error:
                 print(f"[CombatTracker] Failed to connect signal: {conn_error}")
@@ -1164,191 +941,26 @@ class CombatTrackerPanel(BasePanel):
                         # Register this ability with its source
                         ability_sources[source_key] = combatant_id
                         
+    # From chunk4.py (needed by event handler and signal callback)
     @Slot(object, object)
-    def _process_resolution_ui(self, combat_state=None, status=None, error=None):
+    def _process_resolution_ui(self, *args):
         """Process UI updates from the combat resolution system"""
-        import logging
-        import traceback
+        # Cancel timers to prevent duplicate processing
+        self._cancel_safety_timer()
+        self._cancel_backup_timer()
         
         try:
-            # Log the call with safer string formatting
-            if status is not None:
-                logging.info(f"[CombatTracker] _process_resolution_ui called with status: {status}")
-            else:
-                logging.info("[CombatTracker] _process_resolution_ui called with None status")
-            
-            # Cancel timers to prevent duplicate processing - do this first for safety
-            try:
-                self._cancel_safety_timer()
-                self._cancel_backup_timer()
-            except Exception as timer_error:
-                logging.error(f"[CombatTracker] Error canceling timers: {timer_error}")
-            
-            # Check for None or empty combat_state
-            if combat_state is None:
-                logging.warning("[CombatTracker] Received None combat_state in _process_resolution_ui")
-                # Don't return - still handle possible status
-            
-            # Extra defensive check for error parameter
-            if error:
-                logging.error(f"[CombatTracker] Error received in _process_resolution_ui: {error}")
-            
-            # SAFETY: If combat has already ended, immediately reset and return to prevent re-processing
-            # This will help prevent crashes when multiple combat_ended signals are received
-            if hasattr(self, '_combat_has_ended') and self._combat_has_ended and status == "combat_ended":
-                logging.warning("[CombatTracker] Ignoring duplicate combat_ended status - combat already ended")
-                return
-            
-            # Handle different statuses from the resolver - with explicit None check
-            if status == "paused":
-                logging.info("[CombatTracker] Combat resolution paused")
-                # Show continue button and hide fast resolve button
-                self.continue_button.setVisible(True)
-                self.fast_resolve_button.setVisible(False)
-                
-                # Add a message to the combat log
-                try:
-                    self.combat_log_widget.append("<div style='background-color:#ffffdd; padding:8px; border-radius:4px; margin:8px 0;'>")
-                    self.combat_log_widget.append("<h4 style='color:#886600; margin:0;'>Combat Paused</h4>")
-                    self.combat_log_widget.append("<p>Click 'Continue Combat' to proceed to the next turn.</p>")
-                    self.combat_log_widget.append("</div>")
-                    
-                    # Make sure the log scrolls to the bottom
-                    scrollbar = self.combat_log_widget.verticalScrollBar()
-                    scrollbar.setValue(scrollbar.maximum())
-                except Exception as log_error:
-                    logging.error(f"[CombatTracker] Error updating combat log: {log_error}")
-                
-                return  # Don't reset the resolving flag or buttons as we're still mid-combat
-            
-            elif status == "combat_ended" or status == "stopped" or status == "error":
-                # Combat has ended or was stopped, reset everything
-                logging.info(f"[CombatTracker] Combat resolution ended with status: {status}")
-                
-                # Set a flag to remember combat has ended
-                self._combat_has_ended = True
-                
-                # Attempt to disconnect any signals to prevent further processing
-                try:
-                    # Find the resolver
-                    resolver = None
-                    if hasattr(self.app_state, 'combat_resolver'):
-                        if hasattr(self.app_state.combat_resolver, 'combat_resolver'):
-                            resolver = self.app_state.combat_resolver.combat_resolver
-                        else:
-                            resolver = self.app_state.combat_resolver
-                            
-                        # Disconnect the signals
-                        if resolver:
-                            try:
-                                resolver.resolution_update.disconnect(self._process_resolution_ui)
-                                logging.info("[CombatTracker] Disconnected signal on combat end")
-                            except Exception:
-                                pass
-                except Exception as disconnect_error:
-                    logging.error(f"[CombatTracker] Error disconnecting signals: {disconnect_error}")
-                
-                # Reset button state first (do this early for safety)
-                try:
-                    self._reset_resolve_button("Fast Resolve", True)
-                    self._is_resolving_combat = False
-                    self.continue_button.setVisible(False)
-                    self.fast_resolve_button.setVisible(True)
-                except Exception as button_error:
-                    logging.error(f"[CombatTracker] Error resetting buttons: {button_error}")
-                
-                # Add appropriate message to the combat log
-                try:
-                    if status == "combat_ended":
-                        self.combat_log_widget.append("<div style='background-color:#ddffdd; padding:8px; border-radius:4px; margin:8px 0;'>")
-                        self.combat_log_widget.append("<h4 style='color:#006600; margin:0;'>Combat Completed</h4>")
-                        
-                        # Safely extract end reason 
-                        end_reason = "Unknown reason"
-                        if combat_state and isinstance(combat_state, dict):
-                            end_reason = combat_state.get("end_reason", "Unknown reason")
-                        
-                        self.combat_log_widget.append(f"<p>Combat has ended: {end_reason}</p>")
-                        self.combat_log_widget.append("</div>")
-                    elif status == "stopped":
-                        self.combat_log_widget.append("<div style='background-color:#ddddff; padding:8px; border-radius:4px; margin:8px 0;'>")
-                        self.combat_log_widget.append("<h4 style='color:#000066; margin:0;'>Combat Stopped</h4>")
-                        self.combat_log_widget.append("<p>Combat resolution was stopped manually.</p>")
-                        self.combat_log_widget.append("</div>")
-                    elif status == "error":
-                        self.combat_log_widget.append("<div style='background-color:#ffdddd; padding:8px; border-radius:4px; margin:8px 0;'>")
-                        self.combat_log_widget.append("<h4 style='color:#660000; margin:0;'>Combat Error</h4>")
-                        error_msg = "Unknown error"
-                        if error:
-                            try:
-                                error_msg = str(error)
-                            except:
-                                error_msg = "Error converting error to string"
-                        self.combat_log_widget.append(f"<p>Error during combat resolution: {error_msg}</p>")
-                        self.combat_log_widget.append("</div>")
-                    
-                    # Make sure the log scrolls to the bottom
-                    scrollbar = self.combat_log_widget.verticalScrollBar()
-                    scrollbar.setValue(scrollbar.maximum())
-                except Exception as log_error:
-                    logging.error(f"[CombatTracker] Error updating combat log: {log_error}")
-                
-                # Force a cleanup of the combat resolver
-                try:
-                    if hasattr(self.app_state, 'combat_resolver'):
-                        # Check if the resolver has a reset_resolution method
-                        resolver = self.app_state.combat_resolver
-                        
-                        # Try multiple potential interfaces for resetting the resolver
-                        if hasattr(resolver, 'reset_resolution'):
-                            resolver.reset_resolution()
-                            logging.info("[CombatTracker] Reset combat resolver to clean state")
-                        elif hasattr(resolver, 'stop_resolution'):
-                            resolver.stop_resolution()
-                            logging.info("[CombatTracker] Stopped combat resolver")
-                        elif hasattr(resolver, 'combat_resolver') and hasattr(resolver.combat_resolver, 'reset_resolution'):
-                            resolver.combat_resolver.reset_resolution()
-                            logging.info("[CombatTracker] Reset underlying combat resolver to clean state")
-                        else:
-                            logging.warning("[CombatTracker] Could not find method to reset resolver")
-                except Exception as reset_error:
-                    logging.error(f"[CombatTracker] Error resetting combat resolver: {reset_error}")
-                
-                return
-                
-            else:
-                # For any other status (None, turn_complete, etc.), log but take no action
-                # This is likely a turn update that was already handled by _update_ui
-                logging.debug(f"[CombatTracker] Combat resolution continuing with status: {status}")
-                return
-            
+            # Reset UI elements first
+            self._reset_resolve_button()
+            self._is_resolving_combat = False
         except Exception as e:
-            # Catch-all for any unexpected errors
-            logging.error(f"[CombatTracker] Error processing resolution update: {e}")
-            logging.error(traceback.format_exc())
-            
-            # Emergency reset of UI state
-            try:
-                self._reset_resolve_button("Fast Resolve", True)
-                self._is_resolving_combat = False
-                self.continue_button.setVisible(False)
-                self.fast_resolve_button.setVisible(True)
-                
-                # Add error message to combat log
-                self.combat_log_widget.append("<div style='background-color:#ffdddd; padding:8px; border-radius:4px; margin:8px 0;'>")
-                self.combat_log_widget.append("<h4 style='color:#660000; margin:0;'>Internal Error</h4>")
-                self.combat_log_widget.append(f"<p>An internal error occurred: {str(e)}</p>")
-                self.combat_log_widget.append("</div>")
-            except:
-                # If even this fails, we're in real trouble
-                logging.critical("[CombatTracker] Failed to recover from error in _process_resolution_ui")
-
+            logging.error(f"[CombatTracker] Error resetting UI: {e}")
+    
     def _update_ui_wrapper(self, turn_state):
         """Thread-safe wrapper to update UI during combat (used by the resolver)"""
         import logging
         import json
         import copy
-        import traceback
         
         try:
             # Add detailed logging about received turn_state to help with debugging
@@ -1360,40 +972,15 @@ class CombatTrackerPanel(BasePanel):
             
             # Handle different input types to prevent errors
             if isinstance(turn_state, dict):
-                try:
-                    # Make a deep copy to avoid reference issues
-                    turn_state_copy = copy.deepcopy(turn_state)
-                    logging.debug(f"[CombatTracker] Processing dict turn_state with keys: {turn_state_copy.keys()}")
-                    
-                    # Additional debug logging for latest_action
-                    if 'latest_action' in turn_state_copy:
-                        latest = turn_state_copy['latest_action']
-                        if isinstance(latest, dict):
-                            logging.debug(f"[CombatTracker] latest_action keys: {list(latest.keys())}")
-                            # Ensure explanation is copied to narrative if narrative is missing
-                            if 'explanation' in latest and ('narrative' not in latest or not latest['narrative']):
-                                latest['narrative'] = latest['explanation']
-                                logging.debug(f"[CombatTracker] Copied explanation to narrative: {latest['narrative'][:50]}...")
-                    
-                    # Pass the dictionary directly to _update_ui
-                    try:
-                        self._update_ui(turn_state_copy)
-                    except Exception as ui_error:
-                        logging.error(f"[CombatTracker] Error in _update_ui call: {ui_error}")
-                        traceback.print_exc()
-                except Exception as copy_error:
-                    logging.error(f"[CombatTracker] Error copying turn_state: {copy_error}")
-                    traceback.print_exc()
+                # It's already a dictionary, use it directly
+                logging.debug(f"[CombatTracker] Processing dict turn_state with keys: {turn_state.keys()}")
+                self._update_ui(turn_state)
             elif isinstance(turn_state, str):
                 # It's a JSON string, parse it first
                 try:
                     data = json.loads(turn_state)
                     logging.debug("[CombatTracker] Parsed JSON string input")
-                    try:
-                        self._update_ui(data)
-                    except Exception as ui_error:
-                        logging.error(f"[CombatTracker] Error in _update_ui call with JSON: {ui_error}")
-                        traceback.print_exc()
+                    self._update_ui(data)
                 except json.JSONDecodeError:
                     logging.error(f"[CombatTracker] Failed to parse turn_state as JSON: {turn_state[:100]}...")
             else:
@@ -1402,18 +989,13 @@ class CombatTrackerPanel(BasePanel):
                 try:
                     # Try to convert to dictionary if it's dict-like
                     if hasattr(turn_state, "keys"):
-                        try:
-                            dict_data = {k: v for k, v in turn_state.items()}
-                            logging.warning("[CombatTracker] Converted non-dict turn_state to dictionary")
-                            self._update_ui(dict_data)
-                        except Exception as conversion_error:
-                            logging.error(f"[CombatTracker] Error during dictionary conversion: {conversion_error}")
-                            traceback.print_exc()
+                        dict_data = dict(turn_state)
+                        logging.warning("[CombatTracker] Converted non-dict turn_state to dictionary")
+                        self._update_ui(dict_data)
                     else:
                         logging.error("[CombatTracker] Cannot process turn_state - incompatible type")
                 except Exception as conv_err:
                     logging.error(f"[CombatTracker] Error converting turn_state: {conv_err}")
-                    traceback.print_exc()
             
         except Exception as e:
             logging.error(f"[CombatTracker] Error in UI wrapper: {e}", exc_info=True)
@@ -1421,239 +1003,15 @@ class CombatTrackerPanel(BasePanel):
             # Try a more aggressive approach for debugging
             try:
                 if isinstance(turn_state, dict):
-                    keys_list = list(turn_state.keys()) if hasattr(turn_state, 'keys') else []
-                    logging.error(f"[CombatTracker] Dict content: {keys_list}")
+                    logging.error(f"[CombatTracker] Dict content: {list(turn_state.keys())}")
                     if 'latest_action' in turn_state:
                         latest = turn_state['latest_action']
-                        if hasattr(latest, 'keys'):
-                            logging.error(f"[CombatTracker] latest_action keys: {list(latest.keys()) if hasattr(latest, 'keys') else 'N/A'}")
-                            if 'narrative' in latest:
-                                logging.error(f"[CombatTracker] narrative: {latest['narrative'][:50]}")
-                            elif 'explanation' in latest:
-                                logging.error(f"[CombatTracker] explanation: {latest['explanation'][:50]}")
-            except Exception as debug_error:
-                logging.error(f"[CombatTracker] Failed to log additional debugging info: {debug_error}")
+                        logging.error(f"[CombatTracker] latest_action keys: {list(latest.keys()) if hasattr(latest, 'keys') else 'N/A'}")
+                        if 'narrative' in latest:
+                            logging.error(f"[CombatTracker] narrative: {latest['narrative'][:50]}")
+            except:
+                logging.error("[CombatTracker] Failed to log additional debugging info")
     
-    def _update_ui(self, combat_state):
-        """Update the UI with the latest combat state."""
-        import html
-        import logging
-        import traceback
-        
-        try:
-            # Safety check
-            if not combat_state or not isinstance(combat_state, dict):
-                logging.warning("[CombatTracker] Invalid combat state received in _update_ui")
-                return
-            
-            # Log the incoming combat state for debugging
-            try:
-                state_str = str(combat_state)
-                logging.info(f"[UI] _update_ui called with JSON of length {len(state_str)}")
-            except Exception as str_error:
-                logging.error(f"[CombatTracker] Error converting combat_state to string: {str_error}")
-                
-            # Extract information from combat state with error checking
-            try:
-                combatants = combat_state.get("combatants", [])
-                round_num = combat_state.get("round", 1)
-                current_turn_index = combat_state.get("current_turn_index", 0)
-                latest_action = combat_state.get("latest_action", {})
-            except Exception as get_error:
-                logging.error(f"[CombatTracker] Error extracting combat state fields: {get_error}")
-                combatants = []
-                round_num = 1
-                current_turn_index = 0
-                latest_action = {}
-            
-            # Log detailed information about the latest_action dictionary for debugging
-            if isinstance(latest_action, dict):
-                try:
-                    logging.debug(f"[CombatTracker] latest_action keys: {list(latest_action.keys())}")
-                    for key in ['action', 'target', 'narrative', 'explanation', 'result', 'dice']:
-                        if key in latest_action:
-                            value = latest_action.get(key)
-                            if isinstance(value, str):
-                                logging.debug(f"[CombatTracker] latest_action[{key}]: {value[:50]}...")
-                            elif value is not None:
-                                logging.debug(f"[CombatTracker] latest_action[{key}]: {type(value)}")
-                except Exception as log_error:
-                    logging.error(f"[CombatTracker] Error logging latest_action details: {log_error}")
-            else:
-                logging.error(f"[CombatTracker] latest_action is not a dict: {type(latest_action)}")
-                # Try to create a minimal dict to continue processing
-                latest_action = {"action": "Unknown", "narrative": "Error processing action data"}
-            
-            # Get combatant details with error checking
-            try:
-                if not combatants or current_turn_index >= len(combatants):
-                    logging.warning(f"[CombatTracker] Invalid combatant index: {current_turn_index}, count: {len(combatants)}")
-                    return
-                    
-                active_combatant = combatants[current_turn_index]
-                actor = active_combatant.get("name", "Unknown")
-            except Exception as combatant_error:
-                logging.error(f"[CombatTracker] Error accessing combatant data: {combatant_error}")
-                actor = "Unknown"
-                
-            # More safely extract action details
-            try:
-                action = latest_action.get("action", "No action")
-                target = latest_action.get("target", "")  # Add target extraction
-            except Exception as action_error:
-                logging.error(f"[CombatTracker] Error extracting action details: {action_error}")
-                action = "No action"
-                target = ""
-            
-            # Get narrative with improved fallback handling
-            narrative = None
-            
-            try:
-                # Check for the narrative in multiple possible keys (priority order)
-                if "narrative" in latest_action and latest_action["narrative"]:
-                    narrative = latest_action["narrative"]
-                    logging.debug(f"[CombatTracker] Found narrative in 'narrative' key: {narrative[:50]}...")
-                elif "explanation" in latest_action and latest_action["explanation"]:
-                    narrative = latest_action["explanation"]
-                    logging.debug(f"[CombatTracker] Found narrative in 'explanation' key: {narrative[:50]}...")
-                elif "result" in latest_action and latest_action["result"]:
-                    narrative = latest_action["result"]
-                    logging.debug(f"[CombatTracker] Found narrative in 'result' key: {narrative[:50]}...")
-                else:
-                    # Create a fallback narrative if both are missing
-                    narrative = f"{actor} performs {action}"
-                    if target:
-                        narrative += f" targeting {target}"
-                    narrative += "."
-                    logging.warning(f"[CombatTracker] No narrative found in latest_action - using fallback: {narrative}")
-            except Exception as narrative_error:
-                logging.error(f"[CombatTracker] Error extracting narrative: {narrative_error}")
-                narrative = f"{actor} performs {action}"
-                if target:
-                    narrative += f" targeting {target}"
-                narrative += "."
-            
-            try:
-                dice_rolls = latest_action.get("dice", [])
-                action_type = latest_action.get("action_type", "standard")
-                action_icon = latest_action.get("action_icon", "⚡")
-                narrative_style = latest_action.get("narrative_style", "")
-                is_fallback = latest_action.get("fallback", False)
-            except Exception as misc_error:
-                logging.error(f"[CombatTracker] Error extracting misc action details: {misc_error}")
-                dice_rolls = []
-                action_type = "standard"
-                action_icon = "⚡"
-                narrative_style = ""
-                is_fallback = False
-            
-            # Update the combat log with high contrast colors
-            # Add this turn's information to the combat log panel
-            turn_text = f"<div style='margin-bottom:15px; padding:8px; border-radius:5px; background-color:#f9f9f9;'>"
-            
-            # Header with round/turn info
-            turn_text += f"<h4 style='color:#000088; margin:0 0 5px 0; border-bottom:1px solid #ddd; padding-bottom:3px;'>Round {round_num} - {actor}'s Turn {action_icon}</h4>"
-            
-            # Check if this is a fallback action due to an error
-            if is_fallback:
-                # This is a fallback action due to an error
-                error_message = latest_action.get("error", "Unknown error")
-                turn_text += f"<p style='color:#880000; margin:5px 0;'><i>Technical note: {html.escape(error_message)}</i></p>"
-                turn_text += f"<p style='color:#000000; margin:5px 0;'>{html.escape(narrative)}</p>"
-            else:
-                # Regular action display with enhanced styling based on action type
-                # Action title with icon and target
-                turn_text += f"<div style='font-weight:bold; margin:5px 0;'>{action_icon} <span>{html.escape(action)}</span>"
-                if target:
-                    turn_text += f" <span style='color:#555;'>→ {html.escape(target)}</span>"
-                turn_text += "</div>"
-                
-                # Narrative with custom styling
-                if narrative:
-                    if narrative_style:
-                        turn_text += f"<p style='{narrative_style} margin:5px 0;'>{html.escape(narrative)}</p>"
-                    else:
-                        turn_text += f"<p style='margin:5px 0;'>{html.escape(narrative)}</p>"
-                else:
-                    # Add a warning if no narrative is available (should not happen with our fixes)
-                    turn_text += f"<p style='color:#880000; margin:5px 0;'><i>No narrative available</i></p>"
-                
-                # Dice section if any dice were rolled
-                if dice_rolls:
-                    turn_text += f"<div style='margin-top:5px; font-size:0.9em; color:#555; background-color:#f0f0f0; padding:4px; border-radius:3px;'>"
-                    turn_text += "<span style='font-weight:bold;'>🎲 Dice:</span> "
-                    
-                    dice_details = []
-                    for roll in dice_rolls:
-                        purpose = roll.get("purpose", "Roll")
-                        expression = roll.get("expression", "?")
-                        result = roll.get("result", "?")
-                        dice_details.append(f"<span title='{html.escape(purpose)}'>{html.escape(expression)}={html.escape(str(result))}</span>")
-                    
-                    turn_text += " | ".join(dice_details)
-                    turn_text += "</div>"
-            
-            # Close the div
-            turn_text += "</div>"
-            
-            # Log what we're about to add to the combat log
-            logging.debug(f"[CombatTracker] Adding turn text to combat log: {len(turn_text)} characters")
-            
-            # Update the log
-            self.combat_log_widget.append(turn_text)
-            
-            # Make sure the log scrolls to the bottom
-            scrollbar = self.combat_log_widget.verticalScrollBar()
-            scrollbar.setValue(scrollbar.maximum())
-
-        except Exception as e:
-            logging.error(f"[CombatTracker] Error in _update_ui: {e}", exc_info=True)
-    
-    def _add_initial_combat_state_to_log(self, combat_state):
-        """Add initial combat state to the log at the start of combat"""
-        try:
-            # Header
-            header = "<h3 style='color: #000088;'>Combat Begins</h3>"
-            self.combat_log_widget.append(header)
-            
-            # Combatants list
-            combatants = combat_state.get("combatants", [])
-            if combatants:
-                combatant_list = "<ul>"
-                for c in combatants:
-                    name = c.get("name", "Unknown")
-                    hp = c.get("hp", "?")
-                    ac = c.get("ac", "?")
-                    combatant_list += f"<li><b>{name}</b> - AC: {ac}, HP: {hp}</li>"
-                combatant_list += "</ul>"
-                self.combat_log_widget.append(combatant_list)
-            else:
-                self.combat_log_widget.append("<p>No combatants in combat!</p>")
-                
-            # Force scroll to bottom
-            scrollbar = self.combat_log_widget.verticalScrollBar()
-            scrollbar.setValue(scrollbar.maximum())
-        except Exception as e:
-            logging.error(f"[CombatTracker] Error adding initial state: {e}")
-    
-    def _cancel_safety_timer(self):
-        """Cancel the safety timer if it exists"""
-        if hasattr(self, '_safety_timer') and self._safety_timer:
-            try:
-                self._safety_timer.stop()
-                logging.debug("[CombatTracker] Canceled safety timer")
-            except Exception:
-                pass
-    
-    def _cancel_backup_timer(self):
-        """Cancel the backup timer if it exists"""
-        if hasattr(self, '_backup_timer') and self._backup_timer:
-            try:
-                self._backup_timer.stop()
-                logging.debug("[CombatTracker] Canceled backup timer")
-            except Exception:
-                pass
-
     def _move_table_row(self, source_row, target_row):
         """Helper method to move a row from source_row to target_row in the initiative table."""
         import logging
@@ -1790,184 +1148,5 @@ class CombatTrackerPanel(BasePanel):
             print("[CombatTracker] Combat log cleared")
         else:
             print("[CombatTracker] Combat log widget not found, can't clear")
-
-    def _apply_damage(self, row):
-        """Apply damage to a combatant"""
-        import logging
-        from PySide6.QtWidgets import QInputDialog, QMessageBox
-        
-        try:
-            # Get the current HP
-            hp_item = self.initiative_table.item(row, 2)  # HP is in column 2
-            if not hp_item:
-                return
-                
-            current_hp = 0
-            try:
-                current_hp = int(hp_item.text())
-            except ValueError:
-                current_hp = 0
-                
-            # Ask for damage amount
-            damage, ok = QInputDialog.getInt(
-                self, "Apply Damage", "Damage amount:", 
-                1, 1, 999, 1
-            )
-            
-            if ok:
-                # Apply damage
-                new_hp = max(0, current_hp - damage)
-                hp_item.setText(str(new_hp))
-                
-                # Get combatant name for logging
-                name_item = self.initiative_table.item(row, 0)
-                name = name_item.text() if name_item else "Unknown"
-                
-                # Update the internal data if needed
-                self._handle_cell_changed(row, 2)
-                
-                # Log the damage
-                logging.info(f"[CombatTracker] Applied {damage} damage to {name} (HP: {current_hp} -> {new_hp})")
-                
-                # If reduced to 0, ask about death
-                if new_hp == 0 and current_hp > 0:
-                    type_item = self.initiative_table.item(row, 4)  # Type column
-                    combatant_type = type_item.text().lower() if type_item else ""
-                    
-                    if "monster" in combatant_type:
-                        # For monsters, ask if they should be removed
-                        response = QMessageBox.question(
-                            self, "Defeated!", 
-                            f"{name} has been reduced to 0 HP. Remove from combat?",
-                            QMessageBox.Yes | QMessageBox.No
-                        )
-                        
-                        if response == QMessageBox.Yes:
-                            self._delete_combatant(row)
-                    else:
-                        # For PCs, just mark unconscious
-                        status_item = self.initiative_table.item(row, 5)  # Status column
-                        if status_item:
-                            status_item.setText("Unconscious")
-                            QMessageBox.information(
-                                self, "Unconscious", 
-                                f"{name} has been reduced to 0 HP and is unconscious."
-                            )
-                
-        except Exception as e:
-            logging.error(f"[CombatTracker] Error applying damage: {e}", exc_info=True)
-    
-    def _apply_healing(self, row):
-        """Apply healing to a combatant"""
-        import logging
-        from PySide6.QtWidgets import QInputDialog
-        
-        try:
-            # Get the current HP and max HP
-            hp_item = self.initiative_table.item(row, 2)  # HP column
-            max_hp_item = self.initiative_table.item(row, 3)  # Max HP column
-            
-            if not hp_item or not max_hp_item:
-                return
-                
-            current_hp = 0
-            max_hp = 0
-            try:
-                current_hp = int(hp_item.text())
-                max_hp = int(max_hp_item.text())
-            except ValueError:
-                current_hp = 0
-                max_hp = 0
-                
-            # Ask for healing amount
-            healing, ok = QInputDialog.getInt(
-                self, "Apply Healing", "Healing amount:", 
-                1, 1, 999, 1
-            )
-            
-            if ok:
-                # Apply healing, capped at max_hp
-                new_hp = min(max_hp, current_hp + healing)
-                hp_item.setText(str(new_hp))
-                
-                # Get combatant name for logging
-                name_item = self.initiative_table.item(row, 0)
-                name = name_item.text() if name_item else "Unknown"
-                
-                # Update the internal data if needed
-                self._handle_cell_changed(row, 2)
-                
-                # Log the healing
-                logging.info(f"[CombatTracker] Applied {healing} healing to {name} (HP: {current_hp} -> {new_hp})")
-                
-                # If character was unconscious, update status
-                if current_hp == 0 and new_hp > 0:
-                    status_item = self.initiative_table.item(row, 5)  # Status column
-                    if status_item and status_item.text() == "Unconscious":
-                        status_item.setText("")
-                
-        except Exception as e:
-            logging.error(f"[CombatTracker] Error applying healing: {e}", exc_info=True)
-    
-    def _apply_condition(self, row, condition):
-        """Apply a condition to a combatant"""
-        import logging
-        
-        try:
-            # Get the status item
-            status_item = self.initiative_table.item(row, 5)  # Status column
-            if not status_item:
-                return
-                
-            # Get current conditions
-            current_status = status_item.text()
-            conditions = [c.strip() for c in current_status.split(',')] if current_status else []
-            
-            # Add the condition if not already present
-            if condition not in conditions:
-                conditions.append(condition)
-                
-            # Update the status
-            new_status = ', '.join(conditions)
-            status_item.setText(new_status)
-            
-            # Get combatant name for logging
-            name_item = self.initiative_table.item(row, 0)
-            name = name_item.text() if name_item else "Unknown"
-            
-            # Update the internal data if needed
-            self._handle_cell_changed(row, 5)
-            
-            # Log the condition
-            logging.info(f"[CombatTracker] Applied condition '{condition}' to {name}")
-            
-        except Exception as e:
-            logging.error(f"[CombatTracker] Error applying condition: {e}", exc_info=True)
-    
-    def _clear_conditions(self, row):
-        """Clear all conditions from a combatant"""
-        import logging
-        
-        try:
-            # Get the status item
-            status_item = self.initiative_table.item(row, 5)  # Status column
-            if not status_item:
-                return
-                
-            # Clear the conditions
-            status_item.setText("")
-            
-            # Get combatant name for logging
-            name_item = self.initiative_table.item(row, 0)
-            name = name_item.text() if name_item else "Unknown"
-            
-            # Update the internal data if needed
-            self._handle_cell_changed(row, 5)
-            
-            # Log the change
-            logging.info(f"[CombatTracker] Cleared all conditions from {name}")
-            
-        except Exception as e:
-            logging.error(f"[CombatTracker] Error clearing conditions: {e}", exc_info=True)
 
     # ... (rest of the class if any)

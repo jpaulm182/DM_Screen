@@ -272,14 +272,43 @@ class CombatResolver(QObject):
                     )
                     
                     if result:
+                        # Log the result for debugging
+                        logging.debug(f"[CombatResolver] Turn result keys: {result.keys()}")
+                        logging.debug(f"[CombatResolver] Turn has narrative: {result.get('has_narrative', False)}")
+                        if 'narrative' in result:
+                            narrative_preview = result.get('narrative', '')[:50]
+                            logging.debug(f"[CombatResolver] Narrative preview: {narrative_preview}...")
+                        
                         # Apply results to our local copy of the state
-                        # Add the result to the turn state for UI updates
-                        local_combat_state["latest_action"] = {
-                            "actor": local_combatants_list[current_turn_index].get("name", "Unknown"),
+                        # Create a complete latest_action dictionary with all necessary fields
+                        active_name = local_combatants_list[current_turn_index].get("name", "Unknown")
+                        latest_action = {
+                            "actor": active_name,
                             "action": result.get("action", "Unknown action"),
-                            "result": result.get("narrative", ""),
-                            "dice": result.get("dice", [])
+                            "target": result.get("target", ""),
+                            "result": result.get("narrative", ""),  # Set result from narrative
+                            "narrative": result.get("narrative", ""),  # Also set narrative directly
+                            "dice": result.get("dice", []),
+                            "action_type": result.get("action_type", "standard"),
+                            "action_icon": result.get("action_icon", "⚡"),
+                            "narrative_style": result.get("narrative_style", ""),
+                            "fallback": result.get("fallback", False)
                         }
+                        
+                        # Ensure we have a valid narrative in the latest_action
+                        if not latest_action["narrative"] and not latest_action["result"]:
+                            # Add a basic fallback narrative if missing
+                            fallback_narrative = f"{active_name} performs {latest_action['action']}"
+                            if latest_action["target"]:
+                                fallback_narrative += f" targeting {latest_action['target']}"
+                            fallback_narrative += "."
+                            latest_action["narrative"] = fallback_narrative
+                            latest_action["result"] = fallback_narrative
+                            logging.info(f"[CombatResolver] Added fallback narrative: {fallback_narrative}")
+                        
+                        # Update the state with the latest action
+                        local_combat_state["latest_action"] = latest_action
+                        logging.debug(f"[CombatResolver] Updated combat_state with latest_action for {active_name}")
                         
                         # Apply any updates to the local combatants list
                         if "updates" in result:
@@ -291,7 +320,20 @@ class CombatResolver(QObject):
                         local_combat_state["round"] = round_num
                         
                         # Thread-safe emit the updated state
+                        logging.info(f"[CombatResolver] Emitting combat state update for {active_name}")
                         self.resolution_update.emit(local_combat_state, "turn_complete", None)
+                        
+                        # Also call the update_ui_callback if provided (additional UI update)
+                        if self._update_ui_callback:
+                            try:
+                                logging.debug(f"[CombatResolver] Calling update_ui_callback for {active_name}")
+                                # Create a clean copy of the state to avoid thread issues
+                                state_copy = copy.deepcopy(local_combat_state)
+                                self._update_ui_callback(state_copy)
+                            except Exception as callback_error:
+                                logging.error(f"[CombatResolver] Error in update_ui_callback: {callback_error}")
+                    else:
+                        logging.warning(f"[CombatResolver] No result returned from _process_turn for {local_combatants_list[current_turn_index].get('name', 'Unknown')}")
                 except Exception as e:
                     error_msg = f"Error processing turn: {str(e)}"
                     logging.error(f"[CombatResolver] {error_msg}")
@@ -673,7 +715,8 @@ class CombatResolver(QObject):
             # Save the result for debugging
             self._save_json_artifact(action_result, f"parse_result_action_decision_{int(time.time())}")
             
-            if not action_result.get("success", False):
+            # Check if parsing was successful (no error in result)
+            if "error" in action_result:
                 logging.error(f"[CombatResolver] Failed to parse LLM response: {action_result.get('error', 'Unknown error')}")
                 return {
                     "success": False,
@@ -685,18 +728,82 @@ class CombatResolver(QObject):
             target = action_result.get("target", "")
             explanation = action_result.get("explanation", "")
             
+            # Process dice roll requests if provided
+            dice_rolls = []
+            dice_requests = action_result.get("dice_requests", [])
+            if dice_requests and isinstance(dice_requests, list):
+                logging.info(f"[CombatResolver] Processing {len(dice_requests)} dice requests for {active_name}")
+                for roll_request in dice_requests:
+                    if not isinstance(roll_request, dict):
+                        continue
+                        
+                    expression = roll_request.get("expression", "")
+                    purpose = roll_request.get("purpose", "Unknown roll")
+                    
+                    if not expression:
+                        continue
+                        
+                    try:
+                        # Use the provided dice_roller function
+                        roll_result = dice_roller(expression)
+                        
+                        # Add to our dice rolls list with all info
+                        dice_roll = {
+                            "expression": expression,
+                            "purpose": purpose,
+                            "result": roll_result
+                        }
+                        dice_rolls.append(dice_roll)
+                        logging.info(f"[CombatResolver] Rolled {expression} for {purpose}: {roll_result}")
+                    except Exception as e:
+                        logging.error(f"[CombatResolver] Error rolling dice {expression}: {e}")
+            
             # Determine action type and icon for visualization
             action_type = self._determine_action_type(action)
             action_icon = self._get_action_icon(action_type)
             
             logging.info(f"[CombatResolver] {active_name} chose action: {action} targeting: {target}")
             
-            # Construct a narrative from the action and explanation
-            narrative = explanation
-            if not narrative:
-                narrative = f"{active_name} {action.lower()}"
+            # Construct a detailed narrative using various available fields
+            narrative = ""
+            
+            # First try to use the explanation field (which should contain the narrative)
+            if explanation and len(explanation) > 5:  # Make sure it's not just a placeholder
+                narrative = explanation
+            # Also check for narrative or result fields that might be provided directly
+            elif action_result.get("narrative"):
+                narrative = action_result.get("narrative")
+            elif action_result.get("result"):
+                narrative = action_result.get("result")
+            else:
+                # Generate a fallback narrative based on action, target and dice rolls
+                narrative = f"{active_name} uses {action}"
                 if target:
-                    narrative += f" targeting {target}"
+                    narrative += f" against {target}"
+                
+                # Add dice roll results to the narrative
+                if dice_rolls:
+                    # Look for attack rolls
+                    attack_rolls = [roll for roll in dice_rolls if 'attack' in roll.get('purpose', '').lower()]
+                    if attack_rolls:
+                        roll = attack_rolls[0]  # Use the first attack roll
+                        result = roll.get('result', 0)
+                        narrative += f". Attack roll: {result}"
+                        
+                    # Look for damage rolls
+                    damage_rolls = [roll for roll in dice_rolls if 'damage' in roll.get('purpose', '').lower()]
+                    if damage_rolls:
+                        total_damage = sum(roll.get('result', 0) for roll in damage_rolls)
+                        if total_damage > 0:
+                            narrative += f", dealing {total_damage} damage"
+                            
+                    # Look for saving throws
+                    save_rolls = [roll for roll in dice_rolls if 'save' in roll.get('purpose', '').lower()]
+                    if save_rolls:
+                        roll = save_rolls[0]  # Use the first save roll
+                        result = roll.get('result', 0)
+                        narrative += f". Save roll: {result}"
+                
                 narrative += "."
                 
             # Build the final turn result with enhanced visual data
@@ -710,7 +817,8 @@ class CombatResolver(QObject):
                 "narrative": narrative,
                 "action_type": action_type,
                 "action_icon": action_icon,
-                "narrative_style": self._get_narrative_style(action_type)
+                "narrative_style": self._get_narrative_style(action_type),
+                "dice": dice_rolls  # Include the dice rolls in the result
             }
             
             # Save the turn result for debugging
@@ -731,6 +839,33 @@ class CombatResolver(QObject):
                 "target": self._find_appropriate_target(combatants, active_idx),
                 "narrative": f"{active_name} attempts a basic action but encounters difficulty."
             }
+            
+            # Add some basic dice rolls to ensure damage can be processed
+            try:
+                # Create basic attack and damage rolls
+                fallback_dice = []
+                # Attack roll with +5 modifier (reasonable default)
+                attack_roll = dice_roller("1d20+5")
+                fallback_dice.append({
+                    "expression": "1d20+5",
+                    "purpose": "Fallback Attack Roll",
+                    "result": attack_roll
+                })
+                
+                # Damage roll - 1d8+3 as a reasonable default
+                damage_roll = dice_roller("1d8+3")
+                fallback_dice.append({
+                    "expression": "1d8+3",
+                    "purpose": "Fallback Damage Roll",
+                    "result": damage_roll
+                })
+                
+                # Add dice rolls to the fallback action
+                fallback_action["dice"] = fallback_dice
+                
+                logging.info(f"[CombatResolver] Using fallback dice rolls: Attack={attack_roll}, Damage={damage_roll}")
+            except Exception as dice_error:
+                logging.error(f"[CombatResolver] Error creating fallback dice rolls: {dice_error}")
             
             return fallback_action
             
@@ -1590,6 +1725,21 @@ class CombatResolver(QObject):
         system_prompt = """
         You are a Dungeons & Dragons 5e combat assistant tasked with making tactical decisions for monsters and NPCs.
         
+        STRICT RESPONSE FORMAT REQUIREMENTS:
+        - You MUST return ONLY valid, parseable JSON
+        - Do NOT include text before or after the JSON
+        - Do NOT include markdown formatting (like ```json)
+        - Do NOT include comments in the JSON
+        - Your response must be directly parseable by Python's json.loads()
+        - You MUST include a "dice_requests" array in your response with ALL necessary rolls
+        
+        D&D DICE ROLL REQUIREMENTS:
+        - ALWAYS include ALL required dice rolls for your chosen action
+        - For attacks: include attack roll and damage roll expressions
+        - For spells: include spell attack rolls or saving throw DCs and damage rolls
+        - Without proper dice_requests, actions cannot be properly resolved
+        - Each dice request must have "expression" (e.g., "1d20+5") and "purpose" fields
+        
         GUIDELINES:
         1. Consider character positions, abilities, and tactical advantages
         2. Choose actions that would make sense for the character's intelligence and nature
@@ -1636,12 +1786,35 @@ class CombatResolver(QObject):
         ## Your Task
         Choose an appropriate action for {name} based on its capabilities and the current situation.
         
-        Respond with a JSON object containing:
+        ## RESPONSE FORMAT INSTRUCTIONS (IMPORTANT)
+        You MUST respond with ONLY a valid JSON object. No markdown, no explanations outside the JSON.
+        Your response must be parseable by Python's json.loads() function.
+        
+        Example of correct response format:
         {{
-          "action": "The action being taken",
-          "target": "The target of the action, if applicable",
-          "explanation": "Brief explanation of the tactical choice"
+          "action": "Multiattack",
+          "target": "Adult Red Dragon",
+          "explanation": "Using my most powerful attack against the largest threat.",
+          "dice_requests": [
+            {{"expression": "1d20+7", "purpose": "Attack Roll: Claw vs Adult Red Dragon"}},
+            {{"expression": "2d6+4", "purpose": "Damage: Claw attack"}}
+          ]
         }}
+        
+        Required fields:
+        - "action" (string): The name of the action being taken
+        - "target" (string): The name of the target, or "None" if no target
+        - "explanation" (string): Brief tactical explanation
+        - "dice_requests" (array): List of dice rolls needed for this action, each with:
+          - "expression" (string): The dice expression (e.g., "1d20+5")
+          - "purpose" (string): What this roll is for (e.g., "Attack Roll: Bite")
+
+        INCLUDE ALL NECESSARY DICE ROLLS for attack rolls, damage rolls, and saving throws.
+        Without proper dice_requests, the combat system cannot process damage or effects.
+
+        DO NOT include any text before or after the JSON object.
+        DO NOT include ```json or ``` markers.
+        ONLY return the raw JSON object.
         """
         
         # Create message list format used by OpenAI API

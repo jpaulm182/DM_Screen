@@ -1,0 +1,31 @@
+{
+  "action": "Multiattack",
+  "target": "Infernal Tyrant",
+  "explanation": "Using Multiattack to maximize damage output on the Infernal Tyrant, the only opponent present.",
+  "dice_requests": [
+    {
+      "expression": "1d20+11",
+      "purpose": "Attack Roll: Bite"
+    },
+    {
+      "expression": "2d10+6",
+      "purpose": "Damage: Bite"
+    },
+    {
+      "expression": "1d20+11",
+      "purpose": "Attack Roll: Claw 1"
+    },
+    {
+      "expression": "2d6+6",
+      "purpose": "Damage: Claw 1"
+    },
+    {
+      "expression": "1d20+11",
+      "purpose": "Attack Roll: Claw 2"
+    },
+    {
+      "expression": "2d6+6",
+      "purpose": "Damage: Claw 2"
+    }
+  ]
+}

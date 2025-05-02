@@ -1,0 +1,15 @@
+{
+  "action": "Fire Breath",
+  "target": "Infernal Tyrant",
+  "explanation": "Using Fire Breath to deal heavy area damage to the Infernal Tyrant, exploiting the dragon's elemental advantage early in combat.",
+  "dice_requests": [
+    {
+      "expression": "2d20+7",
+      "purpose": "Dexterity Saving Throw DC 24 for Infernal Tyrant to halve fire breath damage"
+    },
+    {
+      "expression": "18d6",
+      "purpose": "Fire Breath damage"
+    }
+  ]
+}

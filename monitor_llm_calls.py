@@ -306,16 +306,32 @@ def monitor_ui_updates():
         
         @functools.wraps(original_update_ui)
         def logged_update_ui(self, turn_state_json):
-            logger.info(f"[UI] _update_ui called with JSON of length {len(turn_state_json) if turn_state_json else 0}")
+            logger.info(f"[UI] _update_ui called with JSON of length {len(turn_state_json) if turn_state_json else 0 if isinstance(turn_state_json, str) else 'N/A (dict)'}")
             
             # Save the JSON to check what's coming in
             json_file = output_dir / f"ui_json_{int(time.time())}.json"
             with open(json_file, 'w') as f:
-                f.write(turn_state_json if turn_state_json else "None")
+                # Fix: Convert dictionary to string using json.dumps if it's a dict
+                if isinstance(turn_state_json, dict):
+                    try:
+                        f.write(json.dumps(turn_state_json, default=str, indent=2))
+                        logger.info(f"[UI] Saved dictionary input as JSON to {json_file}")
+                    except Exception as e:
+                        logger.error(f"[UI] Error converting dictionary to JSON: {e}")
+                        f.write(f"ERROR: Failed to serialize: {str(e)}\nOriginal data: {str(turn_state_json)}")
+                else:
+                    f.write(turn_state_json if turn_state_json else "None")
+                    logger.info(f"[UI] Saved string input to {json_file}")
             
             # Call original method
-            result = original_update_ui(self, turn_state_json)
-            return result
+            try:
+                result = original_update_ui(self, turn_state_json)
+                logger.info("[UI] _update_ui completed successfully")
+                return result
+            except Exception as e:
+                logger.error(f"[UI] Error in _update_ui: {e}", exc_info=True)
+                # Re-raise to preserve original behavior
+                raise
         
         # Replace the original method
         CombatTrackerPanel._update_ui = logged_update_ui
@@ -335,6 +351,12 @@ def init_monitoring():
     
     logger.info("Starting LLM call monitoring setup")
     
+    # HOTFIX - DISABLE MONITORING TO PREVENT CRASHES
+    logger.warning("LLM monitoring has been disabled to prevent crashes")
+    return False
+    
+    # Comment out the rest of the function
+    """
     # Create output directory
     _create_output_dir()
     
@@ -350,6 +372,7 @@ def init_monitoring():
     logger.info(f"All LLM calls will be logged to: {output_dir}")
     
     return llm_patched or combat_patched or ui_patched
+    """
 
 def main():
     """Main function when run as a script"""

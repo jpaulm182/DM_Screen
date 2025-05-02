@@ -96,39 +96,49 @@ class CombatantManager:
             init_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
             self.panel.initiative_table.setItem(new_row_index, 1, init_item)
 
-            # HP Item
+            # HP Item - Column 2
             hp_str = str(hp) if hp is not None else "10"
             hp_item = QTableWidgetItem(hp_str)
             hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
             self.panel.initiative_table.setItem(new_row_index, 2, hp_item)
+            # Debug trace for HP
+            logging.debug(f"[CombatantManager] Setting HP at column 2: {hp_str}")
 
-            # Max HP Item
+            # Max HP Item - Column 3
             max_hp_str = str(max_hp) if max_hp is not None else "10"
             max_hp_item = QTableWidgetItem(max_hp_str)
             max_hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
             self.panel.initiative_table.setItem(new_row_index, 3, max_hp_item)
+            # Debug trace for Max HP
+            logging.debug(f"[CombatantManager] Setting Max HP at column 3: {max_hp_str}")
 
-            # AC Item
+            # AC Item - Column 4
             ac_str = str(ac) if ac is not None else "10"
             ac_item = QTableWidgetItem(ac_str)
             ac_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
             self.panel.initiative_table.setItem(new_row_index, 4, ac_item)
+            # Debug trace for AC
+            logging.debug(f"[CombatantManager] Setting AC at column 4: {ac_str}")
 
-            # Status Item
+            # Status Item - Column 5
             status_item = QTableWidgetItem("")
             status_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
             self.panel.initiative_table.setItem(new_row_index, 5, status_item)
 
-            # Concentration Item
+            # Concentration Item - Column 6
             conc_item = QTableWidgetItem()
             conc_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
             conc_item.setCheckState(Qt.Unchecked)
             self.panel.initiative_table.setItem(new_row_index, 6, conc_item)
 
-            # Type Item
+            # Type Item - Column 7
             type_item = QTableWidgetItem(combatant_type)
             type_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
             self.panel.initiative_table.setItem(new_row_index, 7, type_item)
+            logging.debug(f"[CombatantManager] Setting Type at column 7: {combatant_type}")
+
+            # Final column check to ensure everything is in the right place
+            logging.info(f"[CombatantManager] Added combatant {name}: HP(2)={hp}, Max HP(3)={max_hp}, AC(4)={ac}, Type(7)={combatant_type}")
 
             # --- Store Combatant Data ---
             # Store comprehensive data associated with this instance ID

@@ -1,0 +1,15 @@
+{
+  "action": "Fire Breath",
+  "target": "Infernal Tyrant",
+  "explanation": "Using Fire Breath on Infernal Tyrant to exploit its potential vulnerability and deal heavy area damage.",
+  "dice_requests": [
+    {
+      "expression": "12d6",
+      "purpose": "Damage: Fire Breath"
+    },
+    {
+      "expression": "DC 21 Dexterity save",
+      "purpose": "Saving Throw: Infernal Tyrant to halve Fire Breath damage"
+    }
+  ]
+}

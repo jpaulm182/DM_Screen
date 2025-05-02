@@ -1,0 +1,44 @@
+{
+  "success": true,
+  "has_narrative": true,
+  "narrative_length": 72,
+  "has_action": true,
+  "action": "Multiattack",
+  "target": "Autocannibal",
+  "narrative": "Using Multiattack to maximize damage output on the single visible enemy.",
+  "action_type": "attack",
+  "action_icon": "\u2694\ufe0f",
+  "narrative_style": "color:#880000; font-style:italic;",
+  "dice": [
+    {
+      "expression": "1d20+11",
+      "purpose": "Attack Roll: Bite vs Autocannibal",
+      "result": 29
+    },
+    {
+      "expression": "2d10+7",
+      "purpose": "Damage: Bite",
+      "result": 19
+    },
+    {
+      "expression": "1d20+11",
+      "purpose": "Attack Roll: Claw vs Autocannibal",
+      "result": 24
+    },
+    {
+      "expression": "2d6+7",
+      "purpose": "Damage: Claw",
+      "result": 13
+    },
+    {
+      "expression": "1d20+11",
+      "purpose": "Attack Roll: Claw vs Autocannibal",
+      "result": 25
+    },
+    {
+      "expression": "2d6+7",
+      "purpose": "Damage: Claw",
+      "result": 12
+    }
+  ]
+}

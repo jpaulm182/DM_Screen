@@ -840,6 +840,17 @@ def _patch_improved_combat_resolver(app_state):
         wrapper.start_resolution = resolver.start_resolution
         logging.info("Patched ImprovedCombatResolver to expose underlying start_resolution method")
     
+    # Add direct reset_resolution method to properly reset the resolver
+    if hasattr(resolver, 'reset_resolution') and not hasattr(wrapper, 'reset_resolution'):
+        wrapper.reset_resolution = resolver.reset_resolution
+        logging.info("Patched ImprovedCombatResolver to expose underlying reset_resolution method")
+    
+    # Add other commonly needed methods
+    for method_name in ['is_running', 'is_paused', 'continue_turn', 'stop_resolution']:
+        if hasattr(resolver, method_name) and not hasattr(wrapper, method_name):
+            setattr(wrapper, method_name, getattr(resolver, method_name))
+            logging.info(f"Patched ImprovedCombatResolver to expose underlying {method_name} method")
+    
     logging.info("ImprovedCombatResolver successfully patched")
 
 def _patch_error_handling(app_state):

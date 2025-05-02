@@ -66,6 +66,43 @@ class ImprovedCombatResolver(QObject):
             lambda state, status, error: self.resolution_complete.emit(state, error)
         )
         
+    def reset_resolution(self):
+        """
+        Stop any current resolution and reset the state.
+        Delegates to the inner combat_resolver's reset_resolution method.
+        """
+        import logging
+        logging.info("[ImprovedCombatResolver] Delegating reset_resolution to inner resolver")
+        return self.combat_resolver.reset_resolution()
+
+    def is_running(self):
+        """Check if the resolver is currently processing."""
+        return self.combat_resolver.is_running()
+
+    def is_paused(self):
+        """Check if the resolver is paused in step mode."""
+        return self.combat_resolver.is_paused()
+
+    def continue_turn(self):
+        """Signal to continue to the next turn when in step mode."""
+        return self.combat_resolver.continue_turn()
+
+    def stop_resolution(self):
+        """Stop the resolution process."""
+        return self.combat_resolver.stop_resolution()
+
+    def start_resolution(self, combat_state, dice_roller, update_ui_callback, mode='continuous'):
+        """
+        Start the combat resolution process.
+        Delegates to the inner combat_resolver's start_resolution method.
+        """
+        return self.combat_resolver.start_resolution(
+            combat_state, 
+            dice_roller, 
+            update_ui_callback, 
+            mode
+        )
+
     def resolve_combat_turn_by_turn(self, combat_state, dice_roller, callback=None, update_ui_callback=None):
         """
         Start continuous combat resolution using the original CombatResolver.

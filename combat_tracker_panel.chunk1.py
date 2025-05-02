@@ -893,6 +893,18 @@
             combatants = turn_state.get("combatants", [])
             print(f"[CombatTracker] _update_ui_wrapper called with turn state containing {len(combatants)} combatants")
             
+            # Fix for missing narrative issue - ensure latest_action has narrative field
+            if "latest_action" in turn_state and isinstance(turn_state["latest_action"], dict):
+                latest_action = turn_state["latest_action"]
+                # Check if narrative is missing but explanation exists - copy over
+                if "narrative" not in latest_action and "explanation" in latest_action:
+                    latest_action["narrative"] = latest_action["explanation"]
+                    print("[CombatTracker] Copied explanation to narrative field")
+                # Check if result is missing but outcome exists - copy over
+                if "result" not in latest_action and "outcome" in latest_action:
+                    latest_action["result"] = latest_action["outcome"]
+                    print("[CombatTracker] Copied outcome to result field")
+            
             # Ensure the turn state is serializable by sanitizing it
             def sanitize_object(obj):
                 """Recursively sanitize an object to ensure it's JSON serializable"""

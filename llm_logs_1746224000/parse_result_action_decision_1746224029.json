@@ -1,0 +1,15 @@
+{
+  "action": "Fire Breath",
+  "target": "Infernal Tyrant",
+  "explanation": "Using Fire Breath to maximize damage on Infernal Tyrant while it is clustered and vulnerable.",
+  "dice_requests": [
+    {
+      "expression": "15",
+      "purpose": "Saving Throw DC for Infernal Tyrant to avoid half damage from Fire Breath"
+    },
+    {
+      "expression": "12d6",
+      "purpose": "Fire Breath damage roll"
+    }
+  ]
+}

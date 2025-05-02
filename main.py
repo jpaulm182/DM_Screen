@@ -37,12 +37,15 @@ from app.core.patched_app_state import apply_patches
 from app.ui.main_window import MainWindow
 
 # Initialize LLM monitoring - always enabled
-llm_monitoring_enabled = False
+llm_monitoring_enabled = False  # DISABLED to prevent crashes
 try:
     import monitor_llm_calls
-    llm_monitoring_enabled = monitor_llm_calls.init_monitoring()
-    if llm_monitoring_enabled:
-        logging.info("LLM monitoring enabled")
+    if False:  # Force disable
+        llm_monitoring_enabled = monitor_llm_calls.init_monitoring()
+        if llm_monitoring_enabled:
+            logging.info("LLM monitoring enabled")
+    else:
+        logging.info("LLM monitoring explicitly disabled to prevent crashes")
 except Exception as e:
     logging.error(f"Error initializing LLM monitoring: {e}", exc_info=True)
 

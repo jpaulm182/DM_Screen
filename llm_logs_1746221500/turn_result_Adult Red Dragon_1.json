@@ -1,0 +1,44 @@
+{
+  "success": true,
+  "has_narrative": true,
+  "narrative_length": 84,
+  "has_action": true,
+  "action": "Multiattack",
+  "target": "Infernal Tyrant",
+  "narrative": "Using Multiattack to maximize damage output on the Infernal Tyrant, the main threat.",
+  "action_type": "attack",
+  "action_icon": "\u2694\ufe0f",
+  "narrative_style": "color:#880000; font-style:italic;",
+  "dice": [
+    {
+      "expression": "1d20+11",
+      "purpose": "Attack Roll: Bite vs Infernal Tyrant",
+      "result": 18
+    },
+    {
+      "expression": "2d10+7",
+      "purpose": "Damage: Bite attack",
+      "result": 19
+    },
+    {
+      "expression": "1d20+11",
+      "purpose": "Attack Roll: Claw vs Infernal Tyrant",
+      "result": 27
+    },
+    {
+      "expression": "2d6+7",
+      "purpose": "Damage: Claw attack",
+      "result": 19
+    },
+    {
+      "expression": "1d20+11",
+      "purpose": "Attack Roll: Claw vs Infernal Tyrant",
+      "result": 29
+    },
+    {
+      "expression": "2d6+7",
+      "purpose": "Damage: Claw attack",
+      "result": 18
+    }
+  ]
+}
