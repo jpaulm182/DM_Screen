@@ -1088,12 +1088,57 @@
                 # Update the combat log with high contrast colors - use the persistent log instead of popup
                 turn_text = f"<div style='margin-bottom:10px;'>"
                 turn_text += f"<h4 style='color:#000088; margin:0;'>Round {round_num} - {actor}'s Turn:</h4>"
-                turn_text += f"<p style='color:#000000; margin-top:5px;'>{action}</p>"
-                if result:
-                    turn_text += f"<p style='color:#000000; margin-top:5px;'><strong>Result:</strong> {result}</p>"
+                
+                # Check if this is a fallback action (error handling)
+                if latest_action.get("fallback", False):
+                    # This is a fallback action due to an error - show a more user-friendly message
+                    turn_text += f"<p style='color:#880000; margin-top:5px;'><i>{action}</i></p>"
+                    turn_text += f"<p style='color:#000000; margin-top:5px;'>{result}</p>"
+                    
+                    # Add a note about the AI having trouble
+                    turn_text += f"<p style='color:#666666; font-style:italic; margin-top:5px;'>Note: The AI had difficulty generating a response. Using fallback action instead.</p>"
+                else:
+                    # Normal action presentation with better visual hierarchy
+                    # Add an action icon based on action type
+                    action_icon = "⚔️"  # Default combat icon
+                    action_lower = action.lower()
+                    if "cast" in action_lower or "spell" in action_lower:
+                        action_icon = "✨"  # Magic icon
+                    elif "heal" in action_lower or "cure" in action_lower:
+                        action_icon = "💚"  # Healing icon
+                    elif "attack" in action_lower or "strike" in action_lower:
+                        action_icon = "🗡️"  # Attack icon
+                    elif "move" in action_lower:
+                        action_icon = "👣"  # Movement icon
+                    elif "dash" in action_lower:
+                        action_icon = "🏃"  # Dash icon
+                    elif "wait" in action_lower or "dodge" in action_lower:
+                        action_icon = "🛡️"  # Defensive icon
+                        
+                    # Enhanced display with icon and better formatting
+                    turn_text += f"<p style='color:#000000; margin-top:5px; font-weight:bold;'>{action_icon} {action}</p>"
+                    
+                    # Add result with better styling
+                    if result:
+                        turn_text += f"<p style='color:#000000; margin-top:5px;'><strong>Result:</strong> {result}</p>"
+                
+                # Add dice roll information with better visualization
                 if dice_summary:
-                    dice_html = dice_summary.replace('\n', '<br>')
-                    turn_text += f"<p style='color:#000000; margin-top:5px;'><strong>Dice:</strong><br>{dice_html}</p>"
+                    turn_text += f"<div style='background-color:#f0f0f0; border-radius:5px; padding:5px; margin-top:5px;'>"
+                    turn_text += f"<p style='color:#000000; margin:0;'><strong>🎲 Dice Rolls:</strong></p>"
+                    
+                    # Format each die roll on its own line with better styling
+                    for d_line in dice_summary.split('\n'):
+                        parts = d_line.split('=')
+                        if len(parts) == 2:
+                            purpose = parts[0].strip()
+                            result_val = parts[1].strip()
+                            turn_text += f"<p style='color:#000000; margin:3px 0 0 10px;'>{purpose} <strong>→</strong> {result_val}</p>"
+                        else:
+                            turn_text += f"<p style='color:#000000; margin:3px 0 0 10px;'>{d_line}</p>"
+                    
+                    turn_text += "</div>"
+                
                 turn_text += f"<hr style='border:1px solid #cccccc; margin:10px 0;'></div>"
                 
                 # Add to the persistent combat log

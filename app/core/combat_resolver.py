@@ -204,283 +204,154 @@ class CombatResolver(QObject):
     # ---------------------------------------------------------------------
     # Internal Resolution Logic (Runs in Thread)
     # ---------------------------------------------------------------------
-    def _run_resolution_thread(self):
-        """The main combat resolution loop executed in a separate thread."""
-        logging.debug("--- ENTERING _run_resolution_thread ---")
-        state = None # Initialize state to None
-        log = [] # Combat log for transparency
-        final_status = "error" # Default to error unless completed or stopped
-        error_message = "Resolution thread started but did not complete." # Default error
-
+    def _run_resolution_thread(self, *args):
+        """
+        Main thread method for processing combat continuously or step-by-step.
+        This runs in a separate thread and must be thread-safe.
+        
+        Args:
+            *args: Additional arguments passed to the method (ignored for compatibility)
+        """
+        import copy
+        import traceback
+        import time
+        import logging
+        
+        # Use a local copy of the combat state to avoid race conditions
         try:
-            # Critical Section: Access shared parameters set by start_resolution
+            # Make a deep copy to ensure thread safety
             with self._lock:
-                if not self._running or not self._combat_state or not self._dice_roller:
-                    error_message = "Resolver thread started with invalid initial state."
-                    logging.error(f"[CombatResolver] {error_message}")
-                    self.resolution_update.emit(None, "error", error_message)
-                    # Ensure _running is false if we exit early
+                if self._combat_state is None:
+                    logging.error("[CombatResolver] Combat state is None in resolution thread")
+                    self.resolution_update.emit(None, "error", "Internal error: Combat state is missing")
                     self._running = False
                     return
-                # Get local copies/references while holding the lock
-                state = self._combat_state # This is already a deep copy
-                dice_roller = self._dice_roller
-                update_ui_callback = self._update_ui_callback
-                initial_mode = self._mode # Capture mode at start
-
-            # --- Begin resolution logic ---
-            round_num = state.get("round", 1)
-            combatants = state.get("combatants", []) # Work on the copied state
-
-            # Main combat loop
-            while round_num <= 50: # Max round limit
-                # --- Check for Stop Request (Start of Round) ---
+                
+                local_combat_state = copy.deepcopy(self._combat_state)
+                local_dice_roller = self._dice_roller
+                
+            logging.debug("[CombatResolver] Resolution thread starting with combat state copy")
+            # Signal that we're starting (using a copy of the state)
+            self.resolution_update.emit(local_combat_state, "starting", None)
+            
+            # Extract important variables from combat state
+            local_combatants_list = local_combat_state.get("combatants", [])
+            current_turn_index = local_combat_state.get("current_turn_index", 0)
+            round_num = local_combat_state.get("round", 1)
+            
+            if not local_combatants_list:
+                logging.error("[CombatResolver] No combatants in combat state")
+                self.resolution_update.emit(None, "error", "No combatants in combat state")
+                with self._lock:
+                    self._running = False
+                return
+            
+            # If we don't have a valid current_turn_index, start at 0
+            if current_turn_index < 0 or current_turn_index >= len(local_combatants_list):
+                current_turn_index = 0
+                local_combat_state["current_turn_index"] = current_turn_index
+                
+            # Main resolution loop - continues until stopped or combat ends
+            while True:
+                # Check if we should stop
                 with self._lock:
                     if self._stop_requested:
-                        logging.info("[CombatResolver] Stop detected at start of round.")
-                        final_status = "stopped"
-                        error_message = None
-                        break # Exit the main while loop
-
-                logging.info(f"[CombatResolver] Starting Round {round_num}")
-                state["round"] = round_num # Update round in our local state copy
-
-                # Determine initiative order for this round (needed for turn processing)
-                # Filter out permanently dead combatants ONCE per round for efficiency
-                active_this_round = [
-                    (idx, c) for idx, c in enumerate(combatants)
-                    if not (c.get("type", "").lower() == "monster" and c.get("status", "").lower() == "dead") # Exclude dead monsters
-                ]
-                # Sort by initiative
-                initiative_order_indices = sorted(
-                    [idx for idx, c in active_this_round],
-                    key=lambda i: -int(combatants[i].get("initiative", 0))
-                )
-
-                # Process each combatant's turn
-                for turn_counter, current_turn_original_index in enumerate(initiative_order_indices):
-                    # --- Check for Stop Request (Start of Turn) ---
+                        logging.info("[CombatResolver] Stop requested, exiting resolution thread")
+                        self.resolution_update.emit(local_combat_state, "stopped", None)
+                        self._running = False
+                        return
+                
+                # Process the current combatant's turn
+                try:
+                    # Use the local variables, not instance state
+                    result = self._process_turn(
+                        local_combatants_list, 
+                        current_turn_index, 
+                        round_num,
+                        local_dice_roller
+                    )
+                    
+                    if result:
+                        # Apply results to our local copy of the state
+                        # Add the result to the turn state for UI updates
+                        local_combat_state["latest_action"] = {
+                            "actor": local_combatants_list[current_turn_index].get("name", "Unknown"),
+                            "action": result.get("action", "Unknown action"),
+                            "result": result.get("narrative", ""),
+                            "dice": result.get("dice", [])
+                        }
+                        
+                        # Apply any updates to the local combatants list
+                        if "updates" in result:
+                            self._apply_turn_updates(local_combatants_list, result.get("updates", []))
+                            
+                        # Signal the turn completion with updated state
+                        local_combat_state["combatants"] = local_combatants_list
+                        local_combat_state["current_turn_index"] = current_turn_index
+                        local_combat_state["round"] = round_num
+                        
+                        # Thread-safe emit the updated state
+                        self.resolution_update.emit(local_combat_state, "turn_complete", None)
+                except Exception as e:
+                    error_msg = f"Error processing turn: {str(e)}"
+                    logging.error(f"[CombatResolver] {error_msg}")
+                    logging.error(f"[CombatResolver] {traceback.format_exc()}")
+                    self.resolution_update.emit(local_combat_state, "error", error_msg)
+                    # Don't exit the thread, try to continue with next turn
+                
+                # Check if combat should end (e.g., all enemies defeated)
+                combat_ended, end_reason = self._check_combat_end_condition(local_combatants_list)
+                if combat_ended:
+                    logging.info(f"[CombatResolver] Combat ended: {end_reason}")
+                    local_combat_state["combat_ended"] = True
+                    local_combat_state["end_reason"] = end_reason
+                    self.resolution_update.emit(local_combat_state, "combat_ended", None)
+                    with self._lock:
+                        self._running = False
+                    return
+                
+                # Move to the next turn - wrapping around the combatants list if needed
+                current_turn_index = (current_turn_index + 1) % len(local_combatants_list)
+                local_combat_state["current_turn_index"] = current_turn_index
+                
+                # If we've gone through all combatants, advance to the next round
+                if current_turn_index == 0:
+                    round_num += 1
+                    local_combat_state["round"] = round_num
+                    logging.info(f"[CombatResolver] Advanced to round {round_num}")
+                
+                # If in step mode, pause until continue signal
+                if self._mode == 'step':
+                    with self._lock:
+                        self._paused = True
+                    logging.debug("[CombatResolver] Step mode - pausing until continue signal")
+                    self.resolution_update.emit(local_combat_state, "paused", None)
+                    
+                    # Wait for the continue event (or stop request)
+                    self._continue_event.wait()
+                    self._continue_event.clear()
+                    
+                    # Check again if we should stop after unpausing
                     with self._lock:
                         if self._stop_requested:
-                            logging.info("[CombatResolver] Stop detected at start of turn.")
-                            final_status = "stopped"
-                            error_message = None
-                            break # Exit the inner for loop
-
-                    # Fetch the current state of the combatant (might have changed)
-                    if current_turn_original_index >= len(combatants):
-                        logging.warning(f"[CombatResolver] Combatant index {current_turn_original_index} out of range. Skipping turn.")
-                        continue
-                    combatant = combatants[current_turn_original_index]
-                    combatant_name = combatant.get("name", f"Combatant {current_turn_original_index}")
-                    state["current_turn_index"] = current_turn_original_index # Update state
-
-                    logging.debug(f"--- Processing turn for {combatant_name} (Index: {current_turn_original_index}, Round: {round_num}) ---")
-
-                    # Skip turn if combatant is incapacitated (Dead monster, or Unconscious/Stable/Dead PC)
-                    status = combatant.get("status", "").lower()
-                    ctype = combatant.get("type", "").lower()
-                    hp = combatant.get("hp", 0)
-
-                    skip_turn = False
-                    skip_reason = ""
-                    goto_post_turn_logic = False  # Initialize this variable to prevent NameError
-                    if status == "dead":
-                         skip_turn = True
-                         skip_reason = "Dead"
-                    elif ctype != "monster" and status in ["unconscious", "stable"] and hp <= 0:
-                         # Process death save for PCs instead of normal turn
-                         logging.debug(f"{combatant_name} is {status}, processing death save.")
-                         self._process_death_save(combatant) # Modifies combatant directly
-                         turn_log_entry = {
-                             "round": round_num,
-                             "turn": current_turn_original_index,
-                             "actor": combatant_name,
-                             "action": f"Makes a Death Saving Throw ({status})",
-                             "dice": [{"expression": "1d20", "result": "See log", "purpose": "Death Save"}],
-                             "result": f"Saves: {combatant.get('death_saves', {}).get('successes', 0)}S / {combatant.get('death_saves', {}).get('failures', 0)}F"
-                         }
-                         log.append(turn_log_entry)
-                         # Still update UI and potentially pause/stop after the death save
-                         skip_turn = False # Don't skip the UI update/pause logic below
-                         # We need to bypass the main turn processing logic though
-                         goto_post_turn_logic = True
-                    elif hp <= 0 and status not in ["unconscious", "stable", "dead"]:
-                        # Should not happen often, but if HP is <= 0, treat as unconscious/dead
-                        logging.warning(f"{combatant_name} has HP <= 0 but status is '{status}'. Setting to Unconscious/Dead.")
-                        if ctype == "monster": combatant["status"] = "Dead"
-                        else: combatant["status"] = "Unconscious"; self._init_death_saves(combatant)
-                        skip_turn = True
-                        skip_reason = combatant["status"]
-
-                    if skip_turn:
-                        logging.debug(f"Skipping turn for {combatant_name} ({skip_reason}).")
-                        # Although skipped, we might still need to check end condition after other turns
-                        continue # Skip to the next combatant in the initiative order
-
-                    # --- Process the actual turn using LLM ---
-                    # (Only if not skipped and not just a death save)
-                    logging.info(f"[CombatResolver] Before turn processing: goto_post_turn_logic exists: {'goto_post_turn_logic' in locals()}, value: {locals().get('goto_post_turn_logic')}")
-                    
-                    if not 'goto_post_turn_logic' in locals() or not goto_post_turn_logic:
-                         logging.info(f"[CombatResolver] Processing turn for {combatant_name} using LLM")
-                         turn_result = self._process_turn(combatants, current_turn_original_index, round_num, dice_roller)
-                         
-                         logging.info(f"[CombatResolver] Turn processing complete. Result: {turn_result}")
-
-                         # Add summary to context for next LLM call (if needed)
-                         turn_summary = f"Round {round_num}, {combatant_name}'s turn: {turn_result.get('narrative', 'No action.') if turn_result else 'No result available.'}"
-                         self.previous_turn_summaries.append(turn_summary)
-                         # Limit context size
-                         if len(self.previous_turn_summaries) > 10:
-                             self.previous_turn_summaries.pop(0)
-
-                         # Log the turn action
-                         turn_log_entry = {
-                             "round": round_num,
-                             "turn": current_turn_original_index,
-                             "actor": combatant_name,
-                             "action": turn_result.get("action", "") if turn_result else "Error during turn processing",
-                             "dice": turn_result.get("dice", []) if turn_result else [],
-                             "result": turn_result.get("narrative", "") if turn_result else "No result available."
-                         }
-                         log.append(turn_log_entry)
-
-                         # Apply updates from the turn result to our local combatants list
-                         if turn_result and "updates" in turn_result:
-                             self._apply_turn_updates(combatants, turn_result["updates"])
-
-                    # --- Post-Turn Logic (UI Update, Pause/Step Check, End Condition Check) ---
-                    # Make a deep copy of the state *for this specific update*
-                    # This ensures the UI gets the state exactly as it was after this turn/death save
-                    current_state_for_ui = copy.deepcopy({
-                        "round": round_num,
-                        "current_turn_index": current_turn_original_index,
-                        "combatants": combatants, # Pass the modified list
-                        "log": log, # Pass the current log
-                        "latest_action": turn_log_entry # Pass the latest action details
-                    })
-
-                    # Update UI via callback (if provided) - runs on main thread
-                    if update_ui_callback:
-                        try:
-                             # Use the captured callback reference
-                             update_ui_callback(current_state_for_ui)
-                             # Short sleep to allow UI to potentially process
-                             # time.sleep(0.1) # Optional: small delay
-                        except Exception as ui_err:
-                             logging.error(f"Error calling update_ui_callback: {ui_err}", exc_info=True)
-
-
-                    # Check end condition *after* this turn
-                    combat_should_end, end_reason = self._check_combat_end_condition(combatants)
-                    if combat_should_end:
-                        logging.info(f"[CombatResolver] Combat ending after {combatant_name}'s turn. Reason: {end_reason}")
-                        final_status = "completed"
-                        error_message = None
-                        break # Exit inner turn loop
-
-                    # --- Pause/Step Logic ---
-                    needs_pause = False
-                    current_mode = 'continuous' # Default
-                    with self._lock:
-                        if self._mode == 'step':
-                            needs_pause = True
-                            current_mode = 'step' # Update local copy of mode
-                        if self._stop_requested: # Check stop again before potential pause
-                             logging.info("[CombatResolver] Stop detected before pause.")
-                             final_status = "stopped"
-                             error_message = None
-                             break # Exit inner turn loop
-
-                    if needs_pause:
-                        logging.debug(f"[CombatResolver] Pausing after {combatant_name}'s turn (Step Mode).")
-                        with self._lock:
-                            self._paused = True
-                            # Make sure continue event is clear before emitting signal
-                            self._continue_event.clear()
-
-                        # Emit 'paused' signal with the current state
-                        self.resolution_update.emit(current_state_for_ui, "paused", None)
-
-                        # Wait for continue_turn() to be called
-                        logging.debug("[CombatResolver] Waiting for continue signal...")
-                        self._continue_event.wait() # Blocks until event is set
-                        logging.debug("[CombatResolver] Continue signal received.")
-
-                        # We've been unpaused, check immediately if a stop was requested *while* paused
-                        with self._lock:
-                             if self._stop_requested:
-                                 logging.info("[CombatResolver] Stop detected after resuming from pause.")
-                                 final_status = "stopped"
-                                 error_message = None
-                                 break # Exit inner turn loop
-                             # Ensure paused flag is false now we're continuing
-                             self._paused = False
-                             # Refresh current mode in case it changed while paused
-                             current_mode = self._mode
-
-
-                    # --- End of Turn Loop Body ---
-
-                # --- Check if inner loop was broken by stop or end condition ---
-                if final_status == "stopped" or final_status == "completed":
-                    break # Exit outer round loop
-
-                # --- End of Round ---
-                round_num += 1
-
-                # Check end condition again at the absolute end of the round
-                combat_should_end_round, end_reason_round = self._check_combat_end_condition(combatants)
-                if combat_should_end_round:
-                     logging.info(f"[CombatResolver] Combat ending at end of round {round_num-1}. Reason: {end_reason_round}")
-                     final_status = "completed"
-                     error_message = None
-                     break # Exit outer round loop
-
-            # --- End of Main Loop (while round_num <= 50) ---
-
-            # Determine final state if loop finished naturally
-            if final_status == "error": # If not already set to stopped or completed
-                 if round_num > 50:
-                      logging.warning("[CombatResolver] Combat stopped due to reaching round limit (50).")
-                      final_status = "completed" # Treat as completed, but potentially add note
-                      error_message = "Reached maximum round limit (50)."
-                 else:
-                      # This path shouldn't normally be reached if end condition works
-                      logging.info("[CombatResolver] Combat loop finished.")
-                      final_status = "completed"
-                      error_message = None
-
-
-            # Prepare final result payload (even if stopped or error)
-            final_result_state = copy.deepcopy({
-                "round": round_num -1, # Last completed round
-                 # Use the state as it was at the point of stopping/completion
-                "combatants": combatants,
-                "log": log,
-                "narrative": f"Resolution {final_status}. {error_message or ''}".strip()
-            })
-
-            # Emit the final signal
-            self.resolution_update.emit(final_result_state, final_status, error_message if final_status == 'error' else None)
-
+                            logging.info("[CombatResolver] Stop requested after pause, exiting resolution thread")
+                            self.resolution_update.emit(local_combat_state, "stopped", None)
+                            self._running = False
+                            return
+                else:
+                    # In continuous mode, brief pause to avoid CPU hogging
+                    time.sleep(0.1)
+                
         except Exception as e:
-            logging.error(f"Error during combat resolution thread: {e}", exc_info=True)
-            import traceback
-            error_message = f"Error in resolution thread: {traceback.format_exc()}"
-            # Try to emit error signal with whatever state we had
-            error_state = state if 'state' in locals() else None
-            self.resolution_update.emit(error_state, "error", error_message)
-            final_status = "error" # Ensure status is error
-
+            error_msg = f"Error in resolution thread: {str(e)}"
+            logging.error(f"[CombatResolver] {error_msg}")
+            logging.error(f"[CombatResolver] {traceback.format_exc()}")
+            self.resolution_update.emit(None, "error", error_msg)
+            
         finally:
-            # --- Cleanup: Ensure _running is set to False ---
+            # Always ensure we reset the running state
             with self._lock:
-                logging.debug(f"[CombatResolver] Resolution thread finishing with status: {final_status}")
                 self._running = False
-                self._paused = False # Ensure paused is false on exit
-                self._current_thread = None # Clear thread reference
 
     def _check_combat_end_condition(self, combatants):
         """
@@ -644,396 +515,322 @@ class CombatResolver(QObject):
     # Existing Helper Methods (potentially need minor adjustments)
     # ---------------------------------------------------------------------
     def _parse_llm_json_response(self, response_text, context=""): # Added helper
-        """Attempts to parse JSON from LLM response, handling common issues."""
-        # Ensure json is imported if not already globally
+        """
+        Attempts to parse JSON from LLM response, handling common issues.
+        
+        Args:
+            response_text (str): The raw text response from the LLM
+            context (str): Optional context string for logging
+            
+        Returns:
+            dict: The parsed JSON or an error dictionary
+        """
         import json
         import re
+        import logging
 
         if not isinstance(response_text, str):
             logging.warning(f"[_parse_llm_json_response] Expected string, got {type(response_text)} ({context})")
-            return {"error": "Invalid response type", "raw_response": str(response_text)}
+            return {
+                "error": "Invalid response type", 
+                "raw_response": str(response_text),
+                "diagnostics": "Response was not a string"
+            }
 
+        # Clean up the response text
         cleaned = response_text.strip()
         logging.debug(f"[_parse_llm_json_response] Raw response ({context}): {cleaned[:200]}...")
+        
+        # Store the original for diagnostics
+        original_text = cleaned
 
-        # 1. Try extracting from ```json ... ``` block
-        # Fixed regex - the closing backticks were inside the capture group
-        json_match = re.search(r"```json\s*(\{.*?\})\s*```", cleaned, re.DOTALL)
-        if json_match:
-            json_content = json_match.group(1)
+        # Try multiple parsing strategies
+        parsing_strategies = [
+            # 1. Try extracting from ```json ... ``` block
+            {
+                "name": "json_block",
+                "pattern": r"```json\s*(\{.*?\})\s*```",
+                "flags": re.DOTALL,
+                "description": "JSON code block"
+            },
+            # 2. Try extracting from any ``` ... ``` block
+            {
+                "name": "code_block",
+                "pattern": r"```\s*(\{.*?\})\s*```",
+                "flags": re.DOTALL,
+                "description": "Generic code block"
+            },
+            # 3. Try finding the first { and last }
+            {
+                "name": "braces",
+                "pattern": r"(\{.*\})",
+                "flags": re.DOTALL,
+                "description": "Brace-enclosed content"
+            }
+        ]
+        
+        diagnostics = []
+        
+        # Try each strategy in order
+        for strategy in parsing_strategies:
             try:
-                parsed = json.loads(json_content)
-                logging.debug(f"Successfully parsed from ```json block ({context})")
-                return parsed
-            except json.JSONDecodeError as e:
-                logging.warning(f"Failed to parse ```json block content ({context}): {e}")
-                # Fall through to other methods
-
-        # 2. Try extracting from any ``` ... ``` block
-        # Fixed regex - the closing backticks were inside the capture group
-        code_block_match = re.search(r"```\s*(\{.*?\})\s*```", cleaned, re.DOTALL)
-        if code_block_match:
-             json_content = code_block_match.group(1)
-             try:
-                 parsed = json.loads(json_content)
-                 logging.debug(f"Successfully parsed from generic ``` block ({context})")
-                 return parsed
-             except json.JSONDecodeError as e:
-                 logging.warning(f"Failed to parse generic ``` block content ({context}): {e}")
-                 # Fall through
-        # 3. Try finding the first { and last }
-        brace_match = re.search(r"(\{.*\})", cleaned, re.DOTALL) # Simpler regex
-        if brace_match:
-            potential_json = brace_match.group(1)
-            try:
-                parsed = json.loads(potential_json)
-                logging.debug(f"Successfully parsed brace-extracted content ({context})")
-                return parsed
-            except json.JSONDecodeError as e:
-                 logging.warning(f"Failed to parse brace-extracted content ({context}): {e}")
-                 # Fall through to final attempt
-
+                match = re.search(strategy["pattern"], cleaned, strategy["flags"])
+                if match:
+                    json_content = match.group(1)
+                    try:
+                        parsed = json.loads(json_content)
+                        logging.debug(f"Successfully parsed from {strategy['description']} ({context})")
+                        return parsed
+                    except json.JSONDecodeError as e:
+                        message = f"Failed to parse {strategy['description']}: {e}"
+                        logging.warning(message)
+                        diagnostics.append(message)
+            except Exception as e:
+                message = f"Error applying {strategy['name']} strategy: {e}"
+                logging.warning(message)
+                diagnostics.append(message)
+        
         # 4. Final attempt: Parse the raw cleaned string directly
         try:
             parsed = json.loads(cleaned)
-            logging.debug(f"Successfully parsed cleaned string directly as last resort ({context})")
+            logging.debug(f"Successfully parsed cleaned string directly ({context})")
             return parsed
         except json.JSONDecodeError as e:
-            logging.error(f"Failed to parse JSON response ({context}) after all attempts: {e}. Raw: {cleaned[:200]}...")
-            return {"error": "JSON parsing failed", "raw_response": cleaned}
+            message = f"Failed to parse raw string: {e}"
+            logging.error(message)
+            diagnostics.append(message)
+        
+        # If we reach here, all parsing attempts failed
+        logging.error(f"Failed to parse JSON response ({context}) after all attempts. Raw: {cleaned[:200]}...")
+        
+        # Return a detailed error object with diagnostics
+        return {
+            "error": "JSON parsing failed", 
+            "raw_response": original_text,
+            "diagnostics": diagnostics,
+            "response_preview": original_text[:500] if original_text else "Empty response"
+        }
 
     # Make sure _process_turn uses the thread-local combatants list
-    def _process_turn(self, local_combatants_list, active_idx, round_num, dice_roller):
-        """
-        Process a single combatant's turn with LLM.
-        Uses the provided list, not the instance's potentially stale copy.
-        """
-        logging.debug(f"--- ENTERING _process_turn for index {active_idx}, round {round_num} ---")
+    def _process_turn(self, combatants, active_idx, round_num, dice_roller):
+        """Process a single turn for the combatant at active_idx."""
+        import logging
         import json
+        import time
         import re
-        # ... (rest of the _process_turn logic) ...
-        # IMPORTANT: Ensure all reads/writes of combatant data inside this method
-        # use the 'local_combatants_list' passed as an argument, NOT 'self.combatants'
-        # e.g., active_combatant = local_combatants_list[active_idx]
-        # e.g., prompt = self._create_decision_prompt({"combatants": local_combatants_list, ...}, active_combatant)
-        # e.g., target = next((c for c in local_combatants_list if c.get("name") == target_name), None)
-        # ... etc ...
+        import random
+        import traceback
 
-        # --- Start of _process_turn modifications ---
-        dice_results = []
-        # Initialize per-turn variables
-        # Use the passed list to get the active combatant
-        active_combatant = local_combatants_list[active_idx]
-        logging.info(f"[CombatResolver] Processing turn for {active_combatant.get('name', 'Unknown')} (round {round_num})")
+        # Validate inputs to prevent errors
+        if active_idx < 0 or active_idx >= len(combatants):
+            logging.error(f"[CombatResolver] Invalid active_idx: {active_idx}, combatants: {len(combatants)}")
+            return None
 
-        # --- DEBUG LOGGING ---
-        # ... (keep existing debug logging) ...
+        # Get the active combatant
+        active_combatant = combatants[active_idx]
+        active_name = active_combatant.get("name", f"Combatant {active_idx}")
+        logging.info(f"[CombatResolver] Processing turn for: {active_name}")
 
-        # Import ActionEconomyManager if needed
-        from app.combat.action_economy import ActionEconomyManager
-        active_combatant = ActionEconomyManager.initialize_action_economy(active_combatant)
-
-        # Process recharge abilities
-        if active_combatant.get("type", "").lower() == "monster":
-            self._process_recharge_abilities(active_combatant, dice_roller) # Modifies active_combatant dict
-
-        # Debug: Log all combatant HP values at start of turn
-        logging.debug(f"\n[CombatResolver] DEBUG: CURRENT HP VALUES AT START OF TURN ({active_combatant.get('name')}):")
-        for i, c in enumerate(local_combatants_list): # Use passed list
-            logging.debug(f"[CombatResolver] DEBUG: Combatant {i}: {c.get('name')} - HP: {c.get('hp', 0)}/{c.get('max_hp', c.get('hp', 0))}")
-
-        # Process aura effects
-        # Pass the correct list to _process_auras
-        aura_updates = self._process_auras(active_combatant, local_combatants_list)
-        # _process_auras might modify active_combatant dict directly if damage occurs
-
-        # Skip if dead/0 HP
-        if active_combatant.get("hp", 0) <= 0 and active_combatant.get("status", "").lower() == "dead":
-             # ... (keep existing skip logic) ...
-             return { # Ensure a dict is returned
-                 "action": f"{active_combatant.get('name', 'Unknown')} is dead and skips their turn.",
-                 "narrative": f"{active_combatant.get('name', 'Unknown')} is dead and skips their turn.",
-                 "dice": [],
-                 "updates": []
-             }
-
-        # Handle being knocked out by auras
-        if active_combatant.get("hp", 0) <= 0 and active_combatant.get("status", "").lower() != "dead":
-             # ... (keep existing logic) ...
-             # Make sure the update uses the correct name/ID
-             updates = [{
-                  "name": active_combatant.get('name', 'Unknown'),
-                  "instance_id": active_combatant.get('instance_id'), # Include ID if available
-                  "hp": 0,
-                  "status": "Unconscious"
-             }]
-             if active_combatant.get("type","").lower() != "monster":
-                  self._init_death_saves(active_combatant) # Init saves
-                  updates[0]["death_saves"] = active_combatant["death_saves"]
-
-             return { # Ensure a dict is returned
-                 "action": f"{active_combatant.get('name', 'Unknown')} falls unconscious due to aura damage.",
-                 "narrative": f"{active_combatant.get('name', 'Unknown')} falls unconscious due to aura damage.",
-                 "dice": [],
-                 "updates": updates,
-                 "aura_updates": aura_updates # Include aura info if needed
-             }
-
-        # 1. Create prompt using the current state from the passed list
-        combat_state_for_prompt = {"combatants": local_combatants_list, "round_number": round_num}
-        prompt = self._create_decision_prompt(combat_state_for_prompt, active_combatant)
-
-        # 2. Get action decision from LLM
-        logging.info(f"[CombatResolver] Requesting action decision from LLM for {active_combatant.get('name', 'Unknown')}")
-        decision_response = None # Initialize to None
-        try:
-            # Ensure LLM service is available
-            if not hasattr(self, 'llm_service') or self.llm_service is None:
-                logging.error("[CombatResolver] LLM service is not available")
-                raise ValueError("LLM service is not available")
-                
-            # Check which models are available
-            available_models = self.llm_service.get_available_models()
-            logging.info(f"[CombatResolver] Available LLM models: {available_models}")
-            
-            if not available_models:
-                logging.error("[CombatResolver] No LLM models available")
-                raise ValueError("No LLM models available. Check API keys and service configuration.")
-            
-            # Prefer GPT-4.1 Mini for fast combat resolution if available
-            model_id = None
-            
-            # Find the appropriate model to use
-            for model_info in available_models:
-                model_id = model_info['id']
-                if 'gpt-4-mini' in model_id or 'gpt-4.1-mini' in model_id:
-                    logging.info(f"[CombatResolver] Using {model_id} for fast resolution")
-                    break
-                    
-            # Fall back to any available model if preferred model not found
-            if not model_id and available_models:
-                model_id = available_models[0]['id']
-                logging.info(f"[CombatResolver] Falling back to {model_id}")
-            
-            if not model_id:
-                logging.error("[CombatResolver] No suitable model found")
-                raise ValueError("No suitable model found")
-                
-            # Prepare decision prompt
-            system_prompt = self._get_system_prompt()
-            messages = self._create_action_prompt(local_combatants_list, active_idx, round_num)
-            
-            # Log the prompt
-            logging.info(f"[CombatResolver] System prompt: {system_prompt[:100]}...")
-            logging.info(f"[CombatResolver] Messages: {str(messages)[:200]}...")
-            
-            # Make the actual LLM call with additional logging
-            logging.info(f"[CombatResolver] Making LLM call to model {model_id}")
-            try:
-                response_text = self.llm_service.generate_completion(
-                    model_id,
-                    messages,
-                    system_prompt=system_prompt
-                )
-                
-                if not response_text:
-                    logging.error("[CombatResolver] LLM returned empty response")
-                    raise ValueError("LLM returned empty response")
-                    
-                logging.info(f"[CombatResolver] LLM response received, length: {len(response_text)}")
-                logging.info(f"[CombatResolver] LLM response preview: {response_text[:200]}...")
-                
-                # Parse the JSON response
-                decision_response = self._parse_llm_json_response(response_text, "action_decision")
-                logging.info(f"[CombatResolver] Parsed decision response: {str(decision_response)[:200]}...")
-                
-                if not decision_response or not isinstance(decision_response, dict):
-                    logging.error(f"[CombatResolver] Failed to parse valid decision response: {decision_response}")
-                    raise ValueError(f"Failed to parse valid decision response: {decision_response}")
-                
-                if "error" in decision_response:
-                    logging.error(f"[CombatResolver] Error in decision response: {decision_response['error']}")
-                    # Create a fallback response
-                    decision_response = {
-                        "action": "Wait",
-                        "target": "None",
-                        "explanation": f"Error parsing LLM response: {decision_response['error']}",
-                        "fallback": True
-                    }
-            except Exception as llm_err:
-                logging.error(f"[CombatResolver] LLM call error: {llm_err}")
-                # Fallback for LLM errors
-                decision_response = {
-                    "action": "Wait",
-                    "target": "None", 
-                    "explanation": f"LLM error: {str(llm_err)}",
-                    "fallback": True
-                }
-                import traceback
-                logging.error(f"[CombatResolver] LLM call traceback: {traceback.format_exc()}")
-        except Exception as e:
-            logging.error(f"[CombatResolver] Error in LLM decision process: {e}")
-            import traceback
-            traceback.print_exc()
-            # Provide a fallback response for any errors
-            decision_response = {
-                "action": "Wait",
-                "target": "None",
-                "explanation": f"Error: {str(e)}",
-                "fallback": True
-            }
-
-        # --- DICE ROLLING PHASE ---
-        # Check for dice_requests in the LLM response
-        dice_results = [] # Ensure initialized
-        # ... (keep existing dice rolling logic using dice_roller) ...
-
-        # --- Build turn_result ---
-        updates = [] # Start with empty updates for this turn
-        narrative_text = "The action resolves with technical difficulties." # Default narrative
-        try:
-            # Extract narrative
-            # ... (keep existing narrative extraction logic) ...
-
-            # Auto-detect targets
-            # ... (keep existing logic, using local_combatants_list) ...
-
-            # --- REVISED Saving Throw & Damage Logic ---
-            # This section needs careful review to ensure it uses local_combatants_list
-            # and correctly identifies targets within that list.
-            save_succeeded = False
-            save_required = False
-            final_dmg = 0
-            action_name = decision_response.get("action", "Unknown Action")
-
-            # Find action details in the active combatant
-            action_details = None
-            # ... (find action in active_combatant['actions']) ...
-
-            # 1. Check if save required
-            if action_details and "saving throw" in action_details.get("description", "").lower():
-                save_required = True
-                # ... (extract DC, ability, damage_on_save from action_details) ...
-
-                # Process save for EACH target potentially affected (using damage_dealt keys)
-                damage_targets = decision_response.get("damage_dealt", {})
-                target_saves = {} # Store save result per target
-
-                for target_name in damage_targets.keys():
-                     # Find target in the local list
-                     target = next((c for c in local_combatants_list if c.get("name") == target_name), None)
-                     if not target: continue
-
-                     # ... (get target save modifier) ...
-                     # ... (roll save internally using dice_roller) ...
-                     # Store result: target_saves[target_name] = save_succeeded
-
-            # 2. Process damage/healing/conditions for each target
-            # Damage
-            for target_name, initial_dmg_val in decision_response.get("damage_dealt", {}).items():
-                 target = next((c for c in local_combatants_list if c.get("name") == target_name), None)
-                 if not target: continue
-
-                 # Get initial damage
-                 initial_dmg = 0
-                 # ... (parse initial_dmg_val, fallback to dice) ...
-
-                 # Adjust based on save (if required for this target)
-                 final_dmg = 0
-                 if save_required:
-                      succeeded = target_saves.get(target_name, False) # Did this specific target save?
-                      if succeeded:
-                          # ... (calculate damage_on_save: half, none, full) ...
-                          final_dmg = initial_dmg # Calculate final damage based on save outcome
-                      else: # Save failed
-                          final_dmg = initial_dmg
-                 else:
-                      # Check attack roll vs AC
-                      # ... (find attack roll in dice_results) ...
-                      # ... (compare roll vs target['ac']) ...
-                      attack_hits = False  # Default to miss
-                      attack_roll_entry = next((d for d in dice_results if d.get("purpose", "").lower().startswith("attack")), None)
-                      if attack_roll_entry:
-                          attack_roll = attack_roll_entry.get("result", 0)
-                          if isinstance(attack_roll, (int, float)) and target and target.get("ac"):
-                              attack_hits = attack_roll >= target.get("ac", 10)
-                              logging.debug(f"Attack roll {attack_roll} vs AC {target.get('ac')}: {'Hit' if attack_hits else 'Miss'}")
-                      if attack_hits: final_dmg = initial_dmg
-                      else: final_dmg = 0
-
-                 # Apply final damage
-                 if final_dmg > 0:
-                      # Check if update exists, otherwise create
-                      update_entry = next((u for u in updates if u.get("name") == target_name), None)
-                      if not update_entry:
-                           update_entry = {"name": target_name, "instance_id": target.get("instance_id")}
-                           updates.append(update_entry)
-                      # Calculate new HP, store in update_entry['hp']
-                      current_hp = target.get("hp", 0)
-                      new_hp = max(0, current_hp - final_dmg)
-                      update_entry["hp"] = new_hp
-                      logging.debug(f"  Adding HP update for {target_name}: {new_hp}")
-
-
-            # Healing
-            for target_name, heal_val in decision_response.get("healing", {}).items():
-                 target = next((c for c in local_combatants_list if c.get("name") == target_name), None)
-                 if not target: continue
-                 # ... (parse heal_val, fallback to dice) ...
-                 # ... (calculate new HP, capped at max_hp) ...
-                 # Add/update entry in 'updates' list with new HP
-                 update_entry = next((u for u in updates if u.get("name") == target_name), None)
-                 if not update_entry:
-                      update_entry = {"name": target_name, "instance_id": target.get("instance_id")}
-                      updates.append(update_entry)
-                 max_hp = target.get("max_hp", target.get("hp", 0)) # Get max_hp safely
-                 heal_amount = 0
-                 try: heal_amount = int(heal_val)
-                 except: heal_amount = 0 # Default if parsing fails
-                 current_hp = target.get("hp", 0)
-                 new_hp = min(max_hp, current_hp + heal_amount)
-                 update_entry["hp"] = new_hp
-                 logging.debug(f"  Adding Healing update for {target_name}: {new_hp}")
-
-
-            # Conditions Applied/Removed
-            # ... (process conditions_applied/removed from decision_response) ...
-            # Add/update entry in 'updates' list with 'status' or 'conditions' field
-
-        except Exception as e:
-            logging.error(f"Error translating resolution to updates: {e}", exc_info=True)
-            # Fallback to explicit updates if present
-            if not updates and isinstance(decision_response.get("updates"), list):
-                logging.warning("Falling back to explicit updates from LLM.")
-                updates = decision_response["updates"]
-
-
-        # Construct final result for this turn
-        try:
-            # Ensure narrative_text is defined with a fallback
-            if 'narrative_text' not in locals() or narrative_text is None:
-                narrative_text = f"{active_combatant.get('name', 'Unknown')} takes their turn."
-
-            turn_result = {
-                "action": decision_response.get("action", "Unknown action"),
-                "narrative": narrative_text,
-                "dice": dice_results,
-                "updates": updates, # The collected updates list
-            }
-            logging.debug(f"Final turn result: {turn_result}")
-            return turn_result
-        except Exception as final_err:
-            # Last-resort fallback if anything fails during the result construction
-            logging.error(f"Error constructing turn result: {final_err}", exc_info=True)
+        # Select the appropriate model based on type
+        models = self.llm_service.get_available_models()
+        if not models:
+            logging.error("[CombatResolver] No LLM models available")
             return {
-                "action": "Technical Error",
-                "narrative": f"{active_combatant.get('name', 'Unknown')} encounters a technical difficulty.",
-                "dice": [],
-                "updates": []
+                "success": False,
+                "error": "No LLM models available"
             }
 
-        # --- End of _process_turn modifications ---
+        # Use a faster model by default
+        model = models[0]['id']  # Default to first available model
 
+        # Find a "mini" model if available for faster combat resolution
+        for m in models:
+            if 'mini' in m['id'].lower():
+                model = m['id']
+                break
+
+        # Create prompt for the action decision
+        messages = self._create_action_prompt(combatants, active_idx, round_num)
+
+        # Make the actual LLM call with additional logging
+        logging.info(f"[CombatResolver] Making LLM call to model {model}")
+        try:
+            response_text = self.llm_service.generate_completion(
+                model,
+                messages
+            )
+            
+            if not response_text:
+                logging.error("[CombatResolver] LLM returned empty response")
+                raise ValueError("LLM returned empty response")
+                
+            logging.info(f"[CombatResolver] LLM response received, length: {len(response_text)}")
+            
+            # Parse the JSON response for action/target/explanation
+            logging.info("[CombatResolver] Parsing LLM JSON response for context: action_decision")
+            action_result = self._parse_llm_json_response(response_text, "action_decision")
+            
+            # Save the result for debugging
+            self._save_json_artifact(action_result, f"parse_result_action_decision_{int(time.time())}")
+            
+            if not action_result.get("success", False):
+                logging.error(f"[CombatResolver] Failed to parse LLM response: {action_result.get('error', 'Unknown error')}")
+                return {
+                    "success": False,
+                    "error": f"Failed to parse LLM response: {action_result.get('error', 'Unknown error')}"
+                }
+                
+            # Extract action details from the parsed response
+            action = action_result.get("action", "Unknown action")
+            target = action_result.get("target", "")
+            explanation = action_result.get("explanation", "")
+            
+            # Determine action type and icon for visualization
+            action_type = self._determine_action_type(action)
+            action_icon = self._get_action_icon(action_type)
+            
+            logging.info(f"[CombatResolver] {active_name} chose action: {action} targeting: {target}")
+            
+            # Construct a narrative from the action and explanation
+            narrative = explanation
+            if not narrative:
+                narrative = f"{active_name} {action.lower()}"
+                if target:
+                    narrative += f" targeting {target}"
+                narrative += "."
+                
+            # Build the final turn result with enhanced visual data
+            turn_result = {
+                "success": True,
+                "has_narrative": bool(narrative),
+                "narrative_length": len(narrative) if narrative else 0,
+                "has_action": bool(action),
+                "action": action,
+                "target": target,
+                "narrative": narrative,
+                "action_type": action_type,
+                "action_icon": action_icon,
+                "narrative_style": self._get_narrative_style(action_type)
+            }
+            
+            # Save the turn result for debugging
+            self._save_json_artifact(turn_result, f"turn_result_{active_name}_{round_num}")
+            
+            return turn_result
+            
+        except Exception as e:
+            logging.error(f"[CombatResolver] Error processing turn: {str(e)}")
+            traceback.print_exc()
+            
+            # Create a fallback action when something goes wrong
+            fallback_action = {
+                "success": False,
+                "error": str(e),
+                "fallback": True,
+                "action": "Basic Attack",
+                "target": self._find_appropriate_target(combatants, active_idx),
+                "narrative": f"{active_name} attempts a basic action but encounters difficulty."
+            }
+            
+            return fallback_action
+            
+    def _get_narrative_style(self, action_type):
+        """Return CSS styling for different action types."""
+        styles = {
+            "attack": "color:#880000; font-style:italic;",
+            "spell": "color:#8800BB; font-style:italic;",
+            "movement": "color:#008844; font-style:italic;",
+            "healing": "color:#00AA00; font-style:italic;",
+            "defense": "color:#000088; font-style:italic;",
+            "utility": "color:#555555; font-style:italic;",
+            "social": "color:#885500; font-style:italic;",
+            "other": "color:#555555; font-style:italic;"
+        }
+        return styles.get(action_type, "color:#555555; font-style:italic;")
+        
+    def _find_appropriate_target(self, combatants, active_idx):
+        """Find an appropriate target for a fallback action."""
+        active_type = combatants[active_idx].get("type", "unknown").lower()
+        
+        # Look for an enemy based on type
+        for i, c in enumerate(combatants):
+            if i == active_idx:
+                continue
+                
+            target_type = c.get("type", "unknown").lower()
+            
+            # Simple heuristic - monsters target non-monsters, and vice versa
+            if (active_type == "monster" and target_type != "monster") or \
+               (active_type != "monster" and target_type == "monster"):
+                return c.get("name", "enemy")
+                
+        # Fallback if no clear enemy found
+        return "nearest enemy"
+
+    def _determine_action_type(self, action_name):
+        """
+        Determine the type of action based on the action name or description.
+        
+        Args:
+            action_name: The name of the action
+            
+        Returns:
+            str: The action type (attack, spell, movement, healing, etc.)
+        """
+        action_lower = action_name.lower()
+        
+        # Attack actions
+        if any(term in action_lower for term in ['attack', 'strike', 'hit', 'slash', 'stab', 'claw', 'bite', 'multiattack']):
+            return "attack"
+            
+        # Spell actions
+        elif any(term in action_lower for term in ['cast', 'spell', 'magic', 'cantrip', 'eldritch']):
+            return "spell"
+            
+        # Movement actions
+        elif any(term in action_lower for term in ['move', 'dash', 'disengage', 'jump', 'climb', 'fly', 'swim']):
+            return "movement"
+            
+        # Healing actions
+        elif any(term in action_lower for term in ['heal', 'cure', 'restore', 'potion']):
+            return "healing"
+            
+        # Defensive actions
+        elif any(term in action_lower for term in ['dodge', 'block', 'shield', 'parry', 'protect']):
+            return "defense"
+            
+        # Utility actions
+        elif any(term in action_lower for term in ['hide', 'search', 'help', 'aid', 'investigate', 'detect']):
+            return "utility"
+            
+        # Social actions
+        elif any(term in action_lower for term in ['persuade', 'deceive', 'intimidate', 'charm']):
+            return "social"
+            
+        # Default - other
+        return "other"
+        
+    def _get_action_icon(self, action_type):
+        """
+        Return an appropriate icon for the action type.
+        
+        Args:
+            action_type: The type of action
+            
+        Returns:
+            str: An emoji or symbol representing the action
+        """
+        icons = {
+            "attack": "⚔️",
+            "spell": "✨",
+            "movement": "👣",
+            "healing": "💚",
+            "defense": "🛡️",
+            "utility": "🔍",
+            "social": "💬",
+            "other": "⚡",
+        }
+        return icons.get(action_type, "⚡")
 
     # Make sure _create_decision_prompt uses the passed combat_state dict correctly
     def _create_decision_prompt(self, combat_state_dict, turn_combatant):
@@ -1588,9 +1385,18 @@ class CombatResolver(QObject):
         pass
 
     def _format_dice_results(self, dice_results):
-        """Helper to format dice results for LLM prompts."""
-        # ... (keep existing logic) ...
-        pass # Appears correct
+        """Format dice rolling results for inclusion in prompts."""
+        if not dice_results:
+            return "No dice rolls."
+            
+        formatted = []
+        for roll in dice_results:
+            purpose = roll.get('purpose', 'Roll')
+            expression = roll.get('expression', 'unknown')
+            result = roll.get('result', 'unknown')
+            formatted.append(f"{purpose}: {expression} = {result}")
+        
+        return "\n".join(formatted)
 
     # Other helpers (_format_active_auras, _get_nearby_combatants, etc.)
     # Review these to ensure they don't rely on self.combatants if called within _process_turn
@@ -1630,222 +1436,107 @@ class CombatResolver(QObject):
     # Needs update to use passed lists/dicts correctly
     def _create_resolution_prompt(self, combat_state_dict, active_combatant_dict, combatant_decision, dice_results):
         """
-        Create prompt for LLM to resolve an action. Uses passed data.
+        Create the prompt for resolving the action and generating a narrative and result.
         """
         active_name = active_combatant_dict.get('name', 'Unknown')
-        round_num_res = combat_state_dict.get('round_number', 1) # Use correct key
-        combatants_list_res = combat_state_dict.get('combatants', [])
-
-        # ... (rest of logic, using active_combatant_dict, combatants_list_res, round_num_res) ...
-
-        # --- Start of _create_resolution_prompt modifications ---
-        action = combatant_decision.get('action', 'No action taken')
-        target_name = combatant_decision.get('target', None) # Target NAME from decision
-
-        dice_str = self._format_dice_results(dice_results)
-
-        # Format nearby using the full list
-        nearby_list = self._get_nearby_combatants(active_combatant_dict, combatants_list_res)
-        nearby_str = self._format_nearby_combatants(nearby_list)
-
-        # Format target info using the full list
-        target_str = "No specific target."
-        target_data = None
-        if target_name and target_name.lower() != 'none':
-             target_data = next((c for c in combatants_list_res if c.get('name') == target_name), None)
-             if target_data:
-                  t_status = target_data.get('status', 'OK')
-                  t_status_str = f", Status: {t_status}" if t_status != "OK" else ""
-                  target_str = f"Target: {target_data.get('name')} (HP: {target_data.get('hp', 0)}/{target_data.get('max_hp', '?')}, AC: {target_data.get('ac', 10)}{t_status_str})"
-             else:
-                  target_str = f"Target: {target_name} (Details not found - may be invalid name)"
-
-        # Format conditions for active combatant
-        condition_str = self._format_conditions(active_combatant_dict)
-
-        # Recharge ability status/warning
-        recharge_status = ""
-        recharge_warning = ""
-        used_recharge_ability = None
-        available_recharge = []
-        unavailable_recharge = []
-        if "recharge_abilities" in active_combatant_dict:
-            for name, info in active_combatant_dict.get("recharge_abilities", {}).items():
-                 if info.get("available", True): # Assume available if key missing? Default to True
-                      available_recharge.append(name)
-                 else:
-                      unavailable_recharge.append(name)
-
-            if available_recharge or unavailable_recharge:
-                 recharge_status = f"""
-# Recharge Abilities Status
-Available: {', '.join(available_recharge) if available_recharge else 'None'}
-Unavailable: {', '.join(unavailable_recharge) if unavailable_recharge else 'None'}
-"""
-            # Check if the chosen action IS a recharge ability
-            if action in active_combatant_dict.get("recharge_abilities", {}):
-                 if action in unavailable_recharge:
-                      recharge_warning = f"WARNING: Attempting to use UNAVAILABLE recharge ability '{action}'. Narrate failure and choose alternative."
-                 else:
-                      # Mark as used for the output JSON request
-                      used_recharge_ability = action
-                      recharge_warning = f"NOTE: Using AVAILABLE recharge ability '{action}'. Set 'recharge_ability_used' field in JSON."
-
-
-        # Build the prompt
+        action_name = combatant_decision.get('action', 'Unknown action')
+        action_target = combatant_decision.get('target', 'Unknown target')
+        action_explanation = combatant_decision.get('explanation', '')
+        dice_summary = self._format_dice_results(dice_results) if dice_results else ""
+        
+        # Format system state for context
+        combatants_str = self._describe_combat_state(combat_state_dict.get('combatants', []), -1)
+            
         prompt = f"""
-You are the Combat Resolution AI. Narrate the outcome of the action based on the provided details and dice rolls.
-
-# Combat Situation
-Round: {round_num_res}
-Active Combatant: {active_name} (HP: {active_combatant_dict.get('hp', 0)}/{active_combatant_dict.get('max_hp', '?')}, Status: {active_combatant_dict.get('status', 'OK')})
-Conditions: {condition_str}
-
-# Action Taken
-Action: {action}
-Target: {target_name or 'None'}
-
-{recharge_status}
-{recharge_warning}
-
-# Dice Roll Results
-{dice_str}
-
-# Target Details (if specified)
-{target_str}
-
-# Nearby Combatants (Potential other targets/allies)
-{nearby_str}
-
-# Resolution Instructions
-1. Narrate the action and its effects vividly based on the chosen action, target, and dice rolls.
-2. If an attack roll beats AC, describe the hit and apply damage. If it misses, describe the miss.
-3. If a saving throw is required (based on action description, not usually in decision prompt), compare save roll to DC. Apply effects/damage accordingly (e.g., half damage on success).
-4. Determine the final HP changes, conditions applied/removed, and any other status updates.
-5. If a recharge ability was used (and available), make sure to note it. If unavailable, describe the failure.
-6. Respond ONLY with a valid JSON object.
-
-# Required JSON Output Format
-{{
-  "narrative": "Detailed, step-by-step narration of the action, rolls, and outcome.",
-  "updates": [
-    // List of combatants who were changed by this action
-    {{ "name": "TargetName1", "hp": new_hp, "status": "new_status", "conditions_added": ["condition"], "conditions_removed": ["condition"] }},
-    {{ "name": "TargetName2", "hp": new_hp }}
-    // Include changes to HP, status, conditions. Use target names.
-  ],
-      "recharge_ability_used": f'"{used_recharge_ability or ""}"' # Corrected f-string formatting
-    }}
-
-Example update for damage: {{"name": "Goblin", "hp": 5}}
-Example update for condition: {{"name": "Hero", "status": "Prone", "conditions_added": ["prone"]}}
-
-Narrate clearly. Calculate outcomes based on standard D&D 5e rules implied by the rolls and action. Be precise in the JSON updates.
-"""
+        # Action Resolution Request
+        
+        You are assisting with a D&D 5e combat scenario, producing a vivid and accurate narrative.
+        
+        ## Action to Resolve
+        *Character:* {active_name}
+        *Action:* {action_name}
+        *Target:* {action_target}
+        *Tactical Explanation:* {action_explanation}
+        
+        ## Dice Results
+        {dice_summary}
+        
+        ## Current Combat State
+        {combatants_str}
+        
+        ## Task
+        1. Create a descriptive narrative of how this action plays out.
+        2. Consider the game rules, dice results, and combat situation.
+        3. Write in vivid D&D style appropriate for the action.
+        4. Keep your response concise but evocative - approximately 2-3 sentences.
+        
+        Respond with a JSON object in this format:
+        ```json
+        {
+          "narrative": "A vivid description of the action as it plays out in combat",
+          "effect": "A brief note about mechanical effects (optional)"
+        }
+        ```
+        """
+        
         return prompt
-        # --- End of _create_resolution_prompt modifications ---
 
-    # Added helper
-    def _parse_llm_json_response(self, response_text, context=""): # Added helper
-        """Attempts to parse JSON from LLM response, handling common issues."""
-        # Ensure json is imported if not already globally
-        import json
-        import re
-
-        if not isinstance(response_text, str):
-            logging.warning(f"[_parse_llm_json_response] Expected string, got {type(response_text)} ({context})")
-            return {"error": "Invalid response type", "raw_response": str(response_text)}
-
-        cleaned = response_text.strip()
-        logging.debug(f"[_parse_llm_json_response] Raw response ({context}): {cleaned[:200]}...")
-
-        # 1. Try extracting from ```json ... ``` block
-        # Fixed regex - the closing backticks were inside the capture group
-        json_match = re.search(r"```json\s*(\{.*?\})\s*```", cleaned, re.DOTALL)
-        if json_match:
-            json_content = json_match.group(1)
-            try:
-                parsed = json.loads(json_content)
-                logging.debug(f"Successfully parsed from ```json block ({context})")
-                return parsed
-            except json.JSONDecodeError as e:
-                logging.warning(f"Failed to parse ```json block content ({context}): {e}")
-                # Fall through to other methods
-
-        # 2. Try extracting from any ``` ... ``` block
-        # Fixed regex - the closing backticks were inside the capture group
-        code_block_match = re.search(r"```\s*(\{.*?\})\s*```", cleaned, re.DOTALL)
-        if code_block_match:
-             json_content = code_block_match.group(1)
-             try:
-                 parsed = json.loads(json_content)
-                 logging.debug(f"Successfully parsed from generic ``` block ({context})")
-                 return parsed
-             except json.JSONDecodeError as e:
-                 logging.warning(f"Failed to parse generic ``` block content ({context}): {e}")
-                 # Fall through
-        # 3. Try finding the first { and last }
-        brace_match = re.search(r"(\{.*\})", cleaned, re.DOTALL) # Simpler regex
-        if brace_match:
-            potential_json = brace_match.group(1)
-            try:
-                parsed = json.loads(potential_json)
-                logging.debug(f"Successfully parsed brace-extracted content ({context})")
-                return parsed
-            except json.JSONDecodeError as e:
-                 logging.warning(f"Failed to parse brace-extracted content ({context}): {e}")
-                 # Fall through to final attempt
-
-        # 4. Final attempt: Parse the raw cleaned string directly
-        try:
-            parsed = json.loads(cleaned)
-            logging.debug(f"Successfully parsed cleaned string directly as last resort ({context})")
-            return parsed
-        except json.JSONDecodeError as e:
-            logging.error(f"Failed to parse JSON response ({context}) after all attempts: {e}. Raw: {cleaned[:200]}...")
-            return {"error": "JSON parsing failed", "raw_response": cleaned}
+    # The _parse_llm_json_response method is implemented at line ~517
+    # No duplicate implementation needed here
 
     # Add a new diagnostic method for testing LLM service
     def test_llm_service(self):
-        """Test the LLM service to verify it's working properly."""
+        """Tests the LLM service with a simple request to check configuration."""
         logging.info("[CombatResolver] Testing LLM service...")
+        
         try:
-            # Get available models
+            # Check which models are available
             available_models = self.llm_service.get_available_models()
-            logging.info(f"[CombatResolver] Available models: {available_models}")
-            
             if not available_models:
-                logging.error("[CombatResolver] No LLM models available. Check API keys and service configuration.")
-                return False, "No models available"
+                return {
+                    "success": False,
+                    "error": "No LLM models available. Check API keys and service configuration."
+                }
             
-            # Use the first available model for testing
-            test_model = available_models[0]['id']
-            logging.info(f"[CombatResolver] Testing with model: {test_model}")
+            # Use first available model
+            model_id = available_models[0]['id']
             
-            # Simple test prompt
-            test_prompt = "You are a D&D combat assistant. Please respond with a simple 'LLM service is working' message."
-            test_messages = [{"role": "user", "content": test_prompt}]
+            # Simple prompt for testing
+            test_message = "Return a valid JSON with a greeting message. Format: {\"message\": \"greeting\"}"
+            system_prompt = "You are a helpful D&D assistant that returns only valid JSON."
             
-            # Attempt to get a response
+            # Make test call
+            logging.info(f"[CombatResolver] Testing LLM with model: {model_id}")
             response = self.llm_service.generate_completion(
-                model=test_model,
-                messages=test_messages,
-                temperature=0.7,
-                max_tokens=100
+                model_id,
+                [{"role": "user", "content": test_message}],
+                system_prompt=system_prompt
             )
             
-            if response:
-                logging.info(f"[CombatResolver] LLM service test successful: {response[:100]}...")
-                return True, response
-            else:
-                logging.error("[CombatResolver] LLM service test failed: Empty response")
-                return False, "Empty response"
-        
+            # Parse response
+            parsed = self._parse_llm_json_response(response, "test_call")
+            
+            # Check if valid response
+            if "error" in parsed:
+                return {
+                    "success": False,
+                    "error": f"LLM returned invalid JSON: {parsed.get('error')}",
+                    "raw_response": response
+                }
+            
+            return {
+                "success": True,
+                "model": model_id,
+                "response": parsed,
+                "raw_response": response
+            }
         except Exception as e:
             import traceback
-            logging.error(f"[CombatResolver] LLM service test failed with error: {e}")
-            logging.error(traceback.format_exc())
-            return False, f"Error: {str(e)}"
+            return {
+                "success": False,
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }
 
     # Add the missing _process_recharge_abilities method
     def _process_recharge_abilities(self, combatant, dice_roller):
@@ -1960,82 +1651,52 @@ Narrate clearly. Calculate outcomes based on standard D&D 5e rules implied by th
         return messages
     
     def _describe_combat_state(self, combatants, active_idx):
-        """Create a textual description of the combat state.
+        """Generate a textual summary of the combat state for prompts."""
+        descriptions = []
+        for i, c in enumerate(combatants):
+            ctype = c.get("type", "unknown")
+            is_active = (i == active_idx)
+            name = c.get("name", f"Combatant {i}")
+            hp = c.get("hp", 0)
+            max_hp = c.get("max_hp", "?")
+            status = c.get("status", "")
+            
+            status_str = f", {status}" if status else ""
+            active_marker = " (ACTIVE)" if is_active else ""
+            
+            descriptions.append(f"{name}{active_marker}: {ctype}, HP {hp}/{max_hp}{status_str}")
+            
+        return "\n".join(descriptions)
+
+    def _save_json_artifact(self, data, filename):
+        """
+        Saves a JSON artifact (like an LLM response or parse result) to the log directory
+        for debugging purposes.
         
         Args:
-            combatants: List of all combatants
-            active_idx: Index of the active combatant
-            
-        Returns:
-            String description of the combat state
+            data: The data to save (dict or similar)
+            filename: Filename to save under (without directory or extension)
         """
-        active_combatant = combatants[active_idx]
-        name = active_combatant.get('name', 'Unknown')
+        import os
+        import json
+        import time
+        import logging
         
-        description = []
-        
-        # Describe the active combatant first
-        description.append(f"### {name} (Active Combatant)")
-        description.append(f"- HP: {active_combatant.get('hp', 0)}/{active_combatant.get('max_hp', 0)}")
-        description.append(f"- AC: {active_combatant.get('ac', 10)}")
-        
-        # Add status effects
-        if active_combatant.get('status'):
-            description.append(f"- Status: {active_combatant.get('status')}")
-        
-        # Add abilities and actions if available
-        if 'actions' in active_combatant and active_combatant['actions']:
-            actions = active_combatant['actions']
-            action_names = []
-            if isinstance(actions, list):
-                for action in actions:
-                    if isinstance(action, dict) and 'name' in action:
-                        action_names.append(action['name'])
-            action_text = ", ".join(action_names) if action_names else "Standard actions"
-            description.append(f"- Available Actions: {action_text}")
-        
-        description.append("\n### Other Combatants")
-        
-        # Group combatants by type (allies and enemies)
-        allies = []
-        enemies = []
-        active_type = active_combatant.get('type', '').lower()
-        
-        for i, combatant in enumerate(combatants):
-            if i == active_idx:
-                continue  # Skip active combatant
+        try:
+            # Create directory with timestamp if it doesn't exist
+            log_dir = f"llm_logs_{int(time.time() // 100 * 100)}"
+            if not os.path.exists(log_dir):
+                os.makedirs(log_dir)
                 
-            name = combatant.get('name', 'Unknown')
-            hp = combatant.get('hp', 0)
-            max_hp = combatant.get('max_hp', hp)
-            hp_percent = int((hp / max_hp * 100) if max_hp > 0 else 0)
-            ac = combatant.get('ac', 10)
-            status = combatant.get('status', '')
-            combatant_type = combatant.get('type', '').lower()
-            
-            # Prepare combatant description
-            combatant_desc = f"{name} - HP: {hp}/{max_hp} ({hp_percent}%), AC: {ac}"
-            if status:
-                combatant_desc += f", Status: {status}"
-            
-            # Add to appropriate group
-            if combatant_type == active_type:
-                allies.append(combatant_desc)
-            else:
-                enemies.append(combatant_desc)
-        
-        # Add allies and enemies to description
-        if allies:
-            description.append("\n#### Allies:")
-            for ally in allies:
-                description.append(f"- {ally}")
-        
-        if enemies:
-            description.append("\n#### Enemies:")
-            for enemy in enemies:
-                description.append(f"- {enemy}")
-        
-        return "\n".join(description)
+            # Save to file with proper formatting
+            filepath = os.path.join(log_dir, f"{filename}.json")
+            with open(filepath, 'w') as f:
+                json.dump(data, f, indent=2)
+                
+            logging.info(f"[CombatResolver] Saved {filename} to {filepath}")
+        except Exception as e:
+            logging.error(f"[CombatResolver] Failed to save artifact {filename}: {str(e)}")
+            # Don't let this error disrupt the main flow
 
 # Ensure the final class definition is accessible
 CombatResolver = CombatResolver # This line might be redundant depending on execution context

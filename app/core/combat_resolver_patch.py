@@ -897,8 +897,8 @@ def _patch_llm_service(app_state):
             logging.info(f"[LLM] Sending request to {model}")
             logging.debug(f"[LLM] Messages: {messages[:1]}...")
             
-            # Make the call
-            response = original_generate(self, model, messages, system_prompt, temperature, max_tokens)
+            # Make the call - only pass the parameters that the original method accepts
+            response = original_generate(model, messages, system_prompt, temperature, max_tokens)
             
             # Log the response
             if response:
