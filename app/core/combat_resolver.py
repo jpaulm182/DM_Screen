@@ -787,86 +787,101 @@ class CombatResolver(QObject):
         logging.info(f"[CombatResolver] Requesting action decision from LLM for {active_combatant.get('name', 'Unknown')}")
         decision_response = None # Initialize to None
         try:
-            # First, run a test to make sure the LLM service is working
-            success, test_result = self.test_llm_service()
-            if not success:
-                logging.error(f"[CombatResolver] LLM test failed before attempting action decision: {test_result}")
-                raise ValueError(f"LLM service test failed: {test_result}")
+            # Ensure LLM service is available
+            if not hasattr(self, 'llm_service') or self.llm_service is None:
+                logging.error("[CombatResolver] LLM service is not available")
+                raise ValueError("LLM service is not available")
+                
+            # Check which models are available
+            available_models = self.llm_service.get_available_models()
+            logging.info(f"[CombatResolver] Available LLM models: {available_models}")
+            
+            if not available_models:
+                logging.error("[CombatResolver] No LLM models available")
+                raise ValueError("No LLM models available. Check API keys and service configuration.")
             
             # Prefer GPT-4.1 Mini for fast combat resolution if available
-            available_models = self.llm_service.get_available_models()
-            logging.info(f"[CombatResolver] Available models: {available_models}")
-            
             model_id = None
-            # Check for specific model ID using ModelInfo constant
-            if ModelInfo.OPENAI_GPT4O_MINI in [m['id'] for m in available_models]:
-                     model_id = ModelInfo.OPENAI_GPT4O_MINI
-                     logging.info(f"[CombatResolver] Using preferred model: {model_id}")
-            elif available_models:
-                     # Fallback: use first available model
-                     model_id = available_models[0]['id'] # Corrected quotes
-                     logging.info(f"[CombatResolver] Using fallback model: {model_id}")
-            else:
-                    logging.error("No LLM models available for decision making.")
-                    raise ValueError("No LLM models available")
-
-            if model_id:
-                logging.info(f"[CombatResolver] Sending decision prompt to LLM ({model_id}):\n{prompt[:500]}...\n---END PROMPT SAMPLE---")
+            
+            # Find the appropriate model to use
+            for model_info in available_models:
+                model_id = model_info['id']
+                if 'gpt-4-mini' in model_id or 'gpt-4.1-mini' in model_id:
+                    logging.info(f"[CombatResolver] Using {model_id} for fast resolution")
+                    break
+                    
+            # Fall back to any available model if preferred model not found
+            if not model_id and available_models:
+                model_id = available_models[0]['id']
+                logging.info(f"[CombatResolver] Falling back to {model_id}")
+            
+            if not model_id:
+                logging.error("[CombatResolver] No suitable model found")
+                raise ValueError("No suitable model found")
                 
-                # Add additional timeout handling
-                try:
-                    logging.info("[CombatResolver] About to call generate_completion...")
-                    decision_response_raw = self.llm_service.generate_completion(
-                        model=model_id,
-                        # Use self.previous_turn_summaries managed by the thread loop
-                        messages=self.build_llm_messages(self.previous_turn_summaries, prompt),
-                        temperature=0.7,
-                        max_tokens=800 # Adjust max tokens if needed
-                    )
+            # Prepare decision prompt
+            system_prompt = self._get_system_prompt()
+            messages = self._create_action_prompt(local_combatants_list, active_idx, round_num)
+            
+            # Log the prompt
+            logging.info(f"[CombatResolver] System prompt: {system_prompt[:100]}...")
+            logging.info(f"[CombatResolver] Messages: {str(messages)[:200]}...")
+            
+            # Make the actual LLM call with additional logging
+            logging.info(f"[CombatResolver] Making LLM call to model {model_id}")
+            try:
+                response_text = self.llm_service.generate_completion(
+                    model_id,
+                    messages,
+                    system_prompt=system_prompt
+                )
+                
+                if not response_text:
+                    logging.error("[CombatResolver] LLM returned empty response")
+                    raise ValueError("LLM returned empty response")
                     
-                    logging.info(f"[CombatResolver] LLM response received, length: {len(decision_response_raw) if decision_response_raw else 0}")
-                    
-                    if not decision_response_raw:
-                        raise ValueError("Empty response received from LLM")
-                        
-                    logging.debug(f"[CombatResolver] Received raw LLM decision for {active_combatant.get('name', 'Unknown')}")
-                    
-                    # Show first 100 chars of response for debugging
-                    response_preview = decision_response_raw[:100] if decision_response_raw else "None"
-                    logging.info(f"[CombatResolver] Response preview: {response_preview}")
-                    
-                    # Process the raw response (string) into a dictionary
-                    decision_response = self._parse_llm_json_response(decision_response_raw, "decision")
-                    
-                    # Add another safety check
-                    if not decision_response:
-                        raise ValueError("Failed to parse LLM response to valid JSON")
-                    
-                    logging.info(f"[CombatResolver] Parsed response: {decision_response}")
-                        
-                except Exception as api_err:
-                    logging.error(f"API call error: {api_err}", exc_info=True)
-                    raise
-
-        except Exception as llm_err:
-             logging.error(f"Error getting LLM decision: {llm_err}", exc_info=True)
-             # Ensure decision_response is a dict even on error for graceful fallback
-             decision_response = {
-                 "action": "Error during decision",
-                 "narrative": f"{active_combatant.get('name', 'Unknown')} seems confused due to a technical difficulty.",
-                 "updates": [],
-                 "dice_requests": []
-             }
-
-        # Ensure decision_response is a dict before proceeding
-        if not isinstance(decision_response, dict):
-             logging.error(f"LLM decision response was not a dict after parsing: {type(decision_response)}. Using fallback.")
-             decision_response = {
-                 "action": "Parsing Error",
-                 "narrative": f"{active_combatant.get('name', 'Unknown')} acts unpredictably due to a parsing error.",
-                 "updates": [],
-                 "dice_requests": []
-             }
+                logging.info(f"[CombatResolver] LLM response received, length: {len(response_text)}")
+                logging.info(f"[CombatResolver] LLM response preview: {response_text[:200]}...")
+                
+                # Parse the JSON response
+                decision_response = self._parse_llm_json_response(response_text, "action_decision")
+                logging.info(f"[CombatResolver] Parsed decision response: {str(decision_response)[:200]}...")
+                
+                if not decision_response or not isinstance(decision_response, dict):
+                    logging.error(f"[CombatResolver] Failed to parse valid decision response: {decision_response}")
+                    raise ValueError(f"Failed to parse valid decision response: {decision_response}")
+                
+                if "error" in decision_response:
+                    logging.error(f"[CombatResolver] Error in decision response: {decision_response['error']}")
+                    # Create a fallback response
+                    decision_response = {
+                        "action": "Wait",
+                        "target": "None",
+                        "explanation": f"Error parsing LLM response: {decision_response['error']}",
+                        "fallback": True
+                    }
+            except Exception as llm_err:
+                logging.error(f"[CombatResolver] LLM call error: {llm_err}")
+                # Fallback for LLM errors
+                decision_response = {
+                    "action": "Wait",
+                    "target": "None", 
+                    "explanation": f"LLM error: {str(llm_err)}",
+                    "fallback": True
+                }
+                import traceback
+                logging.error(f"[CombatResolver] LLM call traceback: {traceback.format_exc()}")
+        except Exception as e:
+            logging.error(f"[CombatResolver] Error in LLM decision process: {e}")
+            import traceback
+            traceback.print_exc()
+            # Provide a fallback response for any errors
+            decision_response = {
+                "action": "Wait",
+                "target": "None",
+                "explanation": f"Error: {str(e)}",
+                "fallback": True
+            }
 
         # --- DICE ROLLING PHASE ---
         # Check for dice_requests in the LLM response
@@ -1869,6 +1884,151 @@ Narrate clearly. Calculate outcomes based on standard D&D 5e rules implied by th
                 
         logging.debug(f"[CombatResolver] Recharge abilities after processing: {combatant.get('recharge_abilities')}")
         return
+
+    # Add the required helper methods after the _process_turn method:
+
+    def _get_system_prompt(self):
+        """Get the system prompt for LLM action decisions."""
+        system_prompt = """
+        You are a Dungeons & Dragons 5e combat assistant tasked with making tactical decisions for monsters and NPCs.
+        
+        GUIDELINES:
+        1. Consider character positions, abilities, and tactical advantages
+        2. Choose actions that would make sense for the character's intelligence and nature
+        3. Prioritize effective combat tactics appropriate to the monster type
+        4. Respond ONLY in valid JSON format with the requested fields
+        5. Keep explanations brief but descriptive
+        
+        Your response should take advantage of the monster's abilities, traits, and the current combat situation.
+        """
+        return system_prompt
+    
+    def _create_action_prompt(self, combatants, active_idx, round_num):
+        """Create structured messages for the LLM action decision.
+        
+        Args:
+            combatants: List of all combatants
+            active_idx: Index of the active combatant
+            round_num: Current round number
+            
+        Returns:
+            List of message dictionaries for the LLM service
+        """
+        active_combatant = combatants[active_idx]
+        name = active_combatant.get('name', 'Unknown')
+        combatant_type = active_combatant.get('type', '').lower()
+        
+        # Create a detailed combat state description
+        combat_state = self._describe_combat_state(combatants, active_idx)
+        
+        # Get previous turn context if available
+        context = "\n\n".join(self.previous_turn_summaries[-5:]) if hasattr(self, 'previous_turn_summaries') and self.previous_turn_summaries else ""
+        
+        action_request = f"""
+        # Combat Situation - Round {round_num}
+        
+        It is now {name}'s turn to act.
+        
+        ## Combat State
+        {combat_state}
+        
+        ## Previous Turns
+        {context}
+        
+        ## Your Task
+        Choose an appropriate action for {name} based on its capabilities and the current situation.
+        
+        Respond with a JSON object containing:
+        {{
+          "action": "The action being taken",
+          "target": "The target of the action, if applicable",
+          "explanation": "Brief explanation of the tactical choice"
+        }}
+        """
+        
+        # Create message list format used by OpenAI API
+        messages = [{"role": "user", "content": action_request}]
+        
+        logging.debug(f"[CombatResolver] Created action prompt for {name}")
+        return messages
+    
+    def _describe_combat_state(self, combatants, active_idx):
+        """Create a textual description of the combat state.
+        
+        Args:
+            combatants: List of all combatants
+            active_idx: Index of the active combatant
+            
+        Returns:
+            String description of the combat state
+        """
+        active_combatant = combatants[active_idx]
+        name = active_combatant.get('name', 'Unknown')
+        
+        description = []
+        
+        # Describe the active combatant first
+        description.append(f"### {name} (Active Combatant)")
+        description.append(f"- HP: {active_combatant.get('hp', 0)}/{active_combatant.get('max_hp', 0)}")
+        description.append(f"- AC: {active_combatant.get('ac', 10)}")
+        
+        # Add status effects
+        if active_combatant.get('status'):
+            description.append(f"- Status: {active_combatant.get('status')}")
+        
+        # Add abilities and actions if available
+        if 'actions' in active_combatant and active_combatant['actions']:
+            actions = active_combatant['actions']
+            action_names = []
+            if isinstance(actions, list):
+                for action in actions:
+                    if isinstance(action, dict) and 'name' in action:
+                        action_names.append(action['name'])
+            action_text = ", ".join(action_names) if action_names else "Standard actions"
+            description.append(f"- Available Actions: {action_text}")
+        
+        description.append("\n### Other Combatants")
+        
+        # Group combatants by type (allies and enemies)
+        allies = []
+        enemies = []
+        active_type = active_combatant.get('type', '').lower()
+        
+        for i, combatant in enumerate(combatants):
+            if i == active_idx:
+                continue  # Skip active combatant
+                
+            name = combatant.get('name', 'Unknown')
+            hp = combatant.get('hp', 0)
+            max_hp = combatant.get('max_hp', hp)
+            hp_percent = int((hp / max_hp * 100) if max_hp > 0 else 0)
+            ac = combatant.get('ac', 10)
+            status = combatant.get('status', '')
+            combatant_type = combatant.get('type', '').lower()
+            
+            # Prepare combatant description
+            combatant_desc = f"{name} - HP: {hp}/{max_hp} ({hp_percent}%), AC: {ac}"
+            if status:
+                combatant_desc += f", Status: {status}"
+            
+            # Add to appropriate group
+            if combatant_type == active_type:
+                allies.append(combatant_desc)
+            else:
+                enemies.append(combatant_desc)
+        
+        # Add allies and enemies to description
+        if allies:
+            description.append("\n#### Allies:")
+            for ally in allies:
+                description.append(f"- {ally}")
+        
+        if enemies:
+            description.append("\n#### Enemies:")
+            for enemy in enemies:
+                description.append(f"- {enemy}")
+        
+        return "\n".join(description)
 
 # Ensure the final class definition is accessible
 CombatResolver = CombatResolver # This line might be redundant depending on execution context

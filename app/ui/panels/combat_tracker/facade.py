@@ -271,15 +271,64 @@ class CombatTrackerPanel(BasePanel):
                 # Update UI with final preparation status
                 QApplication.instance().postEvent(self, CombatTrackerPanel._ProgressEvent("Starting combat resolution..."))
                 
-                # Call the resolver (ImprovedCombatResolver handles its own signals/updates)
-                # Pass the UI update wrapper as the `update_ui_callback`
-                print("[CombatTracker] Calling ImprovedCombatResolver.resolve_combat_turn_by_turn")
-                self.app_state.combat_resolver.resolve_combat_turn_by_turn(
+                # Call the resolver with our updated approach
+                print("[CombatTracker] Calling combat_resolver.start_resolution() method")
+                
+                # Get a direct reference to the CombatResolver 
+                # Check if using ImprovedCombatResolver (which wraps CombatResolver)
+                if hasattr(self.app_state, 'combat_resolver'):
+                    if hasattr(self.app_state.combat_resolver, 'combat_resolver'):
+                        # Using ImprovedCombatResolver (which has a combat_resolver attribute)
+                        # Access the underlying CombatResolver directly
+                        resolver = self.app_state.combat_resolver.combat_resolver
+                        print("[CombatTracker] Using underlying CombatResolver from ImprovedCombatResolver")
+                    else:
+                        # Using CombatResolver directly
+                        resolver = self.app_state.combat_resolver
+                        print("[CombatTracker] Using CombatResolver directly")
+                else:
+                    QApplication.instance().postEvent(self, CombatTrackerPanel._ErrorEvent(
+                        "Error", 
+                        f"Combat Resolver not found in App State."
+                    ))
+                    self._is_resolving_combat = False # Reset flag
+                    return
+                
+                # Connect the resolution_update signal directly to our _process_resolution_ui slot
+                try:
+                    # Disconnect any existing connection first to be safe
+                    try:
+                        resolver.resolution_update.disconnect(self._process_resolution_ui)
+                        print("[CombatTracker] Disconnected existing signal connection")
+                    except Exception:
+                        # Connection might not exist yet, which is fine
+                        pass
+                    
+                    # Connect the signal
+                    resolver.resolution_update.connect(
+                        lambda state, status, error: self._process_resolution_ui(state, error)
+                    )
+                    print("[CombatTracker] Successfully connected resolution_update signal")
+                except Exception as conn_error:
+                    print(f"[CombatTracker] Failed to connect signal: {conn_error}")
+                    
+                # Start the resolution using the modern start_resolution API
+                success = resolver.start_resolution(
                     combat_state,
                     dice_roller,
-                    completion_callback, # Pass our manual callback for backup
-                    self._update_ui_wrapper # Pass the wrapper for UI updates
+                    self._update_ui_wrapper, # Pass the wrapper for UI updates
+                    mode='continuous'
                 )
+                
+                if not success:
+                    # Failed to start resolution
+                    QApplication.instance().postEvent(self, CombatTrackerPanel._ErrorEvent(
+                        "Error", 
+                        f"Failed to start combat resolution - it might already be running."
+                    ))
+                    self._is_resolving_combat = False # Reset flag
+                    QApplication.instance().postEvent(self, CombatTrackerPanel._UpdateButtonEvent("Fast Resolve", True))
+                    return
                     
             except Exception as e:
                 traceback.print_exc()
@@ -359,17 +408,33 @@ class CombatTrackerPanel(BasePanel):
         elif event.type() == QEvent.Type(QEvent.User + 108):
             # Connect signal event
             try:
+                # Get the appropriate resolver instance
+                if hasattr(self.app_state, 'combat_resolver'):
+                    if hasattr(self.app_state.combat_resolver, 'combat_resolver'):
+                        # Using ImprovedCombatResolver - get the underlying CombatResolver
+                        resolver = self.app_state.combat_resolver.combat_resolver
+                        print("[CombatTracker] Connecting signal to underlying CombatResolver")
+                    else:
+                        # Using CombatResolver directly
+                        resolver = self.app_state.combat_resolver
+                        print("[CombatTracker] Connecting signal to CombatResolver directly")
+                else:
+                    print("[CombatTracker] Combat Resolver not found - cannot connect signal")
+                    return True
+                    
                 # Disconnect any existing connection first to be safe
                 try:
-                    self.app_state.combat_resolver.resolution_complete.disconnect(self._process_resolution_ui)
+                    resolver.resolution_update.disconnect(self._process_resolution_ui)
                     print("[CombatTracker] Disconnected existing signal connection")
                 except Exception:
                     # Connection might not exist yet, which is fine
                     pass
                 
-                # Connect the signal
-                self.app_state.combat_resolver.resolution_complete.connect(self._process_resolution_ui)
-                print("[CombatTracker] Successfully connected resolution_complete signal")
+                # Connect to the resolution_update signal (state, status, error)
+                resolver.resolution_update.connect(
+                    lambda state, status, error: self._process_resolution_ui(state, error)
+                )
+                print("[CombatTracker] Successfully connected resolution_update signal")
             except Exception as conn_error:
                 print(f"[CombatTracker] Failed to connect signal: {conn_error}")
             return True
@@ -757,12 +822,32 @@ class CombatTrackerPanel(BasePanel):
             
             # Disconnect signal to prevent memory leaks
             try:
-                # Check if combat_resolver exists before disconnecting
-                if hasattr(self.app_state, 'combat_resolver') and hasattr(self.app_state.combat_resolver, 'resolution_complete'):
-                    self.app_state.combat_resolver.resolution_complete.disconnect(self._process_resolution_ui)
-                    print("[CombatTracker] Successfully disconnected resolution_complete signal")
+                # Get the appropriate resolver instance
+                if hasattr(self.app_state, 'combat_resolver'):
+                    if hasattr(self.app_state.combat_resolver, 'combat_resolver'):
+                        # Using ImprovedCombatResolver - disconnect from both resolvers to be safe
+                        underlying_resolver = self.app_state.combat_resolver.combat_resolver
+                        try:
+                            underlying_resolver.resolution_update.disconnect(self._process_resolution_ui)
+                            print("[CombatTracker] Successfully disconnected resolution_update signal from underlying resolver")
+                        except Exception as e1:
+                            print(f"[CombatTracker] Failed to disconnect from underlying resolver: {e1}")
+                            
+                        # Also try to disconnect from the top-level resolver
+                        try:
+                            self.app_state.combat_resolver.resolution_complete.disconnect(self._process_resolution_ui)
+                            print("[CombatTracker] Successfully disconnected resolution_complete signal from ImprovedCombatResolver")
+                        except Exception as e2:
+                            print(f"[CombatTracker] Failed to disconnect from ImprovedCombatResolver: {e2}")
+                    else:
+                        # Using CombatResolver directly
+                        try:
+                            self.app_state.combat_resolver.resolution_update.disconnect(self._process_resolution_ui)
+                            print("[CombatTracker] Successfully disconnected resolution_update signal")
+                        except Exception as e:
+                            print(f"[CombatTracker] Failed to disconnect from CombatResolver: {e}")
             except Exception as disconnect_error:
-                print(f"[CombatTracker] Failed to disconnect signal: {disconnect_error}")
+                print(f"[CombatTracker] Failed to disconnect signals: {disconnect_error}")
             
             # Ensure combat_log_text exists
             if not hasattr(self, 'combat_log_text'):

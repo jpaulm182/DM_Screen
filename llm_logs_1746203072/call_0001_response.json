@@ -1,0 +1,7 @@
+{
+  "timestamp": 1746203094.9914708,
+  "call_id": "call_0001",
+  "elapsed_seconds": 0.9736034870147705,
+  "response_length": 266,
+  "response": "{\n  \"action\": \"Frightful Presence\",\n  \"target\": \"All enemies within 60 feet\",\n  \"explanation\": \"Using Frightful Presence to potentially frighten and impair multiple enemies at the start of combat, leveraging the Dragon's intimidation to gain a tactical advantage.\"\n}"
+}

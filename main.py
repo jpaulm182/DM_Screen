@@ -64,14 +64,25 @@ def main():
     # Apply stability patches
     logging.info("Applying stability patches")
     try:
-        # Import improved patched_app_state module
+        # Apply LLM monitoring if enabled
+        try:
+            from monitor_llm_calls import patch_llm_service, patch_combat_resolver, monitor_ui_updates
+            # Only enable LLM monitoring if explicitly requested via environment variable
+            if os.environ.get('ENABLE_LLM_MONITORING', 'false').lower() == 'true':
+                patch_llm_service()
+                patch_combat_resolver()
+                monitor_ui_updates()
+                logging.info("LLM monitoring enabled")
+        except ImportError:
+            logging.info("LLM monitoring not available (normal during regular usage)")
+            
+        # Apply app state patches
         from app.core.patched_app_state import apply_patches
         apply_patches()
         
-        # Apply fixes for combat resolver
-        logging.info("Applying combat resolver fixes")
-        from fix_fast_resolve import apply_fixes
-        apply_fixes()
+        # Apply specific combat resolver patches
+        from app.core.combat_resolver_patch import apply_patches as apply_combat_patches
+        apply_combat_patches(app_state)
         
         logging.info("Stability patches applied successfully")
     except Exception as e:
