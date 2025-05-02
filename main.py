@@ -64,10 +64,19 @@ def main():
     # Apply stability patches
     logging.info("Applying stability patches")
     try:
+        # Import improved patched_app_state module
+        from app.core.patched_app_state import apply_patches
         apply_patches()
+        
+        # Apply fixes for combat resolver
+        logging.info("Applying combat resolver fixes")
+        from fix_fast_resolve import apply_fixes
+        apply_fixes()
+        
         logging.info("Stability patches applied successfully")
     except Exception as e:
         logging.error(f"Error applying patches: {e}", exc_info=True)
+        # Continue running even if patches fail - the application should still work
     
     # Force garbage collection before starting
     gc.collect()

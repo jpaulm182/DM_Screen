@@ -61,21 +61,22 @@ class ImprovedCombatResolver(QObject):
         app_state = MockAppState(self.combat_resolver)
         combat_resolver_patch(app_state)
         
-        # Connect the combat resolver's signal to our own signal
-        self.combat_resolver.resolution_complete.connect(
-            lambda result, error: self.resolution_complete.emit(result, error)
+        # Forward the base resolver's resolution_update (result, status, error) to our resolution_complete (result, error)
+        self.combat_resolver.resolution_update.connect(
+            lambda state, status, error: self.resolution_complete.emit(state, error)
         )
         
-    def resolve_combat_turn_by_turn(self, combat_state, dice_roller, callback, update_ui_callback=None):
+    def resolve_combat_turn_by_turn(self, combat_state, dice_roller, callback=None, update_ui_callback=None):
         """
-        Delegate turn-by-turn combat resolution to the original CombatResolver to use LLM.
+        Start continuous combat resolution using the original CombatResolver.
+        Passes per-turn UI updates to the provided callback.
         """
-        # Use the underlying CombatResolver with LLM for fast resolve
-        return self.combat_resolver.resolve_combat_turn_by_turn(
+        # Use start_resolution to leverage LLM per-turn updates
+        return self.combat_resolver.start_resolution(
             combat_state,
             dice_roller,
-            callback,
-            update_ui_callback
+            update_ui_callback,
+            mode='continuous'
         )
 
     def validate_monster_abilities(self, monster_data):

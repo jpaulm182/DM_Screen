@@ -284,6 +284,7 @@ class CombatResolver(QObject):
 
                     skip_turn = False
                     skip_reason = ""
+                    goto_post_turn_logic = False  # Initialize this variable to prevent NameError
                     if status == "dead":
                          skip_turn = True
                          skip_reason = "Dead"
@@ -319,19 +320,16 @@ class CombatResolver(QObject):
 
                     # --- Process the actual turn using LLM ---
                     # (Only if not skipped and not just a death save)
+                    logging.info(f"[CombatResolver] Before turn processing: goto_post_turn_logic exists: {'goto_post_turn_logic' in locals()}, value: {locals().get('goto_post_turn_logic')}")
+                    
                     if not 'goto_post_turn_logic' in locals() or not goto_post_turn_logic:
+                         logging.info(f"[CombatResolver] Processing turn for {combatant_name} using LLM")
                          turn_result = self._process_turn(combatants, current_turn_original_index, round_num, dice_roller)
-                         if not turn_result:
-                             logging.error(f"Error processing turn for {combatant_name}. Using fallback.")
-                             turn_result = {
-                                 "action": f"{combatant_name} takes no action due to confusion.",
-                                 "narrative": f"{combatant_name} looks confused and takes no action this turn.",
-                                 "updates": [],
-                                 "dice": []
-                             }
+                         
+                         logging.info(f"[CombatResolver] Turn processing complete. Result: {turn_result}")
 
                          # Add summary to context for next LLM call (if needed)
-                         turn_summary = f"Round {round_num}, {combatant_name}'s turn: {turn_result.get('narrative', 'No action.')}"
+                         turn_summary = f"Round {round_num}, {combatant_name}'s turn: {turn_result.get('narrative', 'No action.') if turn_result else 'No result available.'}"
                          self.previous_turn_summaries.append(turn_summary)
                          # Limit context size
                          if len(self.previous_turn_summaries) > 10:
@@ -342,14 +340,14 @@ class CombatResolver(QObject):
                              "round": round_num,
                              "turn": current_turn_original_index,
                              "actor": combatant_name,
-                             "action": turn_result.get("action", ""),
-                             "dice": turn_result.get("dice", []),
-                             "result": turn_result.get("narrative", "")
+                             "action": turn_result.get("action", "") if turn_result else "Error during turn processing",
+                             "dice": turn_result.get("dice", []) if turn_result else [],
+                             "result": turn_result.get("narrative", "") if turn_result else "No result available."
                          }
                          log.append(turn_log_entry)
 
                          # Apply updates from the turn result to our local combatants list
-                         if "updates" in turn_result:
+                         if turn_result and "updates" in turn_result:
                              self._apply_turn_updates(combatants, turn_result["updates"])
 
                     # --- Post-Turn Logic (UI Update, Pause/Step Check, End Condition Check) ---
@@ -646,65 +644,63 @@ class CombatResolver(QObject):
     # Existing Helper Methods (potentially need minor adjustments)
     # ---------------------------------------------------------------------
     def _parse_llm_json_response(self, response_text, context=""): # Added helper
-            """Attempts to parse JSON from LLM response, handling common issues."""
-            # Ensure json is imported if not already globally
-            import json
-            import re
+        """Attempts to parse JSON from LLM response, handling common issues."""
+        # Ensure json is imported if not already globally
+        import json
+        import re
 
-            if not isinstance(response_text, str):
-                logging.warning(f"[_parse_llm_json_response] Expected string, got {type(response_text)} ({context})")
-                return {"error": "Invalid response type", "raw_response": str(response_text)}
+        if not isinstance(response_text, str):
+            logging.warning(f"[_parse_llm_json_response] Expected string, got {type(response_text)} ({context})")
+            return {"error": "Invalid response type", "raw_response": str(response_text)}
 
-            cleaned = response_text.strip()
-            logging.debug(f"[_parse_llm_json_response] Raw response ({context}): {cleaned[:200]}...")
+        cleaned = response_text.strip()
+        logging.debug(f"[_parse_llm_json_response] Raw response ({context}): {cleaned[:200]}...")
 
-            # 1. Try extracting from ```json ... ``` block
-            # Corrected regex
-            json_match = re.search(r"```json\s*(\{.*?\})\s*```", cleaned, re.DOTALL)
-            if json_match:
-                json_content = json_match.group(1)
-                try:
-                    parsed = json.loads(json_content)
-                    logging.debug(f"Successfully parsed from ```json block ({context})")
-                    return parsed
-                except json.JSONDecodeError as e:
-                    logging.warning(f"Failed to parse ```json block content ({context}): {e}")
-                    # Fall through to other methods
-
-            # 2. Try extracting from any ``` ... ``` block
-            # Corrected regex
-            code_block_match = re.search(r"```\s*(\{.*?\})\s*```", cleaned, re.DOTALL)
-            if code_block_match:
-                 json_content = code_block_match.group(1)
-                 try:
-                     parsed = json.loads(json_content)
-                     logging.debug(f"Successfully parsed from generic ``` block ({context})")
-                     return parsed
-                 except json.JSONDecodeError as e:
-                     logging.warning(f"Failed to parse generic ``` block content ({context}): {e}")
-                     # Fall through
-
-            # 3. Try finding the first { and last } using a simpler search
-            # Corrected regex approach
-            brace_match = re.search(r"(\{.*\})", cleaned, re.DOTALL) # Simpler regex
-            if brace_match:
-                potential_json = brace_match.group(1)
-                try:
-                    parsed = json.loads(potential_json)
-                    logging.debug(f"Successfully parsed brace-extracted content ({context})")
-                    return parsed
-                except json.JSONDecodeError as e:
-                     logging.warning(f"Failed to parse brace-extracted content ({context}): {e}")
-                     # Fall through to final attempt
-
-            # 4. Final attempt: Parse the raw cleaned string directly
+        # 1. Try extracting from ```json ... ``` block
+        # Fixed regex - the closing backticks were inside the capture group
+        json_match = re.search(r"```json\s*(\{.*?\})\s*```", cleaned, re.DOTALL)
+        if json_match:
+            json_content = json_match.group(1)
             try:
-                parsed = json.loads(cleaned)
-                logging.debug(f"Successfully parsed cleaned string directly as last resort ({context})")
+                parsed = json.loads(json_content)
+                logging.debug(f"Successfully parsed from ```json block ({context})")
                 return parsed
             except json.JSONDecodeError as e:
-                logging.error(f"Failed to parse JSON response ({context}) after all attempts: {e}. Raw: {cleaned[:200]}...")
-                return {"error": "JSON parsing failed", "raw_response": cleaned}
+                logging.warning(f"Failed to parse ```json block content ({context}): {e}")
+                # Fall through to other methods
+
+        # 2. Try extracting from any ``` ... ``` block
+        # Fixed regex - the closing backticks were inside the capture group
+        code_block_match = re.search(r"```\s*(\{.*?\})\s*```", cleaned, re.DOTALL)
+        if code_block_match:
+             json_content = code_block_match.group(1)
+             try:
+                 parsed = json.loads(json_content)
+                 logging.debug(f"Successfully parsed from generic ``` block ({context})")
+                 return parsed
+             except json.JSONDecodeError as e:
+                 logging.warning(f"Failed to parse generic ``` block content ({context}): {e}")
+                 # Fall through
+        # 3. Try finding the first { and last }
+        brace_match = re.search(r"(\{.*\})", cleaned, re.DOTALL) # Simpler regex
+        if brace_match:
+            potential_json = brace_match.group(1)
+            try:
+                parsed = json.loads(potential_json)
+                logging.debug(f"Successfully parsed brace-extracted content ({context})")
+                return parsed
+            except json.JSONDecodeError as e:
+                 logging.warning(f"Failed to parse brace-extracted content ({context}): {e}")
+                 # Fall through to final attempt
+
+        # 4. Final attempt: Parse the raw cleaned string directly
+        try:
+            parsed = json.loads(cleaned)
+            logging.debug(f"Successfully parsed cleaned string directly as last resort ({context})")
+            return parsed
+        except json.JSONDecodeError as e:
+            logging.error(f"Failed to parse JSON response ({context}) after all attempts: {e}. Raw: {cleaned[:200]}...")
+            return {"error": "JSON parsing failed", "raw_response": cleaned}
 
     # Make sure _process_turn uses the thread-local combatants list
     def _process_turn(self, local_combatants_list, active_idx, round_num, dice_roller):
@@ -725,97 +721,101 @@ class CombatResolver(QObject):
 
         # --- Start of _process_turn modifications ---
         dice_results = []
+        # Initialize per-turn variables
+        # Use the passed list to get the active combatant
+        active_combatant = local_combatants_list[active_idx]
+        logging.info(f"[CombatResolver] Processing turn for {active_combatant.get('name', 'Unknown')} (round {round_num})")
+
+        # --- DEBUG LOGGING ---
+        # ... (keep existing debug logging) ...
+
+        # Import ActionEconomyManager if needed
+        from app.combat.action_economy import ActionEconomyManager
+        active_combatant = ActionEconomyManager.initialize_action_economy(active_combatant)
+
+        # Process recharge abilities
+        if active_combatant.get("type", "").lower() == "monster":
+            self._process_recharge_abilities(active_combatant, dice_roller) # Modifies active_combatant dict
+
+        # Debug: Log all combatant HP values at start of turn
+        logging.debug(f"\n[CombatResolver] DEBUG: CURRENT HP VALUES AT START OF TURN ({active_combatant.get('name')}):")
+        for i, c in enumerate(local_combatants_list): # Use passed list
+            logging.debug(f"[CombatResolver] DEBUG: Combatant {i}: {c.get('name')} - HP: {c.get('hp', 0)}/{c.get('max_hp', c.get('hp', 0))}")
+
+        # Process aura effects
+        # Pass the correct list to _process_auras
+        aura_updates = self._process_auras(active_combatant, local_combatants_list)
+        # _process_auras might modify active_combatant dict directly if damage occurs
+
+        # Skip if dead/0 HP
+        if active_combatant.get("hp", 0) <= 0 and active_combatant.get("status", "").lower() == "dead":
+             # ... (keep existing skip logic) ...
+             return { # Ensure a dict is returned
+                 "action": f"{active_combatant.get('name', 'Unknown')} is dead and skips their turn.",
+                 "narrative": f"{active_combatant.get('name', 'Unknown')} is dead and skips their turn.",
+                 "dice": [],
+                 "updates": []
+             }
+
+        # Handle being knocked out by auras
+        if active_combatant.get("hp", 0) <= 0 and active_combatant.get("status", "").lower() != "dead":
+             # ... (keep existing logic) ...
+             # Make sure the update uses the correct name/ID
+             updates = [{
+                  "name": active_combatant.get('name', 'Unknown'),
+                  "instance_id": active_combatant.get('instance_id'), # Include ID if available
+                  "hp": 0,
+                  "status": "Unconscious"
+             }]
+             if active_combatant.get("type","").lower() != "monster":
+                  self._init_death_saves(active_combatant) # Init saves
+                  updates[0]["death_saves"] = active_combatant["death_saves"]
+
+             return { # Ensure a dict is returned
+                 "action": f"{active_combatant.get('name', 'Unknown')} falls unconscious due to aura damage.",
+                 "narrative": f"{active_combatant.get('name', 'Unknown')} falls unconscious due to aura damage.",
+                 "dice": [],
+                 "updates": updates,
+                 "aura_updates": aura_updates # Include aura info if needed
+             }
+
+        # 1. Create prompt using the current state from the passed list
+        combat_state_for_prompt = {"combatants": local_combatants_list, "round_number": round_num}
+        prompt = self._create_decision_prompt(combat_state_for_prompt, active_combatant)
+
+        # 2. Get action decision from LLM
+        logging.info(f"[CombatResolver] Requesting action decision from LLM for {active_combatant.get('name', 'Unknown')}")
+        decision_response = None # Initialize to None
         try:
-            # Use the passed list
-            active_combatant = local_combatants_list[active_idx]
-            logging.info(f"[CombatResolver] Processing turn for {active_combatant.get('name', 'Unknown')} (round {round_num})")
-        except Exception as e:
-            logging.error(f"[CombatResolver] Error processing turn: {str(e)}")
-            return {
-                "action": "Error occurred during turn processing",
-                "narrative": f"An error occurred: {str(e)}",
-                "dice": [],
-                "updates": []
-            }
+            # First, run a test to make sure the LLM service is working
+            success, test_result = self.test_llm_service()
+            if not success:
+                logging.error(f"[CombatResolver] LLM test failed before attempting action decision: {test_result}")
+                raise ValueError(f"LLM service test failed: {test_result}")
+            
+            # Prefer GPT-4.1 Mini for fast combat resolution if available
+            available_models = self.llm_service.get_available_models()
+            logging.info(f"[CombatResolver] Available models: {available_models}")
+            
+            model_id = None
+            # Check for specific model ID using ModelInfo constant
+            if ModelInfo.OPENAI_GPT4O_MINI in [m['id'] for m in available_models]:
+                     model_id = ModelInfo.OPENAI_GPT4O_MINI
+                     logging.info(f"[CombatResolver] Using preferred model: {model_id}")
+            elif available_models:
+                     # Fallback: use first available model
+                     model_id = available_models[0]['id'] # Corrected quotes
+                     logging.info(f"[CombatResolver] Using fallback model: {model_id}")
+            else:
+                    logging.error("No LLM models available for decision making.")
+                    raise ValueError("No LLM models available")
 
-            # --- DEBUG LOGGING ---
-            # ... (keep existing debug logging) ...
-
-            # Import ActionEconomyManager if needed
-            from app.combat.action_economy import ActionEconomyManager
-            active_combatant = ActionEconomyManager.initialize_action_economy(active_combatant)
-
-            # Process recharge abilities
-            if active_combatant.get("type", "").lower() == "monster":
-                self._process_recharge_abilities(active_combatant, dice_roller) # Modifies active_combatant dict
-
-            # Debug: Log all combatant HP values at start of turn
-            logging.debug(f"\n[CombatResolver] DEBUG: CURRENT HP VALUES AT START OF TURN ({active_combatant.get('name')}):")
-            for i, c in enumerate(local_combatants_list): # Use passed list
-                logging.debug(f"[CombatResolver] DEBUG: Combatant {i}: {c.get('name')} - HP: {c.get('hp', 0)}/{c.get('max_hp', c.get('hp', 0))}")
-
-            # Process aura effects
-            # Pass the correct list to _process_auras
-            aura_updates = self._process_auras(active_combatant, local_combatants_list)
-            # _process_auras might modify active_combatant dict directly if damage occurs
-
-            # Skip if dead/0 HP
-            if active_combatant.get("hp", 0) <= 0 and active_combatant.get("status", "").lower() == "dead":
-                 # ... (keep existing skip logic) ...
-                 return { # Ensure a dict is returned
-                     "action": f"{active_combatant.get('name', 'Unknown')} is dead and skips their turn.",
-                     "narrative": f"{active_combatant.get('name', 'Unknown')} is dead and skips their turn.",
-                     "dice": [],
-                     "updates": []
-                 }
-
-            # Handle being knocked out by auras
-            if active_combatant.get("hp", 0) <= 0 and active_combatant.get("status", "").lower() != "dead":
-                 # ... (keep existing logic) ...
-                 # Make sure the update uses the correct name/ID
-                 updates = [{
-                      "name": active_combatant.get('name', 'Unknown'),
-                      "instance_id": active_combatant.get('instance_id'), # Include ID if available
-                      "hp": 0,
-                      "status": "Unconscious"
-                 }]
-                 if active_combatant.get("type","").lower() != "monster":
-                      self._init_death_saves(active_combatant) # Init saves
-                      updates[0]["death_saves"] = active_combatant["death_saves"]
-
-                 return { # Ensure a dict is returned
-                     "action": f"{active_combatant.get('name', 'Unknown')} falls unconscious due to aura damage.",
-                     "narrative": f"{active_combatant.get('name', 'Unknown')} falls unconscious due to aura damage.",
-                     "dice": [],
-                     "updates": updates,
-                     "aura_updates": aura_updates # Include aura info if needed
-                 }
-
-            # 1. Create prompt using the current state from the passed list
-            combat_state_for_prompt = {"combatants": local_combatants_list, "round_number": round_num}
-            prompt = self._create_decision_prompt(combat_state_for_prompt, active_combatant)
-
-            # 2. Get action decision from LLM
-            logging.info(f"[CombatResolver] Requesting action decision from LLM for {active_combatant.get('name', 'Unknown')}")
-            decision_response = None # Initialize to None
-            try:
-                # Prefer GPT-4.1 Mini for fast combat resolution if available
-                available_models = self.llm_service.get_available_models()
-                model_id = None
-                # Check for specific model ID using ModelInfo constant
-                if ModelInfo.OPENAI_GPT4O_MINI in [m['id'] for m in available_models]:
-                         model_id = ModelInfo.OPENAI_GPT4O_MINI
-                         logging.debug(f"Using preferred model: {model_id}")
-                elif available_models:
-                         # Fallback: use first available model
-                         model_id = available_models[0]['id'] # Corrected quotes
-                         logging.debug(f"Using fallback model: {model_id}")
-                else:
-                        logging.error("No LLM models available for decision making.")
-                        raise ValueError("No LLM models available")
-
-                if model_id:
-                    logging.debug(f"[CombatResolver] Sending decision prompt to LLM ({model_id}):\n{prompt[:500]}...\n---END PROMPT SAMPLE---")
+            if model_id:
+                logging.info(f"[CombatResolver] Sending decision prompt to LLM ({model_id}):\n{prompt[:500]}...\n---END PROMPT SAMPLE---")
+                
+                # Add additional timeout handling
+                try:
+                    logging.info("[CombatResolver] About to call generate_completion...")
                     decision_response_raw = self.llm_service.generate_completion(
                         model=model_id,
                         # Use self.previous_turn_summaries managed by the thread loop
@@ -823,149 +823,175 @@ class CombatResolver(QObject):
                         temperature=0.7,
                         max_tokens=800 # Adjust max tokens if needed
                     )
+                    
+                    logging.info(f"[CombatResolver] LLM response received, length: {len(decision_response_raw) if decision_response_raw else 0}")
+                    
+                    if not decision_response_raw:
+                        raise ValueError("Empty response received from LLM")
+                        
                     logging.debug(f"[CombatResolver] Received raw LLM decision for {active_combatant.get('name', 'Unknown')}")
+                    
+                    # Show first 100 chars of response for debugging
+                    response_preview = decision_response_raw[:100] if decision_response_raw else "None"
+                    logging.info(f"[CombatResolver] Response preview: {response_preview}")
+                    
                     # Process the raw response (string) into a dictionary
                     decision_response = self._parse_llm_json_response(decision_response_raw, "decision")
+                    
+                    # Add another safety check
+                    if not decision_response:
+                        raise ValueError("Failed to parse LLM response to valid JSON")
+                    
+                    logging.info(f"[CombatResolver] Parsed response: {decision_response}")
+                        
+                except Exception as api_err:
+                    logging.error(f"API call error: {api_err}", exc_info=True)
+                    raise
 
-            except Exception as llm_err:
-                 logging.error(f"Error getting LLM decision: {llm_err}", exc_info=True)
-                 # Ensure decision_response is a dict even on error for graceful fallback
-                 decision_response = {
-                     "action": "Error during decision",
-                     "narrative": f"{active_combatant.get('name', 'Unknown')} seems confused due to a technical difficulty.",
-                     "updates": [],
-                     "dice_requests": []
-                 }
+        except Exception as llm_err:
+             logging.error(f"Error getting LLM decision: {llm_err}", exc_info=True)
+             # Ensure decision_response is a dict even on error for graceful fallback
+             decision_response = {
+                 "action": "Error during decision",
+                 "narrative": f"{active_combatant.get('name', 'Unknown')} seems confused due to a technical difficulty.",
+                 "updates": [],
+                 "dice_requests": []
+             }
 
-            # Ensure decision_response is a dict before proceeding
-            if not isinstance(decision_response, dict):
-                 logging.error(f"LLM decision response was not a dict after parsing: {type(decision_response)}. Using fallback.")
-                 decision_response = {
-                     "action": "Parsing Error",
-                     "narrative": f"{active_combatant.get('name', 'Unknown')} acts unpredictably due to a parsing error.",
-                     "updates": [],
-                     "dice_requests": []
-                 }
+        # Ensure decision_response is a dict before proceeding
+        if not isinstance(decision_response, dict):
+             logging.error(f"LLM decision response was not a dict after parsing: {type(decision_response)}. Using fallback.")
+             decision_response = {
+                 "action": "Parsing Error",
+                 "narrative": f"{active_combatant.get('name', 'Unknown')} acts unpredictably due to a parsing error.",
+                 "updates": [],
+                 "dice_requests": []
+             }
 
-            # --- DICE ROLLING PHASE ---
-            # Check for dice_requests in the LLM response
-            dice_results = [] # Ensure initialized
-            # ... (keep existing dice rolling logic using dice_roller) ...
+        # --- DICE ROLLING PHASE ---
+        # Check for dice_requests in the LLM response
+        dice_results = [] # Ensure initialized
+        # ... (keep existing dice rolling logic using dice_roller) ...
 
-            # --- Build turn_result ---
-            updates = [] # Start with empty updates for this turn
-            narrative_text = "The action resolves with technical difficulties." # Default narrative
-            try:
-                # Extract narrative
-                # ... (keep existing narrative extraction logic) ...
+        # --- Build turn_result ---
+        updates = [] # Start with empty updates for this turn
+        narrative_text = "The action resolves with technical difficulties." # Default narrative
+        try:
+            # Extract narrative
+            # ... (keep existing narrative extraction logic) ...
 
-                # Auto-detect targets
-                # ... (keep existing logic, using local_combatants_list) ...
+            # Auto-detect targets
+            # ... (keep existing logic, using local_combatants_list) ...
 
-                # --- REVISED Saving Throw & Damage Logic ---
-                # This section needs careful review to ensure it uses local_combatants_list
-                # and correctly identifies targets within that list.
-                save_succeeded = False
-                save_required = False
-                final_dmg = 0
-                action_name = decision_response.get("action", "Unknown Action")
+            # --- REVISED Saving Throw & Damage Logic ---
+            # This section needs careful review to ensure it uses local_combatants_list
+            # and correctly identifies targets within that list.
+            save_succeeded = False
+            save_required = False
+            final_dmg = 0
+            action_name = decision_response.get("action", "Unknown Action")
 
-                # Find action details in the active combatant
-                action_details = None
-                # ... (find action in active_combatant['actions']) ...
+            # Find action details in the active combatant
+            action_details = None
+            # ... (find action in active_combatant['actions']) ...
 
-                # 1. Check if save required
-                if action_details and "saving throw" in action_details.get("description", "").lower():
-                    save_required = True
-                    # ... (extract DC, ability, damage_on_save from action_details) ...
+            # 1. Check if save required
+            if action_details and "saving throw" in action_details.get("description", "").lower():
+                save_required = True
+                # ... (extract DC, ability, damage_on_save from action_details) ...
 
-                    # Process save for EACH target potentially affected (using damage_dealt keys)
-                    damage_targets = decision_response.get("damage_dealt", {})
-                    target_saves = {} # Store save result per target
+                # Process save for EACH target potentially affected (using damage_dealt keys)
+                damage_targets = decision_response.get("damage_dealt", {})
+                target_saves = {} # Store save result per target
 
-                    for target_name in damage_targets.keys():
-                         # Find target in the local list
-                         target = next((c for c in local_combatants_list if c.get("name") == target_name), None)
-                         if not target: continue
-
-                         # ... (get target save modifier) ...
-                         # ... (roll save internally using dice_roller) ...
-                         # Store result: target_saves[target_name] = save_succeeded
-
-                # 2. Process damage/healing/conditions for each target
-                # Damage
-                for target_name, initial_dmg_val in decision_response.get("damage_dealt", {}).items():
+                for target_name in damage_targets.keys():
+                     # Find target in the local list
                      target = next((c for c in local_combatants_list if c.get("name") == target_name), None)
                      if not target: continue
 
-                     # Get initial damage
-                     initial_dmg = 0
-                     # ... (parse initial_dmg_val, fallback to dice) ...
+                     # ... (get target save modifier) ...
+                     # ... (roll save internally using dice_roller) ...
+                     # Store result: target_saves[target_name] = save_succeeded
 
-                     # Adjust based on save (if required for this target)
-                     final_dmg = 0
-                     if save_required:
-                          succeeded = target_saves.get(target_name, False) # Did this specific target save?
-                          if succeeded:
-                              # ... (calculate damage_on_save: half, none, full) ...
-                              final_dmg = initial_dmg # Calculate final damage based on save outcome
-                          else: # Save failed
-                              final_dmg = initial_dmg
-                     else:
-                          # Check attack roll vs AC
-                          # ... (find attack roll in dice_results) ...
-                          # ... (compare roll vs target['ac']) ...
-                          if attack_hits: final_dmg = initial_dmg
-                          else: final_dmg = 0
+            # 2. Process damage/healing/conditions for each target
+            # Damage
+            for target_name, initial_dmg_val in decision_response.get("damage_dealt", {}).items():
+                 target = next((c for c in local_combatants_list if c.get("name") == target_name), None)
+                 if not target: continue
 
-                     # Apply final damage
-                     if final_dmg > 0:
-                          # Check if update exists, otherwise create
-                          update_entry = next((u for u in updates if u.get("name") == target_name), None)
-                          if not update_entry:
-                               update_entry = {"name": target_name, "instance_id": target.get("instance_id")}
-                               updates.append(update_entry)
-                          # Calculate new HP, store in update_entry['hp']
-                          current_hp = target.get("hp", 0)
-                          new_hp = max(0, current_hp - final_dmg)
-                          update_entry["hp"] = new_hp
-                          logging.debug(f"  Adding HP update for {target_name}: {new_hp}")
+                 # Get initial damage
+                 initial_dmg = 0
+                 # ... (parse initial_dmg_val, fallback to dice) ...
 
+                 # Adjust based on save (if required for this target)
+                 final_dmg = 0
+                 if save_required:
+                      succeeded = target_saves.get(target_name, False) # Did this specific target save?
+                      if succeeded:
+                          # ... (calculate damage_on_save: half, none, full) ...
+                          final_dmg = initial_dmg # Calculate final damage based on save outcome
+                      else: # Save failed
+                          final_dmg = initial_dmg
+                 else:
+                      # Check attack roll vs AC
+                      # ... (find attack roll in dice_results) ...
+                      # ... (compare roll vs target['ac']) ...
+                      if attack_hits: final_dmg = initial_dmg
+                      else: final_dmg = 0
 
-                # Healing
-                for target_name, heal_val in decision_response.get("healing", {}).items():
-                     target = next((c for c in local_combatants_list if c.get("name") == target_name), None)
-                     if not target: continue
-                     # ... (parse heal_val, fallback to dice) ...
-                     # ... (calculate new HP, capped at max_hp) ...
-                     # Add/update entry in 'updates' list with new HP
-                     update_entry = next((u for u in updates if u.get("name") == target_name), None)
-                     if not update_entry:
-                          update_entry = {"name": target_name, "instance_id": target.get("instance_id")}
-                          updates.append(update_entry)
-                     max_hp = target.get("max_hp", target.get("hp", 0)) # Get max_hp safely
-                     heal_amount = 0
-                     try: heal_amount = int(heal_val)
-                     except: heal_amount = 0 # Default if parsing fails
-                     current_hp = target.get("hp", 0)
-                     new_hp = min(max_hp, current_hp + heal_amount)
-                     update_entry["hp"] = new_hp
-                     logging.debug(f"  Adding Healing update for {target_name}: {new_hp}")
+                 # Apply final damage
+                 if final_dmg > 0:
+                      # Check if update exists, otherwise create
+                      update_entry = next((u for u in updates if u.get("name") == target_name), None)
+                      if not update_entry:
+                           update_entry = {"name": target_name, "instance_id": target.get("instance_id")}
+                           updates.append(update_entry)
+                      # Calculate new HP, store in update_entry['hp']
+                      current_hp = target.get("hp", 0)
+                      new_hp = max(0, current_hp - final_dmg)
+                      update_entry["hp"] = new_hp
+                      logging.debug(f"  Adding HP update for {target_name}: {new_hp}")
 
 
-                # Conditions Applied/Removed
-                # ... (process conditions_applied/removed from decision_response) ...
-                # Add/update entry in 'updates' list with 'status' or 'conditions' field
+            # Healing
+            for target_name, heal_val in decision_response.get("healing", {}).items():
+                 target = next((c for c in local_combatants_list if c.get("name") == target_name), None)
+                 if not target: continue
+                 # ... (parse heal_val, fallback to dice) ...
+                 # ... (calculate new HP, capped at max_hp) ...
+                 # Add/update entry in 'updates' list with new HP
+                 update_entry = next((u for u in updates if u.get("name") == target_name), None)
+                 if not update_entry:
+                      update_entry = {"name": target_name, "instance_id": target.get("instance_id")}
+                      updates.append(update_entry)
+                 max_hp = target.get("max_hp", target.get("hp", 0)) # Get max_hp safely
+                 heal_amount = 0
+                 try: heal_amount = int(heal_val)
+                 except: heal_amount = 0 # Default if parsing fails
+                 current_hp = target.get("hp", 0)
+                 new_hp = min(max_hp, current_hp + heal_amount)
+                 update_entry["hp"] = new_hp
+                 logging.debug(f"  Adding Healing update for {target_name}: {new_hp}")
 
-            except Exception as e:
-                logging.error(f"Error translating resolution to updates: {e}", exc_info=True)
-                # Fallback to explicit updates if present
-                if not updates and isinstance(decision_response.get("updates"), list):
-                    logging.warning("Falling back to explicit updates from LLM.")
-                    updates = decision_response["updates"]
+
+            # Conditions Applied/Removed
+            # ... (process conditions_applied/removed from decision_response) ...
+            # Add/update entry in 'updates' list with 'status' or 'conditions' field
+
+        except Exception as e:
+            logging.error(f"Error translating resolution to updates: {e}", exc_info=True)
+            # Fallback to explicit updates if present
+            if not updates and isinstance(decision_response.get("updates"), list):
+                logging.warning("Falling back to explicit updates from LLM.")
+                updates = decision_response["updates"]
 
 
-            # Construct final result for this turn
+        # Construct final result for this turn
+        try:
+            # Ensure narrative_text is defined with a fallback
+            if 'narrative_text' not in locals() or narrative_text is None:
+                narrative_text = f"{active_combatant.get('name', 'Unknown')} takes their turn."
+
             turn_result = {
                 "action": decision_response.get("action", "Unknown action"),
                 "narrative": narrative_text,
@@ -974,19 +1000,16 @@ class CombatResolver(QObject):
             }
             logging.debug(f"Final turn result: {turn_result}")
             return turn_result
-
-        except Exception as e:
-            logging.error(f"Critical error in _process_turn: {e}", exc_info=True)
-            # Return a minimal fallback result
-            active_name_fallback = "Combatant"
-            try: active_name_fallback = local_combatants_list[active_idx].get("name", "Combatant")
-            except: pass
+        except Exception as final_err:
+            # Last-resort fallback if anything fails during the result construction
+            logging.error(f"Error constructing turn result: {final_err}", exc_info=True)
             return {
-                 "action": "Error",
-                 "narrative": f"{active_name_fallback} attempted to act, but a processing error occurred.",
-                 "dice": dice_results, # Include dice if available
-                 "updates": []
+                "action": "Technical Error",
+                "narrative": f"{active_combatant.get('name', 'Unknown')} encounters a technical difficulty.",
+                "dice": [],
+                "updates": []
             }
+
         # --- End of _process_turn modifications ---
 
 
@@ -1137,7 +1160,7 @@ class CombatResolver(QObject):
         prompt += '     {"expression": "1d20+5", "purpose": "Attack Roll: Shortsword vs Goblin1"},\n'
         prompt += '     {"expression": "1d6+3", "purpose": "Damage Roll: Shortsword vs Goblin1"},\n'
         prompt += '     {"expression": "1d20+7", "purpose": "Saving Throw: DC 15 Dexterity vs Fireball"}\n'
-        prompt += '     // Include ALL necessary rolls for the action (attacks, damage, saves)\n'
+        prompt += '     "Include ALL necessary rolls for the action (attacks, damage, saves)"\n'
         prompt += '  ]\n'
         prompt += "}\n\n"
         prompt += "Make sure the JSON is valid."
@@ -1715,7 +1738,8 @@ Narrate clearly. Calculate outcomes based on standard D&D 5e rules implied by th
         logging.debug(f"[_parse_llm_json_response] Raw response ({context}): {cleaned[:200]}...")
 
         # 1. Try extracting from ```json ... ``` block
-        json_match = re.search(r"```json\s*(\{.*?\}\s*```", cleaned, re.DOTALL)
+        # Fixed regex - the closing backticks were inside the capture group
+        json_match = re.search(r"```json\s*(\{.*?\})\s*```", cleaned, re.DOTALL)
         if json_match:
             json_content = json_match.group(1)
             try:
@@ -1727,7 +1751,8 @@ Narrate clearly. Calculate outcomes based on standard D&D 5e rules implied by th
                 # Fall through to other methods
 
         # 2. Try extracting from any ``` ... ``` block
-        code_block_match = re.search(r"```\s*(\{.*?\}\s*```", cleaned, re.DOTALL)
+        # Fixed regex - the closing backticks were inside the capture group
+        code_block_match = re.search(r"```\s*(\{.*?\})\s*```", cleaned, re.DOTALL)
         if code_block_match:
              json_content = code_block_match.group(1)
              try:
@@ -1738,7 +1763,7 @@ Narrate clearly. Calculate outcomes based on standard D&D 5e rules implied by th
                  logging.warning(f"Failed to parse generic ``` block content ({context}): {e}")
                  # Fall through
         # 3. Try finding the first { and last }
-        brace_match = re.search(r"^[^{]*({.*})[^}]*$", cleaned, re.DOTALL)
+        brace_match = re.search(r"(\{.*\})", cleaned, re.DOTALL) # Simpler regex
         if brace_match:
             potential_json = brace_match.group(1)
             try:
@@ -1757,6 +1782,93 @@ Narrate clearly. Calculate outcomes based on standard D&D 5e rules implied by th
         except json.JSONDecodeError as e:
             logging.error(f"Failed to parse JSON response ({context}) after all attempts: {e}. Raw: {cleaned[:200]}...")
             return {"error": "JSON parsing failed", "raw_response": cleaned}
+
+    # Add a new diagnostic method for testing LLM service
+    def test_llm_service(self):
+        """Test the LLM service to verify it's working properly."""
+        logging.info("[CombatResolver] Testing LLM service...")
+        try:
+            # Get available models
+            available_models = self.llm_service.get_available_models()
+            logging.info(f"[CombatResolver] Available models: {available_models}")
+            
+            if not available_models:
+                logging.error("[CombatResolver] No LLM models available. Check API keys and service configuration.")
+                return False, "No models available"
+            
+            # Use the first available model for testing
+            test_model = available_models[0]['id']
+            logging.info(f"[CombatResolver] Testing with model: {test_model}")
+            
+            # Simple test prompt
+            test_prompt = "You are a D&D combat assistant. Please respond with a simple 'LLM service is working' message."
+            test_messages = [{"role": "user", "content": test_prompt}]
+            
+            # Attempt to get a response
+            response = self.llm_service.generate_completion(
+                model=test_model,
+                messages=test_messages,
+                temperature=0.7,
+                max_tokens=100
+            )
+            
+            if response:
+                logging.info(f"[CombatResolver] LLM service test successful: {response[:100]}...")
+                return True, response
+            else:
+                logging.error("[CombatResolver] LLM service test failed: Empty response")
+                return False, "Empty response"
+        
+        except Exception as e:
+            import traceback
+            logging.error(f"[CombatResolver] LLM service test failed with error: {e}")
+            logging.error(traceback.format_exc())
+            return False, f"Error: {str(e)}"
+
+    # Add the missing _process_recharge_abilities method
+    def _process_recharge_abilities(self, combatant, dice_roller):
+        """Process recharge abilities for a monster at the start of its turn.
+        
+        Args:
+            combatant: The combatant dictionary to process
+            dice_roller: Function to roll dice
+            
+        This method updates the combatant dictionary directly, modifying the 
+        "recharge_abilities" field based on dice rolls.
+        """
+        if not combatant or combatant.get("type", "").lower() != "monster":
+            return  # Only monsters have recharge abilities
+            
+        if "recharge_abilities" not in combatant:
+            combatant["recharge_abilities"] = {}  # Initialize if not present
+            return
+            
+        # Process each recharge ability
+        for ability_name, ability_data in combatant.get("recharge_abilities", {}).items():
+            # Skip already available abilities
+            if ability_data.get("available", True):
+                continue
+                
+            # Get recharge condition (default: 5-6 on d6)
+            recharge_on = ability_data.get("recharge_on", [5, 6])
+            dice_expr = ability_data.get("recharge_dice", "1d6")
+            
+            # Roll for recharge
+            roll_value = dice_roller(dice_expr)
+            logging.info(f"[CombatResolver] Recharge roll for {ability_name}: {roll_value} (recharges on {recharge_on})")
+            
+            # Check if ability recharges
+            if isinstance(recharge_on, list) and roll_value in recharge_on:
+                combatant["recharge_abilities"][ability_name]["available"] = True
+                logging.info(f"[CombatResolver] {ability_name} recharged!")
+            elif isinstance(recharge_on, int) and roll_value >= recharge_on:
+                combatant["recharge_abilities"][ability_name]["available"] = True
+                logging.info(f"[CombatResolver] {ability_name} recharged!")
+            else:
+                logging.info(f"[CombatResolver] {ability_name} failed to recharge.")
+                
+        logging.debug(f"[CombatResolver] Recharge abilities after processing: {combatant.get('recharge_abilities')}")
+        return
 
 # Ensure the final class definition is accessible
 CombatResolver = CombatResolver # This line might be redundant depending on execution context
