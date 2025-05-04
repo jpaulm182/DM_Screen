@@ -9,10 +9,12 @@ import logging
 import traceback
 import gc
 import sys
+import os
 from functools import wraps
 import time
 import threading
 import functools
+import types
 
 # Import the monster ability validator
 from app.core.utils.monster_ability_validator import (
@@ -51,6 +53,9 @@ def patch_process_turn(combat_resolver_instance):
     @wraps(original_process_turn)
     def patched_process_turn(combatants, active_idx, round_num, dice_roller):
         """Patched version of _process_turn with enhanced debugging"""
+        print("================== DEBUG: PATCHED_PROCESS_TURN CALLED ==================")
+        print(f"Combatants count: {len(combatants)}, Active index: {active_idx}, Round: {round_num}")
+        logging.info(f"[DEBUG] patched_process_turn called with {len(combatants)} combatants, active_idx={active_idx}, round={round_num}")
         # Basic validation to prevent crashes
         if active_idx >= len(combatants):
             logger.error(f"Invalid combatant index: {active_idx} (max: {len(combatants)-1})")
@@ -90,6 +95,7 @@ def patch_process_turn(combat_resolver_instance):
                 
             # Run the original method with extensive try/except wrapping
             try:
+                # Try to run the original method with detailed state tracking
                 result = original_process_turn(combatants, active_idx, round_num, dice_roller)
                 logger.info(f"Turn completed successfully for {combatant_name}")
                 return result
@@ -649,6 +655,9 @@ def patch_resolution_timeout(combat_resolver_instance):
 
 def combat_resolver_patch(app_state):
     """Apply stability patches to the combat resolver."""
+    import types
+    import weakref
+    
     if not hasattr(app_state, 'combat_resolver'):
         logger.error("Cannot apply combat_resolver_patch: app_state has no combat_resolver")
         return
@@ -657,109 +666,440 @@ def combat_resolver_patch(app_state):
         logger.info("Combat resolver already patched, skipping")
         return
     
-    logger.info("Applying combat resolver patches")
+    logger.info("Applying combat resolver patches...")
     
-    # Patch the _process_turn method to add monitoring
-    original_process_turn = app_state.combat_resolver._process_turn
+    # Get the resolver (whether direct or wrapped in improved_combat_resolver)
+    resolver = app_state.combat_resolver
+    original_resolver = resolver
     
-    @functools.wraps(original_process_turn)
-    def patched_process_turn(combatants, active_idx, round_num, dice_roller):
-        """Add monitoring to detect long-running or stuck combat resolution."""
+    # Check if we're using the improved resolver
+    if hasattr(resolver, 'combat_resolver'):
+        # This is the ImprovedCombatResolver
+        resolver = resolver.combat_resolver
+        logger.info("Found ImprovedCombatResolver, patching underlying CombatResolver")
+    
+    # CRITICAL: Save the TRULY original process_turn before any patching 
+    # to avoid recursive calls
+    if not hasattr(resolver, '_original_process_turn_unpatched'):
+        # Store the true original method safely where it won't be overwritten
+        resolver._original_process_turn_unpatched = resolver._process_turn
+        logger.info("Stored original _process_turn method safely")
+    else:
+        logger.info("Using previously stored original _process_turn method")
+    
+    # Get truly original method that we'll call from our patches
+    true_original_process_turn = resolver._original_process_turn_unpatched
+    
+    # Define a simplified patched method that avoids recursion
+    def simple_patched_process_turn(self, combatants, active_idx, round_num, dice_roller):
+        """
+        Simplified patched version that calls the TRUE original method with no recursion risk.
+        Minimizes log messages and error handling to avoid recursion errors.
+        """
         resolution_id = f"Turn_{round_num}_{active_idx}_{time.time()}"
+        print(f"[DEBUG] Processing turn for round {round_num}, combatant {active_idx}")
         
-        with _resolution_lock:
-            _active_resolutions.add(resolution_id)
-        
-        start_time = time.time()
-        
-        def check_timeout():
-            global _last_warning_time
-            while True:
-                elapsed = time.time() - start_time
-                
-                if resolution_id not in _active_resolutions:
-                    # Resolution completed
-                    break
-                    
-                if elapsed > 30.0 and time.time() - _last_warning_time > _warning_interval:
-                    # Log warning about long-running resolution
-                    _last_warning_time = time.time()
-                    logger.warning(f"Combat resolution still running after {elapsed:.1f} seconds")
-                
-                # Check every 5 seconds
-                time.sleep(5.0)
-        
-        # Start monitoring thread
-        monitor_thread = threading.Thread(target=check_timeout, daemon=True)
-        monitor_thread.start()
+        # Check OpenAI API key status
+        api_key = os.getenv("OPENAI_API_KEY")
+        if api_key:
+            is_mock = api_key.startswith("sk-demo")
+            print(f"[DEBUG] Using {'MOCK' if is_mock else 'REAL'} OpenAI API key: {api_key[:8]}...")
+        else:
+            print("[DEBUG] No OpenAI API key found in environment variables")
         
         try:
-            # Call original method
-            result = original_process_turn(combatants, active_idx, round_num, dice_roller)
+            # Call the TRUE original function - NOT our patched version
+            print("[DEBUG] Calling true_original_process_turn")
+            result = true_original_process_turn(self, combatants, active_idx, round_num, dice_roller)
+            print(f"[DEBUG] true_original_process_turn completed with result: {result.get('success', False)}")
             return result
         except Exception as e:
-            logger.error(f"Error in _process_turn: {str(e)}")
-            traceback.print_exc()
-            return None
-        finally:
-            # Remove from active resolutions
-            with _resolution_lock:
-                if resolution_id in _active_resolutions:
-                    _active_resolutions.remove(resolution_id)
+            print(f"[DEBUG] Exception in simple_patched_process_turn: {e}", flush=True)
+            # Create a minimal fallback action when something goes wrong
+            return {
+                "success": False,
+                "error": str(e),
+                "action": "Wait",
+                "target": "",
+                "narrative": f"{combatants[active_idx].get('name', 'Unknown')} encountered a problem and waits."
+            }
     
-    # Patch the _create_decision_prompt method to add ability validation
-    original_create_decision_prompt = app_state.combat_resolver._create_decision_prompt
+    # Replace the method directly
+    resolver._process_turn = types.MethodType(simple_patched_process_turn, resolver)
+    print(f"[DEBUG] Successfully patched _process_turn with simplified version")
+    logger.info("Patched _process_turn with simplified monitoring")
     
-    @functools.wraps(original_create_decision_prompt)
-    def patched_create_decision_prompt(app_state, combat_state, turn_combatant):
-        """Add monster ability validation to the decision prompt with automatic correction."""
-        # Call original method
-        prompt = original_create_decision_prompt(combat_state, turn_combatant)
-        
-        # Clean the prompt to ensure all abilities have proper tags
-        prompt = clean_abilities_in_prompt(prompt)
-        
-        # Validate the prompt to check for ability mixing
-        is_valid, result = validate_combat_prompt(prompt)
-        
-        if not is_valid:
-            # Log the validation failure
-            logger.warning(f"Ability mixing detected in prompt: {result}")
-            
-            # Extract the active monster name for further logging
-            import re
-            active_monster = "Unknown"
-            active_match = re.search(r"Active Combatant: ([A-Za-z0-9_\s]+)", prompt)
-            if active_match:
-                active_monster = active_match.group(1).strip()
-                
-            logger.warning(f"Ability mixing affects monster: {active_monster}")
-            
-            # Apply automatic correction to fix the ability mixing
-            logger.info(f"Attempting to automatically correct mixed abilities for {active_monster}")
-            fixed_prompt = fix_mixed_abilities_in_prompt(prompt)
-            
-            # Validate the fixed prompt to ensure it worked
-            fixed_is_valid, fixed_result = validate_combat_prompt(fixed_prompt)
-            
-            if fixed_is_valid:
-                logger.info("Successfully fixed ability mixing!")
-                return fixed_prompt
-            else:
-                logger.warning(f"Failed to fix ability mixing: {fixed_result}")
-                # Continue with best effort
-        
-        return prompt
-    
-    # Replace methods with patched versions
-    app_state.combat_resolver._process_turn = patched_process_turn
-    app_state.combat_resolver._create_decision_prompt = functools.partial(patched_create_decision_prompt, app_state)
-    
-    # Mark as patched
+    # Mark as patched to avoid reapplying
     app_state.combat_resolver._patched = True
+    logger.info("Combat resolver patches applied successfully")
     
-    logger.info("Combat resolver successfully patched")
     return True
+
+def apply_patches(app_state):
+    """Apply patches to the combat resolver."""
+    _patch_improved_combat_resolver(app_state)
+    _patch_error_handling(app_state)
+    _patch_llm_service(app_state)
+    logging.info("Combat resolver patches applied")
+
+def _patch_improved_combat_resolver(app_state):
+    """Patch the ImprovedCombatResolver to expose the underlying CombatResolver."""
+    if not hasattr(app_state, 'combat_resolver'):
+        logging.warning("App state has no combat_resolver to patch")
+        return
+    
+    # No patching needed if it's already a CombatResolver
+    if not hasattr(app_state.combat_resolver, 'combat_resolver'):
+        logging.info("App state using direct CombatResolver, no wrapper patch needed")
+        return
+    
+    # Make the underlying resolver available on the wrapper
+    # to avoid the need to use deprecated resolve_combat_turn_by_turn method
+    wrapper = app_state.combat_resolver
+    resolver = wrapper.combat_resolver
+    
+    # Add direct signal connection to the underlying resolver
+    if hasattr(resolver, 'resolution_update') and not hasattr(wrapper, 'resolution_update'):
+        wrapper.resolution_update = resolver.resolution_update
+        logging.info("Patched ImprovedCombatResolver to expose underlying resolution_update signal")
+    
+    # Add direct start_resolution method for fast resolve functionality
+    if hasattr(resolver, 'start_resolution') and not hasattr(wrapper, 'start_resolution'):
+        wrapper.start_resolution = resolver.start_resolution
+        logging.info("Patched ImprovedCombatResolver to expose underlying start_resolution method")
+    
+    logging.info("ImprovedCombatResolver successfully patched")
+
+def _patch_error_handling(app_state):
+    """Patch the combat resolver to add improved error handling for threads."""
+    if not hasattr(app_state, 'combat_resolver'):
+        logging.warning("App state has no combat_resolver to patch")
+        return
+    
+    # Get the resolver (whether direct or wrapped)
+    resolver = app_state.combat_resolver
+    original_resolver = resolver
+    
+    # Check if we're using the improved resolver
+    if hasattr(resolver, 'combat_resolver'):
+        # This is the ImprovedCombatResolver
+        resolver = resolver.combat_resolver
+        logging.info("Found ImprovedCombatResolver")
+    
+    # Add thread error catching
+    original_run_thread = resolver._run_resolution_thread
+    
+    def patched_run_thread(*args, **kwargs):
+        """Add enhanced error handling to the resolution thread."""
+        try:
+            return original_run_thread(*args, **kwargs)
+        except Exception as e:
+            logging.error(f"Error in resolution thread: {e}")
+            logging.error(traceback.format_exc())
+            # Signal an error to the UI
+            try:
+                if hasattr(resolver, 'resolution_update'):
+                    error_msg = f"Error in resolution thread: {e}"
+                    logging.info("Emitting resolution_update signal with error")
+                    resolver.resolution_update.emit(None, "error", error_msg)
+            except Exception as signal_err:
+                logging.error(f"Failed to emit error signal: {signal_err}")
+    
+    # Apply the patch
+    resolver._run_resolution_thread = patched_run_thread.__get__(resolver, type(resolver))
+    logging.info("Patched combat resolver thread error handling")
+
+def _patch_llm_service(app_state):
+    """Patch the LLM service to add improved error handling."""
+    if not hasattr(app_state, 'llm_service'):
+        logging.warning("App state has no llm_service to patch")
+        return
+    
+    from app.core.llm_service import LLMService
+    
+    # Get the LLM service
+    llm_service = app_state.llm_service
+    
+    # Patch the generate_completion method to add robust error handling
+    original_generate = llm_service.generate_completion
+    
+    def patched_generate(model, messages, system_prompt=None, temperature=0.7, max_tokens=1000):
+        """Add enhanced error handling to the LLM service."""
+        try:
+            # Log the request
+            logging.info(f"[LLM] Sending request to {model}")
+            logging.debug(f"[LLM] Messages: {messages[:1]}...")
+            
+            # Make the call - only pass the parameters that the original method accepts
+            response = original_generate(model, messages, system_prompt, temperature, max_tokens)
+            
+            # Log the response
+            if response:
+                logging.info(f"[LLM] Received response ({len(response)} chars)")
+                logging.debug(f"[LLM] Response preview: {response[:100]}...")
+            else:
+                logging.warning("[LLM] Received empty response")
+            
+            return response
+        except Exception as e:
+            # Log the error
+            logging.error(f"[LLM] Error in generate_completion: {e}")
+            logging.error(traceback.format_exc())
+            
+            # Return a special error message that can be detected by the combat resolver
+            error_response = f"""
+            {{
+              "error": "LLM service error: {str(e)}",
+              "action": "Error",
+              "target": "None",
+              "explanation": "An error occurred while calling the language model."
+            }}
+            """
+            
+            # This allows the combat resolver to handle the error gracefully
+            return error_response
+    
+    # Apply the patch
+    llm_service.generate_completion = patched_generate.__get__(llm_service, type(llm_service))
+    logging.info("Patched LLM service with improved error handling") 
+
+def _patch_improved_resolver_integration(app_state):
+    """
+    Patch the combat resolver to use our hybrid approach.
+    This integrates the LLM decision-making with our rules engine for mechanical execution.
+    """
+    if not hasattr(app_state, 'combat_resolver'):
+        logging.warning("App state has no combat_resolver to patch")
+        return
+
+    # Check if we're patching an ImprovedCombatResolver
+    resolver = app_state.combat_resolver
+    improved_resolver = None
+    
+    if hasattr(resolver, 'structured_output_handler') and hasattr(resolver, 'rules_engine'):
+        # This is already an ImprovedCombatResolver with our new components
+        improved_resolver = resolver
+        resolver = resolver.combat_resolver
+        logging.info("Found ImprovedCombatResolver with hybrid components")
+    elif hasattr(resolver, 'combat_resolver'):
+        # This is an ImprovedCombatResolver without our new components
+        improved_resolver = resolver
+        resolver = resolver.combat_resolver
+        logging.warning("Found ImprovedCombatResolver but missing hybrid components")
+    
+    if not improved_resolver:
+        logging.warning("Not using ImprovedCombatResolver, skipping hybrid integration")
+        return
+    
+    # Patch the CombatResolver._process_turn to use our hybrid approach
+    original_process_turn = resolver._process_turn
+    
+    @wraps(original_process_turn)
+    def hybrid_process_turn(combatants, active_idx, round_num, dice_roller):
+        """
+        Patched version of _process_turn that uses our hybrid approach:
+        1. LLM generates high-level intent
+        2. Rules engine handles mechanical execution
+        """
+        print("================== DEBUG: HYBRID_PROCESS_TURN CALLED ==================")
+        print(f"Combatants count: {len(combatants)}, Active index: {active_idx}, Round: {round_num}")
+        logging.info(f"[DEBUG] hybrid_process_turn called with {len(combatants)} combatants, active_idx={active_idx}, round={round_num}")
+        try:
+            # Basic validation
+            if active_idx >= len(combatants):
+                logger.error(f"Invalid combatant index: {active_idx} (max: {len(combatants)-1})")
+                return {
+                    "action": "Error: Invalid combatant index",
+                    "narrative": "An error occurred while processing this turn.",
+                    "dice": [],
+                    "updates": []
+                }
+            
+            active_combatant = combatants[active_idx]
+            combatant_name = active_combatant.get('name', 'Unknown')
+            
+            logger.info(f"=== HYBRID TURN START: {combatant_name} (Round {round_num}) ===")
+            
+            # Step 1: Create the decision prompt (this will use our enhanced prompt with structured output instructions)
+            prompt = improved_resolver._create_decision_prompt(combatants, active_idx, round_num)
+            
+            # Step 2: Get the LLM response for strategic intent
+            response_text = resolver.llm_service.generate_completion(
+                "gpt-4", 
+                [{"role": "user", "content": prompt}], 
+                temperature=0.7,
+                max_tokens=1000
+            )
+            
+            # Step 3: Process the response through our structured output handler and rules engine
+            if response_text and improved_resolver.structured_output_handler:
+                # Process the LLM response using our hybrid approach
+                result, success = improved_resolver.process_llm_response(
+                    response_text, 
+                    active_combatant, 
+                    combatants
+                )
+                
+                if success:
+                    logger.info(f"Hybrid turn processing succeeded for {combatant_name}")
+                    return result
+                    
+            # Fallback to original process_turn if hybrid approach fails
+            logger.warning(f"Hybrid approach failed for {combatant_name}, falling back to original")
+            return original_process_turn(combatants, active_idx, round_num, dice_roller)
+            
+        except Exception as e:
+            logger.error(f"Error in hybrid_process_turn: {e}")
+            logger.error(traceback.format_exc())
+            
+            # Return fallback result to prevent crash
+            if hasattr(resolver, '_generate_fallback_decision'):
+                logger.info(f"Generating fallback decision for {combatant_name}")
+                return resolver._generate_fallback_decision(active_combatant)
+            else:
+                logger.info(f"Using basic fallback for {combatant_name}")
+                return {
+                    "action": f"{combatant_name} takes a defensive stance due to an error.",
+                    "target": "",
+                    "narrative": f"Due to an unexpected situation, {combatant_name} focuses on defense.",
+                    "dice": [],
+                    "updates": []
+                }
+    
+    # Apply the patch
+    resolver._process_turn = hybrid_process_turn.__get__(resolver, type(resolver))
+    logging.info("Successfully patched _process_turn with hybrid LLM+Rules approach")
+    
+    # Add direct start_resolution method for fast resolve functionality
+    if hasattr(resolver, 'start_resolution') and hasattr(improved_resolver, 'rules_engine'):
+        original_start = resolver.start_resolution
+        
+        @wraps(original_start)
+        def patched_start_resolution(combat_state, dice_roller, update_ui_callback, mode='continuous'):
+            """
+            Patched start_resolution that initializes the rules engine if needed.
+            """
+            # Initialize the rules engine with the dice_roller if not already done
+            if improved_resolver.rules_engine is None:
+                logging.info("Initializing rules engine for hybrid resolution")
+                from app.core.rules_engine import RulesEngine
+                improved_resolver.rules_engine = RulesEngine(dice_roller)
+                
+            # Continue with the original method
+            return original_start(combat_state, dice_roller, update_ui_callback, mode)
+            
+        resolver.start_resolution = patched_start_resolution.__get__(resolver, type(resolver))
+        logging.info("Successfully patched start_resolution to initialize rules engine")
+
+def _patch_transaction_state_updates(app_state):
+    """
+    Patch to add transactional state updates.
+    This implements recommendation #6 from the improvement plan.
+    """
+    if not hasattr(app_state, 'combat_resolver'):
+        logging.warning("App state has no combat_resolver to patch")
+        return
+
+    # Get the resolver
+    resolver = app_state.combat_resolver
+    if hasattr(resolver, 'combat_resolver'):
+        resolver = resolver.combat_resolver
+    
+    # Patch _apply_turn_updates to use transactional updates
+    if hasattr(resolver, '_apply_turn_updates'):
+        original_apply_updates = resolver._apply_turn_updates
+        
+        @wraps(original_apply_updates)
+        def transactional_apply_updates(combatants, updates):
+            """
+            Patched version that implements transactional state updates:
+            1. Snapshot state before applying changes
+            2. Apply changes
+            3. Validate the resulting state
+            4. Roll back on validation failure
+            """
+            # Create a snapshot of the current state
+            try:
+                import copy
+                state_snapshot = copy.deepcopy(combatants)
+                
+                # Apply updates to the state
+                original_apply_updates(combatants, updates)
+                
+                # Validate the resulting state
+                validation_errors = _validate_combat_state(combatants)
+                
+                if validation_errors:
+                    # Log all validation errors
+                    for error in validation_errors:
+                        logger.error(f"State validation error: {error}")
+                    
+                    # Roll back to snapshot
+                    logger.warning("Rolling back to previous state due to validation errors")
+                    for i in range(min(len(combatants), len(state_snapshot))):
+                        combatants[i] = state_snapshot[i]
+                    
+                    # Return false to indicate failure
+                    return False
+                
+                # State is valid, return true
+                return True
+                
+            except Exception as e:
+                logger.error(f"Error in transactional state update: {e}")
+                logger.error(traceback.format_exc())
+                
+                # Try to roll back if we have a snapshot
+                try:
+                    if 'state_snapshot' in locals():
+                        logger.warning("Rolling back due to exception")
+                        for i in range(min(len(combatants), len(state_snapshot))):
+                            combatants[i] = state_snapshot[i]
+                except Exception as rollback_error:
+                    logger.error(f"Failed to roll back: {rollback_error}")
+                
+                # Call original without transaction to ensure we don't lose updates
+                return original_apply_updates(combatants, updates)
+        
+        # Apply the patch
+        resolver._apply_turn_updates = transactional_apply_updates.__get__(resolver, type(resolver))
+        logging.info("Patched _apply_turn_updates with transactional state handling")
+
+def _validate_combat_state(combatants):
+    """
+    Validate the combat state for inconsistencies.
+    
+    Args:
+        combatants: List of combatant dictionaries
+        
+    Returns:
+        List of validation error messages, empty if state is valid
+    """
+    errors = []
+    
+    # Validate each combatant
+    for combatant in combatants:
+        # Check for required fields
+        for required_field in ['name', 'hp', 'max_hp']:
+            if required_field not in combatant:
+                errors.append(f"Combatant missing required field: {required_field}")
+        
+        # HP validation
+        hp = combatant.get('hp', 0)
+        max_hp = combatant.get('max_hp', 0)
+        
+        # HP consistency
+        if hp > max_hp:
+            errors.append(f"Combatant {combatant.get('name', 'Unknown')} has HP ({hp}) greater than max HP ({max_hp})")
+        
+        # Status consistency
+        status = combatant.get('status', '').lower()
+        if 'dead' in status and hp > 0:
+            errors.append(f"Combatant {combatant.get('name', 'Unknown')} is marked as dead but has HP > 0")
+        if hp <= 0 and not any(x in status for x in ['dead', 'unconscious', 'dying']):
+            errors.append(f"Combatant {combatant.get('name', 'Unknown')} has HP <= 0 but no appropriate status")
+    
+    return errors
 
 # Expose patched_create_decision_prompt for import in tests and patching
 __all__ = [
@@ -807,13 +1147,6 @@ def patched_create_decision_prompt(app_state, combat_state, turn_combatant):
             # Continue with best effort
     return prompt
 
-def apply_patches(app_state):
-    """Apply patches to the combat resolver."""
-    _patch_improved_combat_resolver(app_state)
-    _patch_error_handling(app_state)
-    _patch_llm_service(app_state)
-    logging.info("Combat resolver patches applied")
-
 def _patch_improved_combat_resolver(app_state):
     """Patch the ImprovedCombatResolver to expose the underlying CombatResolver."""
     if not hasattr(app_state, 'combat_resolver'):
@@ -842,90 +1175,23 @@ def _patch_improved_combat_resolver(app_state):
     
     logging.info("ImprovedCombatResolver successfully patched")
 
-def _patch_error_handling(app_state):
-    """Patch the combat resolver to add improved error handling for threads."""
-    if not hasattr(app_state, 'combat_resolver'):
-        logging.warning("App state has no combat_resolver to patch")
-        return
+    # Patch the CombatResolver._process_turn to add debug output
+    original_process_turn = resolver._process_turn
     
-    # Get the resolver (whether direct or wrapped)
-    resolver = app_state.combat_resolver
-    if hasattr(resolver, 'combat_resolver'):
-        resolver = resolver.combat_resolver
-    
-    # Add thread error catching
-    original_run_thread = resolver._run_resolution_thread
-    
-    def patched_run_thread(self, *args, **kwargs):
-        """Add enhanced error handling to the resolution thread."""
+    @wraps(original_process_turn)
+    def patched_process_turn(self, index=None):
+        """Patched version of _process_turn that uses the LLM service for automation"""
+        print(f"[DEBUG] patched_process_turn called with index={index}", flush=True)
         try:
-            return original_run_thread(self, *args, **kwargs)
+            print(f"[DEBUG] Calling true_original_process_turn", flush=True)
+            print(f"[DEBUG] OpenAI API Key: {'REAL KEY (valid)' if os.getenv('OPENAI_API_KEY') and not os.getenv('OPENAI_API_KEY').startswith('sk-demo') else 'MOCK KEY or MISSING'}", flush=True)
+            result = self.true_original_process_turn(index)
+            print(f"[DEBUG] true_original_process_turn call completed with result: {result}", flush=True)
+            return result
         except Exception as e:
-            logging.error(f"Error in resolution thread: {e}")
-            logging.error(traceback.format_exc())
-            # Signal an error to the UI
-            try:
-                if hasattr(self, 'resolution_update'):
-                    error_msg = f"Error in resolution thread: {e}"
-                    logging.info("Emitting resolution_update signal with error")
-                    self.resolution_update.emit(None, "error", error_msg)
-            except Exception as signal_err:
-                logging.error(f"Failed to emit error signal: {signal_err}")
+            print(f"[DEBUG] Exception in patched_process_turn: {e}", flush=True)
+            return False
     
     # Apply the patch
-    resolver._run_resolution_thread = patched_run_thread.__get__(resolver, type(resolver))
-    logging.info("Patched combat resolver thread error handling")
-
-def _patch_llm_service(app_state):
-    """Patch the LLM service to add improved error handling."""
-    if not hasattr(app_state, 'llm_service'):
-        logging.warning("App state has no llm_service to patch")
-        return
-    
-    from app.core.llm_service import LLMService
-    
-    # Get the LLM service
-    llm_service = app_state.llm_service
-    
-    # Patch the generate_completion method to add robust error handling
-    original_generate = llm_service.generate_completion
-    
-    def patched_generate(self, model, messages, system_prompt=None, temperature=0.7, max_tokens=1000):
-        """Add enhanced error handling to the LLM service."""
-        try:
-            # Log the request
-            logging.info(f"[LLM] Sending request to {model}")
-            logging.debug(f"[LLM] Messages: {messages[:1]}...")
-            
-            # Make the call - only pass the parameters that the original method accepts
-            response = original_generate(model, messages, system_prompt, temperature, max_tokens)
-            
-            # Log the response
-            if response:
-                logging.info(f"[LLM] Received response ({len(response)} chars)")
-                logging.debug(f"[LLM] Response preview: {response[:100]}...")
-            else:
-                logging.warning("[LLM] Received empty response")
-            
-            return response
-        except Exception as e:
-            # Log the error
-            logging.error(f"[LLM] Error in generate_completion: {e}")
-            logging.error(traceback.format_exc())
-            
-            # Return a special error message that can be detected by the combat resolver
-            error_response = f"""
-            {{
-              "error": "LLM service error: {str(e)}",
-              "action": "Error",
-              "target": "None",
-              "explanation": "An error occurred while calling the language model."
-            }}
-            """
-            
-            # This allows the combat resolver to handle the error gracefully
-            return error_response
-    
-    # Apply the patch
-    llm_service.generate_completion = patched_generate.__get__(llm_service, type(llm_service))
-    logging.info("Patched LLM service with improved error handling") 
+    resolver._process_turn = patched_process_turn.__get__(resolver, type(resolver))
+    logging.info("Patched _process_turn with debug output")

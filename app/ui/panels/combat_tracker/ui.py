@@ -76,7 +76,8 @@ def _setup_control_area(panel):
     # Fast resolve
     panel.fast_resolve_button = QPushButton("Fast Resolve")
     panel.fast_resolve_button.setToolTip("Resolve the current combat using AI (Experimental)")
-    panel.fast_resolve_button.clicked.connect(panel._fast_resolve_combat)
+    # Connection is now handled in _connect_signals to prevent duplicate connections
+    # DO NOT connect here: panel.fast_resolve_button.clicked.connect(panel._fast_resolve_combat)
     control_layout.addWidget(panel.fast_resolve_button)
     # Reset and restart
     panel.reset_button = QPushButton("Reset Combat")

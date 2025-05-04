@@ -23,8 +23,7 @@ from PySide6.QtWidgets import (
     QGroupBox, QWidget, QStyledItemDelegate, QStyle, QToolButton,
     QTabWidget, QScrollArea, QFormLayout, QFrame, QSplitter, QApplication,
     QSizePolicy, QTextEdit, QMenu, QMessageBox, QDialog, QDialogButtonBox,
-    QAbstractItemView,
-    QInputDialog
+    QAbstractItemView, QInputDialog
 )
 from PySide6.QtCore import Qt, QTimer, Signal, Slot, QSize, QMetaObject, Q_ARG, QObject, QPoint, QRect, QEvent, QThread
 from PySide6.QtGui import QColor, QFont, QTextCharFormat, QBrush, QPixmap, QImage, QTextCursor, QPalette, QAction, QKeySequence
@@ -468,7 +467,8 @@ class CombatTrackerPanel(BasePanel):
         # Add Fast Resolve button
         self.fast_resolve_button = QPushButton("Fast Resolve")
         self.fast_resolve_button.setToolTip("Resolve the current combat using AI (Experimental)")
-        self.fast_resolve_button.clicked.connect(self._fast_resolve_combat)
+        # Connection is now handled in _connect_signals to prevent duplicate connections
+        # DO NOT connect here: self.fast_resolve_button.clicked.connect(self._fast_resolve_combat)
         control_layout.addWidget(self.fast_resolve_button)
 
         # Reset Combat button
@@ -1198,3 +1198,5 @@ class CombatTrackerPanel(BasePanel):
             # Ensure the current row is visible
             self.initiative_table.scrollToItem(
                 self.initiative_table.item(self.current_turn, 0),
+                QAbstractItemView.EnsureVisible
+            )

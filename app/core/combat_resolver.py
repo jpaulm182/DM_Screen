@@ -132,7 +132,6 @@ class CombatResolver(QObject):
             elif not self._running:
                  logging.warning("[CombatResolver] continue_turn called but resolution not running.")
 
-
     def stop_resolution(self):
         """Requests the currently running resolution thread to stop gracefully."""
         with self._lock:
@@ -630,11 +629,13 @@ class CombatResolver(QObject):
         active_combatant = combatants[active_idx]
         active_name = active_combatant.get("name", f"Combatant {active_idx}")
         logging.info(f"[CombatResolver] Processing turn for: {active_name}")
+        print(f"[DEBUG] Processing turn for: {active_name} (round {round_num})")
 
         # Select the appropriate model based on type
         models = self.llm_service.get_available_models()
         if not models:
             logging.error("[CombatResolver] No LLM models available")
+            print("[DEBUG] No LLM models available!")
             return {
                 "success": False,
                 "error": "No LLM models available"
@@ -648,12 +649,17 @@ class CombatResolver(QObject):
             if 'mini' in m['id'].lower():
                 model = m['id']
                 break
+        
+        print(f"[DEBUG] Selected model for turn processing: {model}")
 
         # Create prompt for the action decision
         messages = self._create_action_prompt(combatants, active_idx, round_num)
+        print(f"[DEBUG] Created action prompt with {len(messages)} messages")
+        print(f"[DEBUG] First message content (trimmed): {messages[0]['content'][:100]}...")
 
         # Make the actual LLM call with additional logging
         logging.info(f"[CombatResolver] Making LLM call to model {model}")
+        print(f"[DEBUG] Making LLM call to model {model} using LLM service ID: {id(self.llm_service)}")
         try:
             response_text = self.llm_service.generate_completion(
                 model,
@@ -662,12 +668,16 @@ class CombatResolver(QObject):
             
             if not response_text:
                 logging.error("[CombatResolver] LLM returned empty response")
+                print("[DEBUG] ❌ LLM returned empty response!")
                 raise ValueError("LLM returned empty response")
                 
             logging.info(f"[CombatResolver] LLM response received, length: {len(response_text)}")
+            print(f"[DEBUG] ✅ LLM response received, length: {len(response_text)}")
+            print(f"[DEBUG] Response preview: {response_text[:50]}...")
             
             # Parse the JSON response for action/target/explanation
             logging.info("[CombatResolver] Parsing LLM JSON response for context: action_decision")
+            print("[DEBUG] Parsing LLM JSON response...")
             action_result = self._parse_llm_json_response(response_text, "action_decision")
             
             # Save the result for debugging
@@ -675,6 +685,7 @@ class CombatResolver(QObject):
             
             if not action_result.get("success", False):
                 logging.error(f"[CombatResolver] Failed to parse LLM response: {action_result.get('error', 'Unknown error')}")
+                print(f"[DEBUG] ❌ Failed to parse LLM response: {action_result.get('error', 'Unknown error')}")
                 return {
                     "success": False,
                     "error": f"Failed to parse LLM response: {action_result.get('error', 'Unknown error')}"
@@ -684,6 +695,8 @@ class CombatResolver(QObject):
             action = action_result.get("action", "Unknown action")
             target = action_result.get("target", "")
             explanation = action_result.get("explanation", "")
+            
+            print(f"[DEBUG] ✅ Successfully parsed LLM response. Action: {action}, Target: {target}")
             
             # Determine action type and icon for visualization
             action_type = self._determine_action_type(action)
@@ -713,6 +726,8 @@ class CombatResolver(QObject):
                 "narrative_style": self._get_narrative_style(action_type)
             }
             
+            print(f"[DEBUG] Turn result created: {json.dumps(turn_result, indent=2)[:200]}...")
+            
             # Save the turn result for debugging
             self._save_json_artifact(turn_result, f"turn_result_{active_name}_{round_num}")
             
@@ -720,6 +735,7 @@ class CombatResolver(QObject):
             
         except Exception as e:
             logging.error(f"[CombatResolver] Error processing turn: {str(e)}")
+            print(f"[DEBUG] ❌ Exception in _process_turn: {str(e)}")
             traceback.print_exc()
             
             # Create a fallback action when something goes wrong
@@ -1107,7 +1123,7 @@ class CombatResolver(QObject):
 
             source_name = source_combatant.get("name", "Unknown Source")
             # Skip self-inflicted auras unless specifically allowed
-            if source_combatant.get("instance_id") == active_combatant_dict.get("instance_id"):
+            if source_combatant.get("instance_id") and source_combatant.get("instance_id") == active_combatant_dict.get("instance_id"):
                  # print(f"DEBUG: Skipping self-aura check for {active_name}")
                  continue # Skip checking own auras for now (can add affects_self later)
 
@@ -1191,7 +1207,6 @@ class CombatResolver(QObject):
         # --- End of _process_auras modifications ---
 
 
-    # _add_auras_from_traits modifies the dict passed to it
     def _add_auras_from_traits(self, combatant_dict):
         """
         Analyze combatant traits and detect auras. Modifies the dict.
@@ -1291,7 +1306,6 @@ class CombatResolver(QObject):
         # --- End of _add_auras_from_traits modifications ---
 
 
-    # _get_distance_between needs position data which isn't currently tracked robustly
     def _get_distance_between(self, combatant1, combatant2):
         """Placeholder for distance calculation. Needs position tracking."""
         # TODO: Implement proper distance calculation when position data is available
@@ -1304,7 +1318,6 @@ class CombatResolver(QObject):
             return 5 # Assume enemies start close (melee range) - adjust as needed!
 
 
-    # _get_active_auras should use the passed list
     def _get_active_auras(self, active_combatant_dict, all_combatants_list):
         """
         Get a list of auras currently affecting a combatant.

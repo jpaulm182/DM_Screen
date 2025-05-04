@@ -1,7 +1,0 @@
-{
-  "timestamp": 1746205548.8006783,
-  "call_id": "call_0001",
-  "elapsed_seconds": 1.3286020755767822,
-  "response_length": 224,
-  "response": "{\n  \"action\": \"Multiattack\",\n  \"target\": \"Adult Red Dragon\",\n  \"explanation\": \"Autocannibal uses its Multiattack to maximize damage output against the Adult Red Dragon early in combat, aiming to reduce the threat quickly.\"\n}"
-}

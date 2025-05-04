@@ -3,6 +3,8 @@ Improved Combat Resolver with enhanced D&D 5e initiative mechanics.
 
 This module integrates the ImprovedInitiative system with the original CombatResolver
 to create a more realistic and rule-compliant combat experience in D&D 5e.
+It now uses a hybrid approach with LLM for strategic decisions and a rules engine
+for mechanical execution.
 """
 
 from app.core.combat_resolver import CombatResolver
@@ -15,12 +17,28 @@ from app.core.initiative_integration import (
     trigger_held_action,
     get_next_combatant
 )
+# Import our new modules
+try:
+    print("[DEBUG] Attempting to import rules_engine")
+    from app.core.rules_engine import RulesEngine, ActionResult
+    print("[DEBUG] Successfully imported rules_engine")
+    
+    print("[DEBUG] Attempting to import structured_output")
+    from app.core.structured_output import StructuredOutputHandler
+    print("[DEBUG] Successfully imported structured_output")
+except ImportError as e:
+    print(f"[DEBUG] ERROR importing modules: {e}")
+    import sys
+    print(f"[DEBUG] Python path: {sys.path}")
+    import traceback
+    print(traceback.format_exc())
+
 import copy
 import logging
 import re
 import random
 import time
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 
 # Import QObject and Signal for thread-safe communication
 from PySide6.QtCore import QObject, Signal
@@ -50,6 +68,10 @@ class ImprovedCombatResolver(QObject):
         self.llm_service = llm_service
         self.combat_resolver = CombatResolver(llm_service)
         
+        # Initialize our new components
+        self.structured_output_handler = StructuredOutputHandler()
+        self.rules_engine = None  # Will be initialized when dice_roller is available
+        
         # Apply patches to the combat resolver to ensure ability validation
         from app.core.combat_resolver_patch import combat_resolver_patch
         
@@ -71,6 +93,10 @@ class ImprovedCombatResolver(QObject):
         Start continuous combat resolution using the original CombatResolver.
         Passes per-turn UI updates to the provided callback.
         """
+        # Initialize the rules engine with the dice_roller if not already initialized
+        if not self.rules_engine:
+            self.rules_engine = RulesEngine(dice_roller)
+            
         # Use start_resolution to leverage LLM per-turn updates
         return self.combat_resolver.start_resolution(
             combat_state,
@@ -284,105 +310,215 @@ class ImprovedCombatResolver(QObject):
         
         Args:
             combatants: List of all combatants
-            active_idx: Index of active combatant
+            active_idx: Index of the active combatant
             round_num: Current round number
             
         Returns:
             Validated prompt string with no ability mixing
         """
-        # First, validate the active combatant's abilities
-        active_combatant = combatants[active_idx]
-        if active_combatant.get("type", "").lower() == "monster":
-            combatants[active_idx] = self.validate_monster_abilities(active_combatant)
-            
-        # Use the patched version from the combat resolver to create the basic prompt
-        prompt = self.combat_resolver._create_decision_prompt(combatants, active_idx, round_num)
+        if not hasattr(self.combat_resolver, '_create_decision_prompt'):
+            logger.error("Combat resolver doesn't have _create_decision_prompt method - was it patched correctly?")
+            return ""
         
-        # Clean the prompt to ensure all abilities have proper tags
-        prompt = clean_abilities_in_prompt(prompt)
+        # Start timing the prompt creation
+        start_time = time.time()
         
-        # Double-check for ability mixing
-        is_valid, result = validate_combat_prompt(prompt)
+        # First, get the original prompt
+        original_prompt = self.combat_resolver._create_decision_prompt(combatants, active_idx, round_num)
         
-        if not is_valid:
-            logger.warning(f"Ability mixing detected in improved resolver: {result}")
-            # Apply automatic correction
-            fixed_prompt = fix_mixed_abilities_in_prompt(prompt)
-            
-            # Validate the fixed prompt to ensure it worked
-            fixed_is_valid, fixed_result = validate_combat_prompt(fixed_prompt)
-            
-            if fixed_is_valid:
-                logger.info("Successfully fixed ability mixing in improved resolver!")
-                prompt = fixed_prompt
-            else:
-                # If fixing failed, just use the original
-                logger.error(f"Failed to fix ability mixing: {fixed_result}")
+        # Check if we need to enhance the prompt with function calling instructions
+        # Add structured output instructions and examples
+        function_definition = self.structured_output_handler.create_function_calling_definition()
+        examples = self.structured_output_handler.create_few_shot_examples()
         
-        # Add instructions for handling saving throws in area effect attacks
-        # Make these instructions much clearer and more insistent
-        saving_throw_instructions = """
---- AREA OF EFFECT (AoE) ABILITY INSTRUCTIONS ---
-
-**MANDATORY FORMAT FOR AoE ABILITIES (e.g., Breath Weapons, Fireball):**
-
-If you choose an AoE ability that requires saving throws, your JSON response **MUST** include these specific top-level fields:
-
-1.  `"area_effect": true` (Exactly this key and value)
-2.  `"save_dc": [DC Number]` (e.g., `"save_dc": 15`)
-3.  `"save_ability": "[Full Ability Name]"` (e.g., `"save_ability": "dexterity"`) - Use lowercase full name.
-4.  `"damage_expr": "[Dice Expression]"` (e.g., `"damage_expr": "8d6"`) - Just the dice, NO bonuses here.
-5.  `"half_on_save": true` OR `"half_on_save": false` (Indicates if a successful save takes half damage or no damage)
-6.  `"affected_targets": ["[Target Name 1]", "[Target Name 2]", ...]` (List all creatures in the area who must save)
-
-**DO NOT** put the save DC or damage expression inside the `dice_requests` list for AoE attacks. The system handles rolling saves and damage automatically based on the fields above.
-
-**EXAMPLE FOR GLACIAL BREATH (targeting Lich and Dragon):**
-
-```json
+        # Add instructions for structured output
+        enhanced_prompt = original_prompt + "\n\n"
+        enhanced_prompt += "You MUST respond with a structured JSON object containing your action decision.\n"
+        enhanced_prompt += "Ensure your response contains these required fields:\n"
+        enhanced_prompt += "- 'action': What you're doing (e.g., 'Attack with longsword', 'Cast Fireball')\n"
+        enhanced_prompt += "- 'target': Who/what you're targeting (if applicable)\n"
+        enhanced_prompt += "- 'explanation': Brief tactical reasoning\n\n"
+        
+        # Add example for clarity
+        enhanced_prompt += "Example response format:\n"
+        enhanced_prompt += """```json
 {
-  "action": "Glacial Breath",
-  "target": null, // Target field is not used for AoE, use affected_targets instead
-  "reasoning": "Using Glacial Breath on the clustered Lich and Dragon to maximize damage.",
-  "area_effect": true,
-  "save_dc": 23,
-  "save_ability": "constitution",
-  "damage_expr": "16d10", // Just the dice expression for damage
-  "half_on_save": true,
-  "affected_targets": ["Lich of a Mad Mage", "Adult Red Dragon"],
-  "dice_requests": [] // No dice requests needed here, system handles AoE rolls
+  "action": "Attack with Greataxe",
+  "target": "Goblin Archer",
+  "explanation": "The goblin is closest and looks injured."
 }
-```
-
---- SINGLE-TARGET ATTACKS/ABILITIES ---
-
-*   For **regular attacks** (like Multiattack, Slam), provide the `"target"` and include attack/damage rolls in `"dice_requests"` as usual.
-*   For **single-target abilities requiring a save** (e.g., Ray of Sickness), provide the `"target"`, `"save_dc"`, `"save_ability"`, `"half_on_save"`, and any effect dice in `"dice_requests"`.
-
-The system will handle the mechanics based on the structure you provide. **Follow the AoE structure strictly when applicable.**
-"""
+```"""
         
-        # Add the saving throw instructions to the prompt
-        prompt += saving_throw_instructions
-
-        # --- ENHANCED MONSTER AI INSTRUCTIONS ---
-        low_hp_behavior = """
---- MONSTER LOW HP BEHAVIOR ---
-If you are a monster and your HP is low (below 25% of max HP), you must either:
-- Make a final aggressive attack,
-- Attempt to flee (describe escape attempt and remove yourself from combat if successful),
-- Or surrender (describe surrender and remove yourself from combat if accepted).
-Do NOT endlessly defend or take only defensive actions. Do NOT stall combat.
-"""
-        prompt += low_hp_behavior
-
-        legendary_action_instructions = """
---- LEGENDARY ACTIONS ---
-If you are a legendary creature (such as a dragon), you MUST use your legendary actions at the end of other creatures' turns, as per D&D 5e rules. Always list and describe the legendary actions you use in your response. Do not skip legendary actions if you have any left.
-"""
-        prompt += legendary_action_instructions
-
-        return prompt 
+        # Validate the prompt for ability mixing
+        validated_prompt = validate_combat_prompt(enhanced_prompt)
+        
+        # Check for any mixed abilities in the prompt
+        if validated_prompt != enhanced_prompt:
+            logger.info("Fixed mixed abilities in prompt")
+        
+        # Clean any remaining inconsistencies
+        cleaned_prompt = clean_abilities_in_prompt(validated_prompt)
+        final_prompt = fix_mixed_abilities_in_prompt(cleaned_prompt)
+        
+        # Log timing for monitoring performance
+        end_time = time.time()
+        logger.debug(f"Decision prompt creation took {end_time - start_time:.2f} seconds")
+        
+        return final_prompt
+        
+    def process_llm_response(self, response_text: str, active_combatant: Dict[str, Any], 
+                             all_combatants: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], bool]:
+        """
+        Process LLM response using the hybrid approach:
+        1. Parse LLM response to extract action intent
+        2. Pass intent to rules engine for mechanical execution
+        
+        Args:
+            response_text: Raw response from the LLM
+            active_combatant: The combatant taking the action
+            all_combatants: All combatants in the encounter
+            
+        Returns:
+            Tuple containing:
+            - Action result as a dictionary
+            - Success flag (bool)
+        """
+        # Step 1: Parse the LLM response to extract structured data
+        json_data, success, error_msg = self.structured_output_handler.parse_llm_json_response(
+            response_text, f"Turn for {active_combatant.get('name', 'Unknown')}"
+        )
+        
+        # Step 2: Validate the parsed data against our schema
+        valid, validation_error, action_schema = self.structured_output_handler.validate_action(json_data)
+        
+        # If parsing or validation failed, implement fallback logic (Tier 1)
+        if not success or not valid:
+            logger.warning(f"Failed to parse LLM response: {error_msg or validation_error}")
+            # Try to extract simple action/target
+            basic_action = self._extract_basic_action(response_text, active_combatant)
+            if basic_action:
+                json_data = basic_action
+            else:
+                # If still failing, use a very simple fallback action (Tier 3)
+                json_data = self._generate_fallback_action(active_combatant, all_combatants)
+        
+        # Step 3: Execute the action using the rules engine
+        if self.rules_engine:
+            result = self.rules_engine.execute_action(json_data, active_combatant, all_combatants)
+            return self._format_action_result(result, json_data, active_combatant), True
+        else:
+            # If rules engine not available, format the action manually
+            fallback_result = {
+                "action": json_data.get("action", "Acts"),
+                "target": json_data.get("target", ""),
+                "result": json_data.get("explanation", ""),
+                "success": True,
+                "damage": 0,
+                "dice": []
+            }
+            return fallback_result, True
+            
+    def _extract_basic_action(self, text: str, combatant: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Extract basic action/target from free text response."""
+        # Try to extract action using pattern matching
+        action_match = re.search(r'(?:I\s+)?(attack|cast|move|dodge|dash|disengage|help|hide|use)\s+(?:with\s+)?([^\.]*)(?:\.|\n|$)', 
+                                text, re.IGNORECASE)
+        if action_match:
+            action_verb = action_match.group(1).strip()
+            action_object = action_match.group(2).strip()
+            
+            # Extract target if present
+            target_match = re.search(r'(?:target|against|at|on)\s+(?:the\s+)?([^\.\,]+)', text, re.IGNORECASE)
+            target = target_match.group(1).strip() if target_match else ""
+            
+            # Create basic action data
+            return {
+                "action": f"{action_verb} {action_object}".strip(),
+                "target": target,
+                "explanation": f"{combatant.get('name', 'Creature')} chooses to {action_verb.lower()} {action_object}."
+            }
+        return None
+        
+    def _generate_fallback_action(self, active_combatant: Dict[str, Any], 
+                                 all_combatants: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Generate a simple fallback action when LLM parsing fails."""
+        # Find a target (first enemy)
+        target = None
+        active_type = active_combatant.get("type", "").lower()
+        for combatant in all_combatants:
+            combatant_type = combatant.get("type", "").lower()
+            if combatant == active_combatant:
+                continue
+            if (active_type == "monster" and combatant_type != "monster") or \
+               (active_type != "monster" and combatant_type == "monster"):
+                target = combatant
+                break
+                
+        if target:
+            return {
+                "action": "Attack",
+                "target": target.get("name", "enemy"),
+                "explanation": f"Fallback: {active_combatant.get('name', 'Creature')} attacks the nearest enemy."
+            }
+        else:
+            return {
+                "action": "Dodge",
+                "explanation": f"Fallback: {active_combatant.get('name', 'Creature')} takes the Dodge action."
+            }
+            
+    def _format_action_result(self, action_result: ActionResult, intent: Dict[str, Any], 
+                            active_combatant: Dict[str, Any]) -> Dict[str, Any]:
+        """Format the rules engine result into the expected format for the UI."""
+        # Convert ActionResult to the format expected by the UI
+        result_dict = {
+            "action": intent.get("action", "Unknown action"),
+            "target": intent.get("target", ""),
+            "result": action_result.narrative,
+            "narrative": action_result.narrative,
+            "success": action_result.success,
+            "damage": action_result.damage,
+            "healing": action_result.healing, 
+            "dice": action_result.dice_rolls,
+            "effects": action_result.effects,
+            "action_type": self._determine_action_type(intent.get("action", "")),
+            "action_icon": self._get_action_icon(intent.get("action", "")),
+            "actor": active_combatant.get("name", "Unknown"),
+            "fallback": "fallback" in intent.get("explanation", "").lower()
+        }
+        
+        return result_dict
+        
+    def _determine_action_type(self, action_text: str) -> str:
+        """Determine the type of action (attack, spell, etc)."""
+        action_text = action_text.lower()
+        
+        if any(x in action_text for x in ["attack", "strike", "slash", "stab", "shoot"]):
+            return "attack"
+        elif any(x in action_text for x in ["cast", "spell"]):
+            return "spell"
+        elif any(x in action_text for x in ["move", "position"]):
+            return "movement"
+        elif any(x in action_text for x in ["heal", "cure"]):
+            return "healing"
+        elif "dodge" in action_text:
+            return "defense"
+        else:
+            return "standard"
+            
+    def _get_action_icon(self, action_text: str) -> str:
+        """Get an icon representing the action type."""
+        action_type = self._determine_action_type(action_text)
+        
+        icons = {
+            "attack": "⚔️",
+            "spell": "✨",
+            "movement": "👣",
+            "healing": "❤️",
+            "defense": "🛡️",
+            "standard": "⚡"
+        }
+        
+        return icons.get(action_type, "⚡")
 
     @staticmethod
     def validate_monster_data(monster_data):

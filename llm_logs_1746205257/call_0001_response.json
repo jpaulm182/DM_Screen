@@ -1,7 +1,0 @@
-{
-  "timestamp": 1746205270.5398047,
-  "call_id": "call_0001",
-  "elapsed_seconds": 1.517834186553955,
-  "response_length": 294,
-  "response": "{\n  \"action\": \"Multiattack: Infernal Tyrant makes two claw attacks\",\n  \"target\": \"Adult Red Dragon\",\n  \"explanation\": \"The Infernal Tyrant uses its multiattack to maximize damage output against the lone opponent, the Adult Red Dragon, aiming to reduce its HP quickly before it can act again.\"\n}"
-}

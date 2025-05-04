@@ -136,31 +136,32 @@ class LLMService(QObject):
     
     def _init_clients(self):
         """Initialize API clients based on available credentials"""
-        # Try to get API keys from app settings first
-        openai_api_key = self.app_state.get_setting("openai_api_key")
-        anthropic_api_key = self.app_state.get_setting("anthropic_api_key")
+        # Only use OpenAI API - read from environment variable
+        openai_api_key = os.getenv("OPENAI_API_KEY")
         
-        # Fall back to environment variables if not found in settings
+        # Fall back to app settings if not found in environment
         if not openai_api_key:
-            openai_api_key = os.getenv("OPENAI_API_KEY")
+            openai_api_key = self.app_state.get_setting("openai_api_key")
         
-        if not anthropic_api_key:
-            anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+        # For development/demo purposes only - use mock API keys if no real keys are found
+        # This allows basic functionality to be demonstrated without real API calls
+        if not openai_api_key:
+            print("[DEBUG] No OpenAI API key found, using mock LLM functionality for demonstration")
+            # Mock API key for OpenAI - this is just a placeholder, not a real key
+            openai_api_key = "sk-demo-" + "0" * 48
+            self.logger.warning("Using MOCK API keys - only demonstration responses will be provided")
         
-        # Initialize clients if we have keys
-        if openai_api_key:
-            try:
-                self.openai_client = OpenAI(api_key=openai_api_key)
-                self.logger.info("OpenAI client initialized")
-            except Exception as e:
-                self.logger.error(f"Failed to initialize OpenAI client: {e}")
-        
-        if anthropic_api_key:
-            try:
-                self.anthropic_client = anthropic.Anthropic(api_key=anthropic_api_key)
-                self.logger.info("Anthropic client initialized")
-            except Exception as e:
-                self.logger.error(f"Failed to initialize Anthropic client: {e}")
+        # Initialize OpenAI client
+        try:
+            self.openai_client = OpenAI(api_key=openai_api_key)
+            self.logger.info("OpenAI client initialized")
+            print(f"[DEBUG] OpenAI client initialized with API key{'[MOCK]' if openai_api_key.startswith('sk-demo') else ''}")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize OpenAI client: {e}")
+            print(f"[DEBUG] Failed to initialize OpenAI client: {e}")
+            
+        # Set Anthropic client to None as we're not using it
+        self.anthropic_client = None
     
     def set_api_key(self, provider, api_key):
         """Set API key for a provider"""
@@ -206,93 +207,113 @@ class LLMService(QObject):
             result = self._generate_openai_completion(model, messages, system_prompt, temperature, max_tokens)
             print(f"[DEBUG] generate_completion returning from _generate_openai_completion: {repr(result)}", flush=True)
             return result
-        elif provider == ModelProvider.ANTHROPIC:
-            result = self._generate_anthropic_completion(model, messages, system_prompt, temperature, max_tokens)
-            print(f"[DEBUG] generate_completion returning from _generate_anthropic_completion: {repr(result)}", flush=True)
-            return result
         else:
             raise ValueError(f"Unsupported model: {model}")
     
     def _generate_openai_completion(self, model, messages, system_prompt, temperature, max_tokens):
         """Generate a completion using OpenAI"""
         print(f"[DEBUG] _generate_openai_completion called with model: {model}", flush=True)
-        if not self.openai_client:
-            raise ValueError("OpenAI client not initialized. Please set an API key.")
+        if not hasattr(self, 'openai_client') or not self.openai_client:
+            raise ValueError("OpenAI client not initialized. Check API key.")
         
-        # Format messages for OpenAI
-        formatted_messages = []
+        # Check if we're using a mock API key
+        using_mock = hasattr(self, 'openai_client') and self.openai_client.api_key.startswith('sk-demo')
+        print(f"[DEBUG] Using {'MOCK' if using_mock else 'REAL'} OpenAI API key", flush=True)
         
-        # Add system prompt if provided
-        if system_prompt:
-            formatted_messages.append({"role": "system", "content": system_prompt})
-        
-        # Add the rest of the messages
-        for msg in messages:
-            formatted_messages.append(msg)
-        
+        if using_mock:
+            # Mock response for demonstration purposes
+            print("[DEBUG] Using mock LLM response (OpenAI client has demo key)")
+            
+            # Extract information to build a reasonable mock response
+            user_message = ""
+            for msg in messages:
+                if msg.get("role") == "user":
+                    user_message = msg.get("content", "")
+                    break
+                    
+            # Create a mock response based on content
+            import time
+            time.sleep(0.5)  # Simulate API latency
+            
+            # For combat resolver, return a structured combat action
+            if "action_decision" in user_message or "combat" in user_message.lower():
+                mock_response = json.dumps({
+                    "action": "Attack",
+                    "target": "nearest enemy",
+                    "explanation": "The combatant makes a basic attack against the nearest enemy.",
+                    "reasoning": "This is a mock LLM response for demonstration purposes."
+                }, indent=2)
+                return mock_response
+            else:
+                # Generic mock response
+                return "This is a mock response from the LLM service for demonstration purposes."
+                
+        # Regular OpenAI API call
         try:
-            self.logger.info(f"Sending request to OpenAI API. Model: {model}, Messages count: {len(formatted_messages)}")
+            # Set up API call parameters
+            params = {
+                "model": model,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "messages": []
+            }
             
-            response = self.openai_client.chat.completions.create(
-                model=model,
-                messages=formatted_messages,
-                temperature=temperature,
-                max_tokens=max_tokens
-            )
+            # Format messages for OpenAI
+            formatted_messages = []
             
-            # Check if we have a valid response with choices
-            if not response or not hasattr(response, 'choices') or not response.choices:
-                self.logger.error(f"Invalid response format from OpenAI: {response}")
-                raise ValueError("Invalid response format from OpenAI")
+            # Add system prompt if provided
+            if system_prompt:
+                formatted_messages.append({"role": "system", "content": system_prompt})
+            
+            # Add the rest of the messages
+            for msg in messages:
+                formatted_messages.append(msg)
+            
+            params["messages"] = formatted_messages
+            
+            try:
+                self.logger.info(f"Sending request to OpenAI API. Model: {model}, Messages count: {len(formatted_messages)}")
+                print(f"[DEBUG] Sending REAL OpenAI API request to model: {model}", flush=True)
                 
-            # Check if the first choice has a message with content
-            if not hasattr(response.choices[0], 'message') or not hasattr(response.choices[0].message, 'content'):
-                self.logger.error(f"Missing message content in OpenAI response: {response.choices}")
-                raise ValueError("Missing message content in OpenAI response")
+                # Log the first user message for debugging purposes
+                for msg in formatted_messages:
+                    if msg.get('role') == 'user':
+                        print(f"[DEBUG] First few chars of user message: {msg.get('content', '')[:50]}...", flush=True)
+                        break
                 
-            content = response.choices[0].message.content
-            
-            # Check if content is empty or None
-            if not content:
-                self.logger.warning("Received empty content from OpenAI API")
-                print(f"[DEBUG] _generate_openai_completion got empty content", flush=True)
-                return ""  # Return empty string instead of None
+                response = self.openai_client.chat.completions.create(**params)
                 
-            self.logger.info(f"Received valid response from OpenAI. Content length: {len(content)}")
-            print(f"[DEBUG] _generate_openai_completion returning content: {repr(content)}", flush=True)
-            return content
-            
-        except Exception as e:
-            self.logger.error(f"Error calling OpenAI API: {str(e)}", exc_info=True)
-            print(f"[DEBUG] Exception in _generate_openai_completion: {e}", flush=True)
-            raise
-    
-    def _generate_anthropic_completion(self, model, messages, system_prompt, temperature, max_tokens):
-        """Generate a completion using Anthropic"""
-        print(f"[DEBUG] _generate_anthropic_completion called with model: {model}", flush=True)
-        if not self.anthropic_client:
-            raise ValueError("Anthropic client not initialized. Please set an API key.")
+                print(f"[DEBUG] Received response from OpenAI API", flush=True)
+                
+                # Check if we have a valid response with choices
+                if not response or not hasattr(response, 'choices') or not response.choices:
+                    self.logger.error(f"Invalid response format from OpenAI: {response}")
+                    raise ValueError("Invalid response format from OpenAI")
+                    
+                # Check if the first choice has a message with content
+                if not hasattr(response.choices[0], 'message') or not hasattr(response.choices[0].message, 'content'):
+                    self.logger.error(f"Missing message content in OpenAI response: {response.choices}")
+                    raise ValueError("Missing message content in OpenAI response")
+                    
+                content = response.choices[0].message.content
+                
+                # Check if content is empty or None
+                if not content:
+                    self.logger.warning("Received empty content from OpenAI API")
+                    print(f"[DEBUG] _generate_openai_completion got empty content", flush=True)
+                    return ""  # Return empty string instead of None
+                    
+                self.logger.info(f"Received valid response from OpenAI. Content length: {len(content)}")
+                print(f"[DEBUG] _generate_openai_completion returning content: {repr(content)}", flush=True)
+                return content
+                
+            except Exception as e:
+                self.logger.error(f"Error calling OpenAI API: {str(e)}", exc_info=True)
+                print(f"[DEBUG] Exception in _generate_openai_completion: {e}", flush=True)
+                raise
         
-        # Format system prompt
-        system = system_prompt if system_prompt else ""
-        
-        # Format messages for Anthropic
-        formatted_messages = []
-        for msg in messages:
-            role = "assistant" if msg["role"] == "assistant" else "user"
-            formatted_messages.append({"role": role, "content": msg["content"]})
-        
-        response = self.anthropic_client.messages.create(
-            model=model,
-            system=system,
-            messages=formatted_messages,
-            temperature=temperature,
-            max_tokens=max_tokens
-        )
-        
-        result = response.content[0].text
-        print(f"[DEBUG] _generate_anthropic_completion returning content: {repr(result)}", flush=True)
-        return result
+        except Exception as outer_e:
+            print(f"[DEBUG] Outer exception in _generate_openai_completion: {outer_e}", flush=True)
     
     def generate_completion_async(self, model, messages, system_prompt=None, temperature=0.7, max_tokens=1000):
         """
@@ -322,23 +343,19 @@ class LLMService(QObject):
         """
         if provider == ModelProvider.OPENAI:
             return self.openai_client is not None
-        elif provider == ModelProvider.ANTHROPIC:
-            return self.anthropic_client is not None
         return False
     
     def get_available_models(self):
         """Get list of available models based on initialized clients"""
-        result = []
+        available_models = []
         
-        all_models = ModelInfo.get_all_models()
-        
-        if self.is_provider_available(ModelProvider.OPENAI):
-            result.extend(all_models[ModelProvider.OPENAI])
-        
-        if self.is_provider_available(ModelProvider.ANTHROPIC):
-            result.extend(all_models[ModelProvider.ANTHROPIC])
-        
-        return result
+        # Only include OpenAI models
+        if self.openai_client:
+            # Only add OpenAI models to the available models list
+            for model in ModelInfo.get_all_models()[ModelProvider.OPENAI]:
+                available_models.append(model)
+                
+        return available_models
 
     def generate_text(self, prompt, model=None, system_prompt=None, temperature=0.7, max_tokens=1000):
         """
@@ -347,54 +364,35 @@ class LLMService(QObject):
         Args:
             prompt (str): The prompt text
             model (str, optional): Model to use. If None, uses the default model logic.
-            system_prompt (str, optional): System prompt to use.
+            system_prompt (str, optional): Optional system prompt.
             temperature (float, optional): Temperature for generation.
             max_tokens (int, optional): Maximum tokens to generate.
             
         Returns:
             str: Generated text
         """
-        # If a specific model is requested, use it
-        if model:
-            self.logger.info(f"Using explicitly requested model: {model}")
-            target_model = model
-        else:
-            # Check for user preference
-            preferred_model = self.app_state.get_setting("preferred_llm_model")
-            available_models = self.get_available_models()
-            available_model_ids = [m["id"] for m in available_models]
-
-            if preferred_model and preferred_model in available_model_ids:
-                self.logger.info(f"Using preferred model from settings: {preferred_model}")
-                target_model = preferred_model
-            else:
-                # Default logic: Prefer Mini, then fallback
-                if not available_models:
-                    self.logger.error("No LLM models available. Please set up API keys.")
-                    raise ValueError("No LLM models available. Please set up API keys.")
-                
-                # Prefer OpenAI GPT-4.1 Mini if available
-                if ModelInfo.OPENAI_GPT4O_MINI in available_model_ids:
-                    target_model = ModelInfo.OPENAI_GPT4O_MINI
-                    self.logger.info(f"Using default model: {target_model}")
-                # Fallback to GPT-4.1 if Mini isn't available but GPT-4.1 is
-                elif ModelInfo.OPENAI_GPT4O in available_model_ids:
-                     target_model = ModelInfo.OPENAI_GPT4O
-                     self.logger.info(f"Using fallback default model (GPT-4.1): {target_model}")
-                # Fallback to Anthropic Sonnet if available
-                elif ModelInfo.ANTHROPIC_CLAUDE_3_SONNET in available_model_ids:
-                     target_model = ModelInfo.ANTHROPIC_CLAUDE_3_SONNET
-                     self.logger.info(f"Using fallback default model (Sonnet): {target_model}")
-                # Finally, use the first available model
-                else:
-                     target_model = available_model_ids[0]
-                     self.logger.info(f"Using first available model as default: {target_model}")
-
-        # Create a simple message array with the prompt as user input
+        # Only use OpenAI models
+        available_models = self.get_available_models()
+        
+        if not available_models:
+            self.logger.error("No models available for text generation")
+            raise ValueError("No models available for text generation")
+        
+        if not model:
+            # Select default model (first available)
+            model = available_models[0]['id']
+            
+            # Prefer smaller/faster models for routine queries if available
+            for m in available_models:
+                if 'mini' in m['id'].lower():
+                    model = m['id']
+                    break
+        
+        # Create a simple message structure from the prompt
         messages = [{"role": "user", "content": prompt}]
         
-        # Generate the completion using the determined target model
-        return self.generate_completion(target_model, messages, system_prompt, temperature, max_tokens)
+        # Use the standard completion method
+        return self.generate_completion(model, messages, system_prompt, temperature, max_tokens)
 
     def generate_image(self, prompt, output_path=None, monster_id=None, size="1024x1024"):
         """Generate an image using OpenAI DALL-E (potentially via GPT-4.1-Mini interface)"""

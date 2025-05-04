@@ -15,6 +15,14 @@ import logging
 class CombatTrackerPanel(BasePanel):
     """Combat Tracker panel built with modular UI functions."""
 
+    # Define column constants to ensure consistency
+    COL_NAME = 0
+    COL_INITIATIVE = 1
+    COL_HP = 2
+    COL_AC = 3
+    COL_TYPE = 4
+    COL_STATUS = 5
+    
     def __init__(self, app_state):
         # Initialize UI state required by ui.setup (round counter)
         self.current_round = 1
@@ -61,6 +69,8 @@ class CombatTrackerPanel(BasePanel):
         self.next_button = QPushButton("Next Turn")
         self.resolve_button = QPushButton("Resolve Combat")
         self.fast_resolve_button = QPushButton("Fast Resolve")
+        self.fast_resolve_button.setToolTip("Resolve combat using AI (Experimental)")
+        # DO NOT connect signals here - they will be connected in _connect_signals
         self.reset_button = QPushButton("Reset")
         
         # Add buttons to button bar
@@ -94,61 +104,100 @@ class CombatTrackerPanel(BasePanel):
         # Add log widget to splitter
         self.main_splitter.addWidget(self.log_widget)
         
-        # Set initial splitter sizes
-        self.main_splitter.setSizes([600, 300])
-        
-        # Connect signals and slots
+        # Connect signals after all UI elements are set up
         self._connect_signals()
         
-        # Initialize table
-        self._setup_initiative_table()
+        logging.debug("[CombatTracker] UI setup complete")
         
     def _setup_initiative_table(self):
         """Set up the initiative tracking table with proper configuration"""
-        import logging
-        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QHeaderView
         
-        try:
-            # Set up table behavior
-            self.initiative_table.setSelectionBehavior(self.initiative_table.SelectRows)
-            self.initiative_table.setSelectionMode(self.initiative_table.SingleSelection)
-            self.initiative_table.setEditTriggers(self.initiative_table.DoubleClicked)
-            self.initiative_table.setContextMenuPolicy(Qt.CustomContextMenu)
-            
-            # Set column widths - name column stretches automatically
-            self.initiative_table.setColumnWidth(1, 40)  # Initiative
-            self.initiative_table.setColumnWidth(2, 70)  # HP
-            self.initiative_table.setColumnWidth(3, 40)  # AC
-            self.initiative_table.setColumnWidth(4, 70)  # Type
-            
-            # Allow sorting by clicking on headers
-            self.initiative_table.setSortingEnabled(True)
-            
-            logging.debug("[CombatTracker] Initiative table setup complete")
-        except Exception as e:
-            logging.error(f"[CombatTracker] Error setting up initiative table: {e}")
-    
+        # Set column widths
+        header = self.initiative_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)  # Name column stretches
+        header.setSectionResizeMode(1, QHeaderView.Fixed)    # Initiative
+        header.setSectionResizeMode(2, QHeaderView.Fixed)    # HP
+        header.setSectionResizeMode(3, QHeaderView.Fixed)    # AC
+        header.setSectionResizeMode(4, QHeaderView.Fixed)    # Type
+        header.setSectionResizeMode(5, QHeaderView.Fixed)    # Status
+        
+        # Set column widths for fixed columns
+        self.initiative_table.setColumnWidth(1, 60)  # Initiative
+        self.initiative_table.setColumnWidth(2, 70)  # HP
+        self.initiative_table.setColumnWidth(3, 50)  # AC
+        self.initiative_table.setColumnWidth(4, 80)  # Type
+        self.initiative_table.setColumnWidth(5, 100) # Status
+        
+        # Other table settings
+        self.initiative_table.setSelectionBehavior(QHeaderView.SelectRows)
+        self.initiative_table.setAlternatingRowColors(True)
+        self.initiative_table.verticalHeader().setVisible(False)
+        
     def _connect_signals(self):
-        """Connect widget signals to their handler methods"""
+        """Connect UI signals to their handlers"""
         import logging
         
         try:
-            # Button clicks
+            # Disconnect any existing signals first to prevent duplicates
+            logging.debug("[CombatTracker] Disconnecting existing signals")
+            
+            try:
+                # Try to disconnect only if the attribute exists and is a method
+                self.add_pc_button.clicked.disconnect()
+                logging.debug("[CombatTracker] Disconnected add_pc_button signals")
+            except (RuntimeError, AttributeError):
+                # Signal was not connected
+                pass
+                
+            try:
+                self.next_button.clicked.disconnect()
+                logging.debug("[CombatTracker] Disconnected next_button signals")
+            except (RuntimeError, AttributeError):
+                pass
+                
+            try:
+                self.resolve_button.clicked.disconnect()
+                logging.debug("[CombatTracker] Disconnected resolve_button signals")
+            except (RuntimeError, AttributeError):
+                pass
+                
+            try:
+                self.reset_button.clicked.disconnect()
+                logging.debug("[CombatTracker] Disconnected reset_button signals")
+            except (RuntimeError, AttributeError):
+                pass
+                
+            # CRITICAL: Clear all existing connections for fast_resolve_button
+            try:
+                self.fast_resolve_button.clicked.disconnect()
+                logging.debug("[CombatTracker] Disconnected fast_resolve_button signals")
+            except (RuntimeError, AttributeError):
+                logging.debug("[CombatTracker] No signals to disconnect for fast_resolve_button")
+                pass
+            
+            # Connect signals to handlers
+            logging.debug("[CombatTracker] Connecting new signals")
             self.add_pc_button.clicked.connect(self._handle_add_pc_click)
             self.next_button.clicked.connect(self._handle_next_turn)
             self.resolve_button.clicked.connect(self._handle_resolve_click)
-            self.fast_resolve_button.clicked.connect(self._handle_fast_resolve_click)
             self.reset_button.clicked.connect(self._handle_reset_click)
+            
+            # CRITICAL: Connect the fast resolve button to our handler
+            self.fast_resolve_button.clicked.connect(self._handle_fast_resolve_click)
+            logging.debug("[CombatTracker] Fast resolve button signal connected to _handle_fast_resolve_click")
             
             # Table signals
             self.initiative_table.cellChanged.connect(self._handle_cell_changed)
             self.initiative_table.customContextMenuRequested.connect(self._handle_context_menu)
             self.initiative_table.itemSelectionChanged.connect(self._handle_selection_changed)
             
-            logging.debug("[CombatTracker] UI signals connected")
+            logging.debug("[CombatTracker] All signals connected successfully")
         except Exception as e:
+            import traceback
             logging.error(f"[CombatTracker] Error connecting signals: {e}")
-    
+            logging.error(traceback.format_exc())
+
     # Default handler methods that will be implemented elsewhere or overridden
     def _handle_add_pc_click(self):
         """Handle add PC button click"""
@@ -163,9 +212,15 @@ class CombatTrackerPanel(BasePanel):
         print("[CombatTracker] Resolve Combat button clicked")
     
     def _handle_fast_resolve_click(self):
-        """Handle fast resolve button click"""
-        print("[CombatTracker] Fast Resolve button clicked")
-    
+        """Handle clicks on the 'Fast Resolve' button."""
+        from PySide6.QtWidgets import QMessageBox
+        
+        print("[CombatTracker] Fast Resolve button clicked!")
+        QMessageBox.information(self, "Fast Resolve", "Fast Resolve button clicked. Initializing combat resolution...")
+        
+        # Call the fast resolve combat method
+        self._fast_resolve_combat()
+
     def _handle_reset_click(self):
         """Handle reset button click"""
         print("[CombatTracker] Reset button clicked")
@@ -244,6 +299,9 @@ class CombatTrackerPanel(BasePanel):
         if self._is_resolving_combat:
             print("[CombatTracker] Already resolving combat, ignoring click.")
             return
+        
+        print("\n=============== FAST_RESOLVE_COMBAT INITIATED ===============")
+        print("[CombatTracker] Fast Resolve button clicked, starting resolver.")
         self._is_resolving_combat = True
 
         # First, update UI to indicate processing is happening
@@ -274,10 +332,11 @@ class CombatTrackerPanel(BasePanel):
         # Define the main processing function to run in a separate thread
         def setup_and_start_combat():
             try:
+                print("[CombatTracker] setup_and_start_combat thread started")
                 # Step 1: Validate we have combatants
                 has_monster = has_player = False
                 for row in range(self.initiative_table.rowCount()):
-                    type_item = self.initiative_table.item(row, 7)  # Type is now column 7
+                    type_item = self.initiative_table.item(row, self.COL_TYPE)  # Type is now column 4
                     if type_item:
                         combatant_type = type_item.text().lower()
                         if combatant_type == "monster":
@@ -414,10 +473,13 @@ class CombatTrackerPanel(BasePanel):
                         # Access the underlying CombatResolver directly
                         resolver = self.app_state.combat_resolver.combat_resolver
                         print("[CombatTracker] Using underlying CombatResolver from ImprovedCombatResolver")
+                        print(f"[DEBUG] resolver type: {type(resolver)}")
+                        print(f"[DEBUG] resolver methods: {dir(resolver)}")
                     else:
                         # Using CombatResolver directly
                         resolver = self.app_state.combat_resolver
                         print("[CombatTracker] Using CombatResolver directly")
+                        print(f"[DEBUG] resolver type: {type(resolver)}")
                 else:
                     QApplication.instance().postEvent(self, CombatTrackerPanel._ErrorEvent(
                         "Error", 
@@ -432,8 +494,9 @@ class CombatTrackerPanel(BasePanel):
                     try:
                         resolver.resolution_update.disconnect(self._process_resolution_ui)
                         print("[CombatTracker] Disconnected existing signal connection")
-                    except Exception:
+                    except Exception as e:
                         # Connection might not exist yet, which is fine
+                        print(f"[CombatTracker] No existing connection to disconnect: {e}")
                         pass
                     
                     # Connect the signal
@@ -445,15 +508,19 @@ class CombatTrackerPanel(BasePanel):
                     print(f"[CombatTracker] Failed to connect signal: {conn_error}")
                     
                 # Start the resolution using the modern start_resolution API
+                print(f"[DEBUG] Starting combat resolution with {len(combat_state.get('combatants', []))} combatants")
+                print(f"[DEBUG] Combat state keys: {list(combat_state.keys())}")
                 success = resolver.start_resolution(
                     combat_state,
                     dice_roller,
                     self._update_ui_wrapper, # Pass the wrapper for UI updates
                     mode='continuous'
                 )
+                print(f"[DEBUG] start_resolution returned: {success}")
                 
                 if not success:
                     # Failed to start resolution
+                    print("[DEBUG] Failed to start resolution!")
                     QApplication.instance().postEvent(self, CombatTrackerPanel._ErrorEvent(
                         "Error", 
                         f"Failed to start combat resolution - it might already be running."
@@ -641,24 +708,19 @@ class CombatTrackerPanel(BasePanel):
 
         for row in range(self.initiative_table.rowCount()):
             # Basic combatant data
-            name_item = self.initiative_table.item(row, 0)
-            initiative_item = self.initiative_table.item(row, 1)
-            hp_item = self.initiative_table.item(row, 2)
-            max_hp_item = self.initiative_table.item(row, 3)
-            ac_item = self.initiative_table.item(row, 4)
-            status_item = self.initiative_table.item(row, 5)
-            conc_item = self.initiative_table.item(row, 6)
-            type_item = self.initiative_table.item(row, 7)
+            name_item = self.initiative_table.item(row, self.COL_NAME)
+            initiative_item = self.initiative_table.item(row, self.COL_INITIATIVE)
+            hp_item = self.initiative_table.item(row, self.COL_HP)
+            ac_item = self.initiative_table.item(row, self.COL_AC)
+            status_item = self.initiative_table.item(row, self.COL_STATUS)
+            type_item = self.initiative_table.item(row, self.COL_TYPE)
             
             # Get values or defaults
             name = name_item.text() if name_item else "Unknown"
             initiative = int(initiative_item.text() or "0") if initiative_item else 0
             hp = int(hp_item.text() or "0") if hp_item else 0
-            # Get max_hp from specific max_hp column
-            max_hp = int(max_hp_item.text() or str(hp)) if max_hp_item else hp
             ac = int(ac_item.text() or "10") if ac_item else 10
             status = status_item.text() if status_item else ""
-            concentration = conc_item.checkState() == Qt.Checked if conc_item else False
             combatant_type = type_item.text() if type_item else "unknown"
             
             # Get monster ID from name item if it's a monster
@@ -682,17 +744,15 @@ class CombatTrackerPanel(BasePanel):
                     print(f"[CombatTracker] Using existing instance ID {instance_id} for {name}")
             
             # Debug print current HP values
-            print(f"[CombatTracker] DEBUG: Table row {row}: {name} - HP: {hp}/{max_hp} {' (ID: ' + str(instance_id) + ')' if instance_id else ''}")
+            print(f"[CombatTracker] DEBUG: Table row {row}: {name} - HP: {hp} {' (ID: ' + str(instance_id) + ')' if instance_id else ''}")
             
             # Create combatant dictionary
             combatant = {
                 "name": name,
                 "initiative": initiative,
                 "hp": hp,
-                "max_hp": max_hp,
                 "ac": ac,
                 "status": status,
-                "concentration": concentration,
                 "type": combatant_type,
                 "instance_id": instance_id if instance_id else f"combatant_{row}"  # Ensure every combatant has a unique ID
             }
@@ -1069,4 +1129,139 @@ class CombatTrackerPanel(BasePanel):
         scrollbar = self.combat_log_widget.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 
-    # ... (rest of the class if any)
+    def _sort_initiative(self):
+        """Sort the initiative table by initiative values (highest first)."""
+        print("[CombatTracker] Sorting initiative table")
+        try:
+            # Get current number of rows
+            rows = self.initiative_table.rowCount()
+            if rows <= 1:
+                # Nothing to sort with 0 or 1 rows
+                return
+                
+            # Build a list of (row, initiative) tuples
+            initiative_data = []
+            for row in range(rows):
+                initiative_item = self.initiative_table.item(row, self.COL_INITIATIVE)  # Initiative is in column 1
+                if initiative_item and initiative_item.text():
+                    try:
+                        initiative = float(initiative_item.text())
+                    except ValueError:
+                        initiative = 0
+                else:
+                    initiative = 0
+                initiative_data.append((row, initiative))
+                
+            # Sort by initiative (highest first)
+            initiative_data.sort(key=lambda x: x[1], reverse=True)
+            
+            # Apply the sort by rearranging rows
+            for new_row, (old_row, _) in enumerate(initiative_data):
+                if new_row != old_row:
+                    # Need to move this row
+                    self._move_table_row(old_row, new_row)
+                    
+            # Update the current_turn to match the sorted order
+            if hasattr(self, 'current_turn'):
+                # Find the new position of the current turn
+                for new_row, (old_row, _) in enumerate(initiative_data):
+                    if old_row == self.current_turn:
+                        self.current_turn = new_row
+                        break
+            
+            print(f"[CombatTracker] Initiative sorted, {rows} combatants")
+        except Exception as e:
+            import traceback
+            print(f"[DEBUG] Error sorting initiative: {e}")
+            print(traceback.format_exc())
+    
+    def _move_table_row(self, from_row, to_row):
+        """Move a row in the initiative table from one position to another."""
+        # If rows are the same, nothing to do
+        if from_row == to_row:
+            return
+            
+        # Get number of columns
+        cols = self.initiative_table.columnCount()
+        
+        # Temporarily remove the row being moved
+        items = []
+        for col in range(cols):
+            item = self.initiative_table.takeItem(from_row, col)
+            items.append(item)
+            
+        # Insert the row at the new position
+        if from_row < to_row:
+            # Moving down, insert at to_row
+            self.initiative_table.insertRow(to_row)
+            for col in range(cols):
+                self.initiative_table.setItem(to_row, col, items[col])
+            # Remove the original row, adjusted for the new row we added
+            self.initiative_table.removeRow(from_row)
+        else:
+            # Moving up, insert at to_row
+            self.initiative_table.insertRow(to_row)
+            for col in range(cols):
+                self.initiative_table.setItem(to_row, col, items[col])
+            # Remove the original row, adjusted for the new row we added
+            self.initiative_table.removeRow(from_row + 1)
+
+    def _log_combat_action(self, action_type, actor, action, target=None, details=None):
+        """
+        Add an entry to the combat log.
+        
+        Args:
+            action_type (str): Type of action (e.g., "Attack", "Move", "Spell", "Setup")
+            actor (str): Name of the entity performing the action
+            action (str): Description of the action
+            target (str, optional): Target of the action, if any
+            details (str, optional): Additional details about the action
+        """
+        import datetime
+        from PySide6.QtGui import QTextCursor, QColor
+        
+        # Format the log entry
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+        log_entry = f"[{timestamp}] "
+        
+        # Add action type with color based on type
+        color_map = {
+            "Attack": "crimson",
+            "Move": "blue",
+            "Spell": "purple",
+            "Heal": "green",
+            "Damage": "red",
+            "Status": "orange",
+            "Setup": "gray"
+        }
+        color = color_map.get(action_type, "black")
+        log_entry += f"<span style='color: {color};'>[{action_type}]</span> "
+        
+        # Add actor and action
+        log_entry += f"<b>{actor}</b> {action} "
+        
+        # Add target if provided
+        if target:
+            log_entry += f"<b>{target}</b> "
+            
+        # Add details if provided
+        if details:
+            log_entry += f"{details}"
+            
+        # Add the entry to the log
+        try:
+            # Get the QTextEdit widget for the combat log
+            if hasattr(self, 'combat_log_widget') and self.combat_log_widget:
+                # Append the HTML formatted text
+                self.combat_log_widget.append(log_entry)
+                
+                # Scroll to the bottom
+                self.combat_log_widget.moveCursor(QTextCursor.End)
+                
+                print(f"[CombatTracker] Added log entry: {action_type} - {actor} {action} {target or ''} {details or ''}")
+            else:
+                print(f"[DEBUG] Cannot log combat action: No combat_log_widget found")
+        except Exception as e:
+            import traceback
+            print(f"[DEBUG] Error logging combat action: {e}")
+            print(traceback.format_exc())

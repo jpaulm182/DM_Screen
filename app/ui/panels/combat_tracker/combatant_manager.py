@@ -102,33 +102,30 @@ class CombatantManager:
             hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
             self.panel.initiative_table.setItem(new_row_index, 2, hp_item)
 
-            # Max HP Item
-            max_hp_str = str(max_hp) if max_hp is not None else "10"
-            max_hp_item = QTableWidgetItem(max_hp_str)
-            max_hp_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
-            self.panel.initiative_table.setItem(new_row_index, 3, max_hp_item)
-
             # AC Item
             ac_str = str(ac) if ac is not None else "10"
             ac_item = QTableWidgetItem(ac_str)
             ac_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
-            self.panel.initiative_table.setItem(new_row_index, 4, ac_item)
+            self.panel.initiative_table.setItem(new_row_index, 3, ac_item)
+
+            # Type Item
+            type_item = QTableWidgetItem(combatant_type)
+            type_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+            self.panel.initiative_table.setItem(new_row_index, 4, type_item)
 
             # Status Item
             status_item = QTableWidgetItem("")
             status_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
             self.panel.initiative_table.setItem(new_row_index, 5, status_item)
 
-            # Concentration Item
-            conc_item = QTableWidgetItem()
-            conc_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-            conc_item.setCheckState(Qt.Unchecked)
-            self.panel.initiative_table.setItem(new_row_index, 6, conc_item)
-
-            # Type Item
-            type_item = QTableWidgetItem(combatant_type)
-            type_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
-            self.panel.initiative_table.setItem(new_row_index, 7, type_item)
+            # Store additional data as user roles in the Name field
+            # We can use this to track max HP, concentration, etc. even if not displayed
+            name_item = self.panel.initiative_table.item(new_row_index, 0)
+            if name_item:
+                # Store max HP as user data role
+                name_item.setData(Qt.UserRole + 3, max_hp)
+                # Store concentration state
+                name_item.setData(Qt.UserRole + 4, False)  # Default to not concentrating
 
             # --- Store Combatant Data ---
             # Store comprehensive data associated with this instance ID
@@ -266,15 +263,14 @@ class CombatantManager:
             logging.error(f"[CombatantManager] Unexpected error adding character: {e}", exc_info=True)
             QMessageBox.critical(self.panel, "Error", f"An unexpected error occurred while adding the character: {str(e)}")
 
-    # This slot receives signals from the MonsterPanel or other sources
     @Slot(list) # Can receive a list of monster dictionaries
-    def add_combatant_group(self, monster_list: list):
+    def add_monster_group(self, monster_list: list):
         """Add a list of monsters (as dictionaries) to the combat tracker.
         Args:
             monster_list (list): List of monster dictionaries or objects to add.
         """
         if not isinstance(monster_list, list):
-            logging.error(f"[CombatantManager] Error: add_combatant_group received non-list: {type(monster_list)}")
+            logging.error(f"[CombatantManager] Error: add_monster_group received non-list: {type(monster_list)}")
             return
 
         logging.info(f"[CombatantManager] Received group of {len(monster_list)} monsters to add.")
@@ -293,29 +289,103 @@ class CombatantManager:
 
                 logging.debug(f"[CombatantManager] Adding monster from group: {monster_name}")
 
-                # Use the add_monster method to handle individual addition
-                row = self.add_monster(monster_data)
+                # Process monster data to get key attributes
+                hp = 10
+                max_hp = 10
+                ac = 10
+                initiative = 10  # Default initiative if not found/rolled
+                
+                # Handle different input formats
+                if isinstance(monster_data, dict):
+                    monster_dict = monster_data
+                    monster_name = monster_dict.get('name', monster_name)
+                    
+                    # Extract HP - handles "10 (3d6)" format or just number/dice string
+                    import re
+                    hp_string = str(monster_dict.get('hit_points', monster_dict.get('hp', '10')))
+                    
+                    # Try to parse average and roll dice
+                    try:
+                        # Extract average HP (number before parenthesis)
+                        match_avg = re.match(r"\s*(\d+)", hp_string)
+                        if match_avg:
+                            max_hp = int(match_avg.group(1))
+                        
+                        # Extract dice formula (inside parenthesis)
+                        formula_match = re.search(r"\((.*?)\)", hp_string)
+                        if formula_match:
+                            formula = formula_match.group(1).replace(" ", "")  # Remove spaces
+                            # Roll for current HP using the formula if available
+                            if hasattr(self.panel, 'roll_dice'):
+                                hp = self.panel.roll_dice(formula)
+                            # Use average if roll fails or is unreasonable
+                            if not isinstance(hp, int) or hp <= 0 or hp > max_hp * 2:
+                                print(f"[CombatantManager] Warning: Dice roll for {formula} failed or unreasonable ({hp}). Using average HP {max_hp}.")
+                                hp = max_hp
+                        else:
+                            # If no formula, use the average/parsed number for both current and max HP
+                            hp = max_hp 
+                    except Exception as e:
+                        print(f"[CombatantManager] Error parsing HP string '{hp_string}': {e}. Using defaults.")
+                        hp = 10
+                        max_hp = 10
+
+                    # Ensure HP values are reasonable minimums
+                    hp = max(1, hp)
+                    max_hp = max(1, max_hp)
+                    
+                    # Ensure current HP doesn't exceed max HP initially
+                    hp = min(hp, max_hp)
+
+                    # Extract AC
+                    ac = monster_dict.get('ac', monster_dict.get('armor_class', 10))
+                    if not isinstance(ac, int):
+                        try:
+                            ac = int(ac)  # Handle AC potentially being a string
+                        except (ValueError, TypeError):
+                            ac = 10  # Default AC if conversion fails
+                    
+                    # Extract Initiative Modifier (Dexterity)
+                    import random
+                    dex = monster_dict.get('dex', monster_dict.get('dexterity', 10))
+                    if not isinstance(dex, int):
+                        try:
+                            dex = int(dex)
+                        except (ValueError, TypeError):
+                            dex = 10
+                    init_mod = (dex - 10) // 2
+                    initiative = random.randint(1, 20) + init_mod
+                    
+                # Use the parsed/validated values to add the combatant
+                row = self.add_combatant(
+                    name=monster_name,
+                    initiative=initiative,
+                    hp=hp,
+                    max_hp=max_hp,
+                    ac=ac,
+                    combatant_type="monster",
+                    monster_data=monster_data  # Pass the full dictionary
+                )
+
                 if row >= 0:
                     added_count += 1
                     rows_added.append(row)
-                    # Optional: Verify type in table after adding (add_monster should handle it)
-                    type_item = self.panel.initiative_table.item(row, 7)
-                    if type_item and type_item.text() != "monster":
-                         logging.warning(f"[CombatantManager] Type mismatch for added monster {monster_name} at row {row}. Expected 'monster', found '{type_item.text()}'. Attempting fix.")
-                         type_item.setText("monster")
-                         name_item = self.panel.initiative_table.item(row, 0)
-                         if name_item: name_item.setData(Qt.UserRole, "monster")
-
+                    # Log action via panel
+                    try:
+                        self.panel._log_combat_action("Setup", "DM", "added monster", monster_name, f"(Rolled Initiative: {initiative})")
+                    except Exception as log_err:
+                        print(f"[CombatantManager] Error logging combat action: {log_err}")
                 else:
                     failed_count += 1
                     logging.error(f"[CombatantManager] Failed to add monster '{monster_name}' from group.")
             except Exception as e:
                 failed_count += 1
                 name = "Unknown"
-                if isinstance(monster_data, dict): name = monster_data.get("name", "Unknown")
-                elif hasattr(monster_data, 'name'): name = getattr(monster_data, 'name', "Unknown")
+                if isinstance(monster_data, dict): 
+                    name = monster_data.get("name", "Unknown")
+                elif hasattr(monster_data, 'name'): 
+                    name = getattr(monster_data, 'name', "Unknown")
                 logging.error(f"[CombatantManager] Error adding monster '{name}' from group: {e}", exc_info=True)
-
 
         if added_count > 0:
             logging.info(f"[CombatantManager] Added {added_count} monsters from group (failed: {failed_count}).")
@@ -323,427 +393,26 @@ class CombatantManager:
             self.panel._sort_initiative()
         else:
             logging.warning(f"[CombatantManager] No monsters were added from the group (all {failed_count} failed).")
-
-
-    def add_monster(self, monster_data):
-        """Adds a single monster (dict or object) to the combat tracker."""
-        if not monster_data:
-            logging.warning("[CombatantManager] add_monster called with empty data.")
-            return -1
-
-        monster_name = "Unknown Monster"
-        hp = 10
-        max_hp = 10
-        ac = 10
-        initiative = 10 # Default initiative if not found/rolled
-
-        # --- Data Extraction ---
+            
+    # This slot receives signals from the MonsterPanel or other sources
+    @Slot(list) 
+    def add_combatant_group(self, monster_list: list):
+        """Delegates to add_monster_group for backward compatibility"""
         try:
-            # Handle both dictionary and object inputs
-            if isinstance(monster_data, dict):
-                monster_dict = monster_data
-                monster_name = monster_dict.get('name', monster_name)
-                # Extract HP - handles "10 (3d6)" format or just number/dice string
-                hp_string = str(monster_dict.get('hit_points', monster_dict.get('hp', '10')))
-                max_hp = 10 # default max HP
-                hp = 10 # default current HP
-
-                # Try to parse average and roll dice
-                try:
-                    # Extract average HP (number before parenthesis)
-                    match_avg = re.match(r"\s*(\d+)", hp_string)
-                    if match_avg:
-                        max_hp = int(match_avg.group(1))
-                    
-                    # Extract dice formula (inside parenthesis)
-                    formula_match = re.search(r"\((.*?)\)", hp_string)
-                    if formula_match:
-                        formula = formula_match.group(1).replace(" ", "") # Remove spaces
-                        # Roll for current HP using the formula
-                        hp = self.panel.roll_dice(formula) 
-                        # Use average if roll fails or is unreasonable
-                        if not isinstance(hp, int) or hp <= 0 or hp > max_hp * 2:
-                            print(f"[CombatantManager] Warning: Dice roll for {formula} failed or unreasonable ({hp}). Using average HP {max_hp}.")
-                            hp = max_hp
-                    else:
-                        # If no formula, use the average/parsed number for both current and max HP
-                        hp = max_hp 
-                except Exception as e:
-                    print(f"[CombatantManager] Error parsing HP string '{hp_string}': {e}. Using defaults.")
-                    hp = 10
-                    max_hp = 10
-
-                # Ensure HP values are reasonable minimums
-                hp = max(1, hp)
-                max_hp = max(1, max_hp)
-                
-                # Ensure current HP doesn't exceed max HP initially
-                hp = min(hp, max_hp)
-
-                print(f"[CombatantManager] Parsed HP for {monster_name}: Current={hp}, Max={max_hp}")
-
-                # Extract AC
-                ac = monster_dict.get('ac', monster_dict.get('armor_class', 10))
-                if not isinstance(ac, int):
-                    try:
-                        ac = int(ac) # Handle AC potentially being a string
-                    except (ValueError, TypeError):
-                        ac = 10 # Default AC if conversion fails
-                
-                # Extract Initiative Modifier (Dexterity)
-                dex = monster_dict.get('dex', monster_dict.get('dexterity', 10))
-                if not isinstance(dex, int):
-                     try:
-                         dex = int(dex)
-                     except (ValueError, TypeError):
-                         dex = 10
-                init_mod = (dex - 10) // 2
-                initiative = random.randint(1, 20) + init_mod
-                
-                # Keep the full original dictionary for storage, but use parsed values for adding
-                storage_data = monster_dict
-                
-            elif hasattr(monster_data, 'name'): # Handle object input (e.g., Monster class instance)
-                 # Fallback logic for object attributes (should ideally not be needed if to_dict works)
-                 monster_name = getattr(monster_data, 'name', monster_name)
-                 # Similar HP parsing logic required here if this path is used
-                 hp_string = getattr(monster_data, 'hit_points', '10') # Assuming attribute name 'hit_points'
-                 # ... (repeat HP parsing logic as above) ... 
-                 # For brevity, assuming to_dict path is the primary one
-                 hp = getattr(monster_data, 'hp', hp) # Placeholder if direct attribute exists
-                 max_hp = getattr(monster_data, 'max_hp', max_hp)
-                 ac = getattr(monster_data, 'armor_class', ac)
-                 dex = getattr(monster_data, 'dexterity', 10)
-                 init_mod = (dex - 10) // 2
-                 initiative = random.randint(1, 20) + init_mod
-                 # Convert object to dict for storage (less ideal than a proper to_dict)
-                 storage_data = {attr: getattr(monster_data, attr) for attr in dir(monster_data) if not attr.startswith('_') and not callable(getattr(monster_data, attr))}
-            else:
-                logging.error(f"[CombatantManager] Unsupported monster_data type: {type(monster_data)}")
-                return -1 # Indicate failure
-
-            # Validate data using ImprovedCombatResolver if available
-            if ImprovedCombatResolver and isinstance(storage_data, dict):
-                 # ... (Keep existing validation logic) ...
-                 pass # Placeholder for brevity
-
-        except Exception as e:
-            logging.error(f"[CombatantManager] Error during monster data extraction for '{monster_name}': {e}", exc_info=True)
-            return -1
-
-        # --- Combatant Addition ---
-        try:
-            # Ensure hp and max_hp are integers
-            hp = int(hp)
-            max_hp = int(max_hp)
-            ac = int(ac)
-            initiative = int(initiative)
-
-            # Use the parsed/validated values to add the combatant
-            # Add using the core method, passing the full (validated) data
-            row = self.add_combatant(
-                name=monster_name,
-                initiative=initiative,
-                hp=hp,
-                max_hp=max_hp,
-                ac=ac,
-                combatant_type="monster",
-                monster_data=storage_data # Pass the full dictionary
-            )
-
-            if row >= 0:
-                logging.info(f"[CombatantManager] Successfully added monster '{monster_name}' at row {row}.")
-                # Log action via panel
-                self.panel._log_combat_action("Setup", "DM", "added monster", monster_name, f"(Rolled Initiative: {initiative})")
-            else:
-                 logging.error(f"[CombatantManager] Failed to add monster '{monster_name}' via add_combatant.")
-
-            return row # Return the final row index (or -1)
-
-        except Exception as e:
-            logging.error(f"[CombatantManager] Unexpected error processing monster data for '{monster_name}': {e}", exc_info=True)
-            return -1 # Indicate failure
-
-
-    def remove_selected(self):
-        """
-        Marks selected combatants as 'Dead' and triggers cleanup.
-
-        Relies on the panel's _cleanup_dead_combatants method to handle
-        actual removal and state updates (current turn, concentrating set etc.).
-        """
-        if not self.panel or not hasattr(self.panel, 'initiative_table'):
-            logging.error("[CombatantManager] Cannot remove selected, panel or table not available.")
-            return
-
-        try:
-            selected_indexes = self.panel.initiative_table.selectedIndexes()
-            if not selected_indexes:
-                return # Nothing selected
-
-            # Get unique rows, sorted ascending
-            rows_to_remove = sorted(list(set(idx.row() for idx in selected_indexes)))
-
-            if not rows_to_remove:
+            print(f"[CombatantManager] add_combatant_group called with {len(monster_list) if isinstance(monster_list, list) else 'non-list'} item(s)")
+            
+            # Error checking - ensure we have a proper list
+            if not isinstance(monster_list, list):
+                logging.error(f"[CombatantManager] add_combatant_group expected list but got {type(monster_list)}")
                 return
-
-            # Confirmation dialog
-            reply = QMessageBox.question(
-                self.panel, # Parent widget
-                "Remove Combatant(s)",
-                f"Remove {len(rows_to_remove)} selected combatant(s) from the tracker?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No, # Default button
-            )
-
-            if reply != QMessageBox.StandardButton.Yes:
-                return # User cancelled
-
-            logging.info(f"[CombatantManager] User confirmed removal of rows: {rows_to_remove}")
-
-            # Mark rows for removal by setting status to 'Dead'
-            # The panel's cleanup method will handle the actual removal.
-            self.panel.initiative_table.blockSignals(True) # Block signals during marking
-            modified_rows = []
-            try:
-                for row in reversed(rows_to_remove): # Iterate backwards to avoid index issues if removing directly
-                    if row < self.panel.initiative_table.rowCount():
-                        status_item = self.panel.initiative_table.item(row, 5) # Status column
-                        if status_item is None:
-                            status_item = QTableWidgetItem("Dead")
-                            self.panel.initiative_table.setItem(row, 5, status_item)
-                        else:
-                            status_item.setText("Dead")
-                        modified_rows.append(row)
-                    else:
-                        logging.warning(f"[CombatantManager] Row index {row} out of bounds during removal marking.")
-
-            finally:
-                 self.panel.initiative_table.blockSignals(False) # Unblock signals
-
-            # Call the panel's cleanup method IF any rows were actually marked
-            if modified_rows:
-                 logging.debug(f"[CombatantManager] Triggering panel's cleanup for rows marked dead: {modified_rows}")
-                 # Use QTimer.singleShot to ensure cleanup happens after current event processing
-                 from PySide6.QtCore import QTimer
-                 QTimer.singleShot(0, self.panel._cleanup_dead_combatants)
-
+                
+            # Process the first level of list if necessary (handle nested lists)
+            # This handles the case where monster_list is actually [[monster_dict]] instead of [monster_dict]
+            if len(monster_list) == 1 and isinstance(monster_list[0], list):
+                monster_list = monster_list[0]
+                print(f"[CombatantManager] Unwrapped nested list, now processing {len(monster_list)} items")
+                
+            return self.add_monster_group(monster_list)
         except Exception as e:
-            logging.error(f"[CombatantManager] Error during remove_selected: {e}", exc_info=True)
-            # Ensure signals are unblocked in case of error
-            if self.panel and hasattr(self.panel, 'initiative_table'):
-                 self.panel.initiative_table.blockSignals(False)
-
-
-    def get_combatant_data(self, row):
-        """
-        Retrieves combined data for a combatant at a specific row.
-
-        Prioritizes data stored in self.combatants_by_id using the instance ID
-        from the table, then updates it with the current state from the table cells.
-
-        Args:
-            row (int): The row index in the initiative table.
-
-        Returns:
-            dict: A dictionary containing the combatant's data, or None if invalid row.
-        """
-        if not self.panel or not hasattr(self.panel, 'initiative_table') or row < 0 or row >= self.panel.initiative_table.rowCount():
-            logging.warning(f"[CombatantManager] get_combatant_data: Invalid row index {row}")
-            return None
-
-        combatant_data = {}
-        instance_id = None
-
-        try:
-            # --- Get Instance ID from Table ---
-            name_item = self.panel.initiative_table.item(row, 0)
-            if name_item:
-                instance_id = name_item.data(Qt.UserRole + 2)
-                if instance_id:
-                     logging.debug(f"[CombatantManager] Found instance ID '{instance_id}' for row {row}")
-                else:
-                     logging.warning(f"[CombatantManager] No instance ID found for row {row}, data retrieval might be incomplete.")
-            else:
-                logging.warning(f"[CombatantManager] No name item found for row {row}, cannot get instance ID.")
-                # Attempt to construct some data purely from table as fallback
-                instance_id = None # Ensure it's None
-
-            # --- Retrieve Base Data using Instance ID ---
-            if instance_id and instance_id in self.combatants_by_id:
-                # Make a copy to avoid modifying the stored master data
-                combatant_data = self.combatants_by_id[instance_id].copy()
-                logging.debug(f"[CombatantManager] Retrieved base data for instance ID '{instance_id}'")
-            else:
-                logging.warning(f"[CombatantManager] No stored data found for instance ID '{instance_id}' (or ID is missing). Building data from table.")
-                # If no stored data, create a basic structure
-                combatant_data = {'instance_id': instance_id} # Still store ID if we have it
-
-
-            # --- Update with Current Table Values ---
-            table_updates = {}
-            headers = self.panel.COLUMN_HEADERS # Get headers from panel constant
-            for col, header_key in headers.items():
-                item = self.panel.initiative_table.item(row, col)
-                if item:
-                    if header_key == "concentration": # Column 6
-                        table_updates[header_key] = item.checkState() == Qt.CheckState.Checked
-                    elif header_key == "name": # Column 0
-                         table_updates[header_key] = item.text()
-                         # Also get type from UserRole data on name item
-                         type_role = item.data(Qt.UserRole)
-                         if type_role:
-                             table_updates['type'] = type_role
-                         # Ensure instance ID from table matches, or update if missing
-                         table_id = item.data(Qt.UserRole + 2)
-                         if not combatant_data.get('instance_id') and table_id:
-                              combatant_data['instance_id'] = table_id
-                         elif combatant_data.get('instance_id') != table_id:
-                              logging.warning(f"Instance ID mismatch for row {row}! Stored: {combatant_data.get('instance_id')}, Table: {table_id}")
-                              # Potentially update stored ID? Or log error? For now, trust table.
-                              combatant_data['instance_id'] = table_id
-
-                    elif header_key in ["initiative", "hp", "max_hp", "ac"]:
-                        # Try converting to int, fallback to text
-                        try:
-                            table_updates[header_key] = int(item.text())
-                        except (ValueError, TypeError):
-                             table_updates[header_key] = item.text() # Keep as string if conversion fails
-                             logging.warning(f"Could not convert column '{header_key}' value '{item.text()}' to int for row {row}")
-                    else: # Status, Type columns
-                        table_updates[header_key] = item.text()
-                else:
-                     # If item doesn't exist, ensure key is present with None or default?
-                     # For now, we only update if item exists.
-                     pass
-
-            # Update the base data with the latest from the table
-            # Table values generally override stored values for dynamic state (hp, status, conc)
-            combatant_data.update(table_updates)
-
-            # --- Add Death Saves (managed by the panel) ---
-            if hasattr(self.panel, 'death_saves') and row in self.panel.death_saves:
-                combatant_data['death_saves'] = self.panel.death_saves[row]
-
-            # --- Add Concentration status (managed by the panel) ---
-            # Note: table_updates should already contain concentration from the checkbox
-            # combatant_data['concentration'] = row in self.panel.concentrating # Alternative check
-
-
-            logging.debug(f"[CombatantManager] Final combined data for row {row}: {combatant_data}")
-            return combatant_data
-
-        except Exception as e:
-            logging.error(f"[CombatantManager] Error in get_combatant_data for row {row}: {e}", exc_info=True)
-            return None # Return None on error
-
-
-    def fix_missing_types(self):
-        """
-        Iterates through the table, identifies combatants with missing or invalid
-        types, and attempts to infer the correct type ('monster', 'character', 'manual').
-
-        Updates both the table cell (column 7) and the UserRole data on the name item (column 0).
-
-        Returns:
-            int: The number of combatants whose types were fixed.
-        """
-        if not self.panel or not hasattr(self.panel, 'initiative_table'):
-            logging.error("[CombatantManager] Cannot fix types, panel or table not available.")
-            return 0
-
-        fix_count = 0
-        logging.info("[CombatantManager] Running fix_missing_types...")
-        self.panel.initiative_table.blockSignals(True) # Prevent signals during fix
-
-        try:
-            for row in range(self.panel.initiative_table.rowCount()):
-                name_item = self.panel.initiative_table.item(row, 0)
-                type_item = self.panel.initiative_table.item(row, 7) # Type column index from panel constant
-
-                name = name_item.text() if name_item else f"Row {row} (No Name)"
-                instance_id = name_item.data(Qt.UserRole + 2) if name_item else None
-
-                # --- Determine if Fix is Needed ---
-                current_type_text = type_item.text().lower().strip() if type_item and type_item.text() else ""
-                current_type_role = name_item.data(Qt.UserRole) if name_item else None
-
-                needs_fix = False
-                reason = ""
-
-                if not current_type_text or current_type_text not in ["monster", "character", "manual"]:
-                    needs_fix = True
-                    reason = f"Invalid/missing text ('{current_type_text}')"
-                elif not current_type_role or current_type_role not in ["monster", "character", "manual"]:
-                     needs_fix = True
-                     reason = f"Invalid/missing role data ('{current_type_role}')"
-                elif current_type_text != current_type_role:
-                     needs_fix = True
-                     reason = f"Mismatch between text ('{current_type_text}') and role ('{current_type_role}')"
-
-
-                if needs_fix:
-                    logging.debug(f"Row {row} ('{name}') needs type fix. Reason: {reason}")
-                    inferred_type = "manual" # Default assumption
-
-                    # --- Inference Logic ---
-                    # 1. Check stored data using instance ID
-                    if instance_id and instance_id in self.combatants_by_id:
-                        stored_data = self.combatants_by_id[instance_id]
-                        if isinstance(stored_data, dict):
-                            stored_type = stored_data.get('type', '').lower()
-                            if stored_type in ["monster", "character"]:
-                                inferred_type = stored_type
-                                logging.debug(f"  Inferred type '{inferred_type}' from stored data.")
-
-                    # 2. Use heuristics if still manual/unknown
-                    if inferred_type == "manual":
-                         # Add name heuristics (simplified)
-                        monster_keywords = ["goblin", "orc", "dragon", "zombie", "skeleton", "beholder", "lich"] # Example keywords
-                        lower_name = name.lower()
-                        if any(keyword in lower_name for keyword in monster_keywords):
-                             inferred_type = "monster"
-                             logging.debug(f"  Inferred type '{inferred_type}' from name keyword.")
-                        elif "(pc)" in lower_name or "(player)" in lower_name:
-                             inferred_type = "character"
-                             logging.debug(f"  Inferred type '{inferred_type}' from name suffix.")
-                        # Could add more heuristics (e.g., check for class/level in name)
-
-                    # --- Apply the Fix ---
-                    # Update Type Column (Column 7)
-                    if type_item is None:
-                        type_item = QTableWidgetItem(inferred_type)
-                        self.panel.initiative_table.setItem(row, 7, type_item)
-                        logging.debug(f"  Created and set type item to '{inferred_type}'")
-                    elif type_item.text() != inferred_type:
-                        type_item.setText(inferred_type)
-                        logging.debug(f"  Updated type item text to '{inferred_type}'")
-
-                    # Update Name Item UserRole (Column 0)
-                    if name_item is None:
-                         # This shouldn't happen if we have a name, but handle defensively
-                         logging.warning(f"  Cannot set type role for row {row}, name item is missing.")
-                    elif name_item.data(Qt.UserRole) != inferred_type:
-                        name_item.setData(Qt.UserRole, inferred_type)
-                        logging.debug(f"  Updated name item role data to '{inferred_type}'")
-
-                    # Update stored data if inconsistent
-                    if instance_id and instance_id in self.combatants_by_id:
-                         if self.combatants_by_id[instance_id].get('type') != inferred_type:
-                              self.combatants_by_id[instance_id]['type'] = inferred_type
-                              logging.debug(f"  Updated stored data type to '{inferred_type}' for {instance_id}")
-
-                    fix_count += 1
-                    logging.info(f"Fixed type for '{name}' (Row {row}, ID {instance_id}) to '{inferred_type}'")
-
-        except Exception as e:
-            logging.error(f"[CombatantManager] Error during fix_missing_types: {e}", exc_info=True)
-        finally:
-             self.panel.initiative_table.blockSignals(False) # Ensure signals are unblocked
-
-        if fix_count > 0:
-            logging.info(f"[CombatantManager] Finished fix_missing_types. Fixed {fix_count} combatants.")
-        else:
-            logging.info("[CombatantManager] Finished fix_missing_types. No types needed fixing.")
-
-        return fix_count 
+            logging.error(f"[CombatantManager] Error in add_combatant_group: {e}", exc_info=True)
+            return
